@@ -113,8 +113,10 @@ python -m pytest tests/ -v --tb=short
 
 ### Core Documentation
 - **[Architecture](docs/ARCHITECTURE.md)** - System architecture and design principles
-- **[Project Overview](PROJECT.md)** - Project description and goals
-- **[Agent Manifest](VUL_AGENT_MANIFEST.md)** - Agent capabilities and specifications
+- **[Project Overview](docs/PROJECT.md)** - Project description and goals
+- **[Agent Manifest](docs/VUL_AGENT_MANIFEST.md)** - Agent capabilities and specifications
+- **[Exhaustive Audit](docs/exhaustive_audit.md)** - Comprehensive system audit
+- **[Cleanup Assessment](docs/cleanup_assessment_7_tracks.md)** - Code cleanup analysis
 
 ### Specifications
 - **[OpenClaw Integration](.kiro/specs/openclaw-integration/)** - Browser automation integration
@@ -125,9 +127,13 @@ python -m pytest tests/ -v --tb=short
 - **[Current State](.planning/STATE.md)** - Current project status
 - **[Archived Plans](.planning/archive/)** - Historical planning documents
 
-### Utilities
-- **[Scripts](scripts/)** - Development and maintenance scripts
-- **[Tests](testsprite_tests/)** - Comprehensive test suite
+### Development
+- **[Scripts](scripts/)** - Development and maintenance scripts ([README](scripts/README.md))
+- **[Tests](testsprite_tests/)** - Comprehensive test suite ([README](testsprite_tests/README.md))
+
+### Data & Configuration
+- **[Data Files](data/)** - Runtime data and scan results
+- **[Configuration](data/config/)** - User configuration files
 
 ## License
 
