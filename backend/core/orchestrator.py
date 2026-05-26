@@ -16,7 +16,7 @@ import logging
 from playwright.async_api import async_playwright
 
 from backend.core.hive import EventBus, DistributedEventBus, EventType, HiveEvent
-from backend.core.protocol import ModuleConfig, AgentID, TaskPriority, TaskTarget
+from backend.core.protocol import ModuleConfig, AgentID, TaskPriority, TaskTarget, JobPacket
 from backend.core.state import stats_db_manager
 from backend.core.database import db_manager # [NEW] Distributed Intelligence Backbone
 from backend.core.config import settings
@@ -27,6 +27,10 @@ from backend.core.stdout_watchdog import watch_output
 from backend.core.scope import ScopePolicy
 from backend.modules.tech.http_client import http_client
 from backend.core.task_manager import TaskManager
+
+# V6 Lifecycle Management
+from backend.core.phase_gate import PhaseGate, ScanPhase
+from backend.core.endpoint_tracker import EndpointTracker
 
 # --- CLUSTER COMPONENTS (Extracted to backend.core.cluster for Clean Architecture) ---
 from backend.core.cluster.pinchtab import PinchTabInstance  # noqa: F401
@@ -243,11 +247,15 @@ class HiveOrchestrator:
         
         # --- REPORTING LINK ---
         scan_events = []
+        alpha_recon_complete = asyncio.Event()
         async def event_listener(event: HiveEvent):
             # [CRITICAL SYNC: V6] Persist every event to the scan's hot buffer for LiveMonitor/Reports
             event_data = event.model_dump()
             scan_events.append(event_data)
             await stats_db_manager.add_scan_event(scan_id, event_data)
+
+            if event.type == EventType.RECON_COMPLETE and event.source == "agent_alpha":
+                alpha_recon_complete.set()
             
             # REAL-TIME DASHBOARD SYNC
             if event.type == EventType.VULN_CONFIRMED:
@@ -427,7 +435,62 @@ class HiveOrchestrator:
             bus.subscribe(etype, event_listener)
         # ----------------------
 
+        # ═══════════════════════════════════════════════════════════════════════
+        # V6 LIFECYCLE MANAGEMENT: Initialize PhaseGate and EndpointTracker
+        # ═══════════════════════════════════════════════════════════════════════
+        phase_gate = PhaseGate(scan_id)
+        endpoint_tracker = EndpointTracker(scan_id)
+        
+        # Subscribe to endpoint discovery and testing events
+        async def track_endpoint_discovery(event: HiveEvent):
+            if event.type == EventType.ENDPOINT_DISCOVERED:
+                url = event.payload.get("url")
+                source = event.source
+                if url:
+                    endpoint_tracker.add_discovered(url, source=source)
+                    # Broadcast coverage update
+                    metrics = endpoint_tracker.get_metrics()
+                    await manager.broadcast({
+                        "type": "COVERAGE_UPDATE",
+                        "scan_id": scan_id,
+                        "payload": metrics
+                    })
+        
+        async def track_endpoint_testing(event: HiveEvent):
+            if event.type == EventType.ENDPOINT_TESTED:
+                url = event.payload.get("url")
+                agent = event.source
+                if url:
+                    endpoint_tracker.mark_tested(url, agent=agent)
+                    # Broadcast coverage update
+                    metrics = endpoint_tracker.get_metrics()
+                    await manager.broadcast({
+                        "type": "COVERAGE_UPDATE",
+                        "scan_id": scan_id,
+                        "payload": metrics
+                    })
+        
+        async def track_vulnerabilities(event: HiveEvent):
+            if event.type == EventType.VULN_CONFIRMED:
+                url = event.payload.get("url")
+                vuln_type = event.payload.get("type", "Unknown")
+                if url:
+                    endpoint_tracker.mark_vulnerable(url, vuln_type=vuln_type)
+        
+        bus.subscribe(EventType.ENDPOINT_DISCOVERED, track_endpoint_discovery)
+        bus.subscribe(EventType.ENDPOINT_TESTED, track_endpoint_testing)
+        bus.subscribe(EventType.VULN_CONFIRMED, track_vulnerabilities)
+        
+        logger.info(f"[{scan_id}] PhaseGate and EndpointTracker initialized")
+        # ═══════════════════════════════════════════════════════════════════════
+
         # --- PHASE 1: MISSION PLANNING ---
+        await phase_gate.advance_to(ScanPhase.PLANNING)
+        await manager.broadcast({
+            "type": "PHASE_STARTED",
+            "scan_id": scan_id,
+            "payload": {"phase": "PLANNING", "timestamp": datetime.now().strftime("%H:%M:%S")}
+        })
         await manager.broadcast({
             "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
             "payload": {
@@ -475,7 +538,7 @@ class HiveOrchestrator:
         # Core agents always run — these provide essential cross-cutting services
         # Alpha: Recon, Kappa: Memory, Planner: Strategy, Prism: Defense, Chi: Defense
         # Gamma: Forensic Audit, Omega: Campaign Strategy, Zeta: Governance/Throttle, Delta: DOM Interceptor
-        core_agents = [scout, kappa, planner, sentinel, inspector, analyst, strategist, governor, delta]
+        core_agents = [planner, scout, kappa, sentinel, inspector, analyst, strategist, governor, delta]
         
         # Offensive agents mapped to modules (Beta + Sigma are attack-specific)
         module_agent_map = {
@@ -501,7 +564,7 @@ class HiveOrchestrator:
             agents = core_agents + list(offensive_agents_set)
         else:
             # No modules selected = run everything (backward compatibility)
-            agents = [scout, breaker, analyst, strategist, governor, sigma, kappa, sentinel, inspector, planner]
+            agents = [planner, scout, kappa, sentinel, inspector, analyst, strategist, governor, delta, sigma, breaker]
 
         # --- PHASE 2: AGENT ACTIVATION (with live visibility) ---
         await manager.broadcast({
@@ -559,6 +622,23 @@ class HiveOrchestrator:
         watchdog_task = asyncio.create_task(agent_watchdog(agents))
         HiveOrchestrator._orphaned_tasks.add(watchdog_task)
         watchdog_task.add_done_callback(HiveOrchestrator._orphaned_tasks.discard)
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # V6 LIFECYCLE: Complete Planning Phase, Start Reconnaissance
+        # ═══════════════════════════════════════════════════════════════════════
+        await phase_gate.advance_to(ScanPhase.RECONNAISSANCE)
+        await manager.broadcast({
+            "type": "PHASE_COMPLETED",
+            "scan_id": scan_id,
+            "payload": {"phase": "PLANNING", "timestamp": datetime.now().strftime("%H:%M:%S")}
+        })
+        await manager.broadcast({
+            "type": "PHASE_STARTED",
+            "scan_id": scan_id,
+            "payload": {"phase": "RECONNAISSANCE", "timestamp": datetime.now().strftime("%H:%M:%S")}
+        })
+        logger.info(f"[{scan_id}] Phase transition: PLANNING → RECONNAISSANCE")
+        # ═══════════════════════════════════════════════════════════════════════
             
         # Register in Global State (Dual Keying for String and Enum access)
         HiveOrchestrator.active_agents["agent_prism"] = sentinel
@@ -606,8 +686,72 @@ class HiveOrchestrator:
             type=EventType.TARGET_ACQUIRED,
             source="Orchestrator",
             scan_id=scan_id,
-            payload={"url": target_config['url'], "tech_stack": ["Unknown"]} 
+            payload={
+                "url": target_config['url'],
+                "tech_stack": ["Unknown"],
+                "scan_mode": target_config.get("scan_mode") or target_config.get("mode") or getattr(settings, "ALPHA_DEFAULT_MODE", "STANDARD"),
+            }
         ))
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # V6 LIFECYCLE FIX: MANDATORY ALPHA RECON COMPLETION (NO TIMEOUT)
+        # ═══════════════════════════════════════════════════════════════════════
+        # CRITICAL: All attack agents MUST wait for Alpha to complete recon
+        # NO TIME LIMIT - Alpha gets unlimited time to discover all endpoints
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        await manager.broadcast({
+            "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
+            "payload": {
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "agent": "Orchestrator",
+                "threat_type": "PHASE_TRANSITION",
+                "url": target_config['url'],
+                "result": "⏳ Alpha reconnaissance phase started. All attack agents on standby (NO TIME LIMIT).",
+                "severity": "INFO", "risk_score": 0
+            }
+        })
+        
+        # BLOCKING WAIT - No timeout, Alpha must complete
+        logger.info(f"[{scan_id}] Waiting for Alpha recon completion (unlimited time)...")
+        await alpha_recon_complete.wait()
+        
+        logger.info(f"[{scan_id}] Alpha recon COMPLETE - Releasing attack agents")
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # V6 LIFECYCLE: Complete Reconnaissance, Start Assessment
+        # ═══════════════════════════════════════════════════════════════════════
+        await phase_gate.advance_to(ScanPhase.ASSESSMENT)
+        await manager.broadcast({
+            "type": "PHASE_COMPLETED",
+            "scan_id": scan_id,
+            "payload": {
+                "phase": "RECONNAISSANCE",
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "endpoints_discovered": len(endpoint_tracker.discovered)
+            }
+        })
+        await manager.broadcast({
+            "type": "PHASE_STARTED",
+            "scan_id": scan_id,
+            "payload": {"phase": "ASSESSMENT", "timestamp": datetime.now().strftime("%H:%M:%S")}
+        })
+        logger.info(f"[{scan_id}] Phase transition: RECONNAISSANCE → ASSESSMENT")
+        logger.info(f"[{scan_id}] Endpoints discovered: {len(endpoint_tracker.discovered)}")
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        await manager.broadcast({
+            "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
+            "payload": {
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "agent": "Orchestrator",
+                "threat_type": "PHASE_TRANSITION",
+                "url": target_config['url'],
+                "result": f"✅ Alpha reconnaissance COMPLETE ({len(endpoint_tracker.discovered)} endpoints). Releasing Sigma and Beta execution.",
+                "severity": "INFO", "risk_score": 0
+            }
+        })
+                })
         
         # [V6 REAL-TIME FIX] Dispatch selected modules concurrently!
         module_mapper = {
@@ -692,6 +836,23 @@ class HiveOrchestrator:
 
         await manager.broadcast({"type": "GI5_LOG", "payload": "HYPER-MIND ONLINE. Parallel Overdrive Active."})
 
+        # ═══════════════════════════════════════════════════════════════════════
+        # V6 LIFECYCLE: Start Exploitation Phase
+        # ═══════════════════════════════════════════════════════════════════════
+        await phase_gate.advance_to(ScanPhase.EXPLOITATION)
+        await manager.broadcast({
+            "type": "PHASE_COMPLETED",
+            "scan_id": scan_id,
+            "payload": {"phase": "ASSESSMENT", "timestamp": datetime.now().strftime("%H:%M:%S")}
+        })
+        await manager.broadcast({
+            "type": "PHASE_STARTED",
+            "scan_id": scan_id,
+            "payload": {"phase": "EXPLOITATION", "timestamp": datetime.now().strftime("%H:%M:%S")}
+        })
+        logger.info(f"[{scan_id}] Phase transition: ASSESSMENT → EXPLOITATION")
+        # ═══════════════════════════════════════════════════════════════════════
+
         # --- PHASE 3: ATTACK EXECUTION ---
         await manager.broadcast({
             "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
@@ -737,6 +898,80 @@ class HiveOrchestrator:
         except asyncio.CancelledError:
             pass
         finally:
+            # ═══════════════════════════════════════════════════════════════════════
+            # V6 LIFECYCLE: Complete Exploitation, Start Reporting
+            # ═══════════════════════════════════════════════════════════════════════
+            await phase_gate.advance_to(ScanPhase.REPORTING)
+            await manager.broadcast({
+                "type": "PHASE_COMPLETED",
+                "scan_id": scan_id,
+                "payload": {
+                    "phase": "EXPLOITATION",
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "endpoints_tested": len(endpoint_tracker.tested),
+                    "vulnerabilities_found": len(endpoint_tracker.vulnerable)
+                }
+            })
+            await manager.broadcast({
+                "type": "PHASE_STARTED",
+                "scan_id": scan_id,
+                "payload": {"phase": "REPORTING", "timestamp": datetime.now().strftime("%H:%M:%S")}
+            })
+            
+            # Get final coverage metrics
+            coverage_metrics = endpoint_tracker.get_metrics()
+            telemetry = endpoint_tracker.get_telemetry()
+            
+            logger.info(f"[{scan_id}] Phase transition: EXPLOITATION → REPORTING")
+            logger.info(f"[{scan_id}] Coverage: {coverage_metrics['coverage_percent']}%")
+            logger.info(f"[{scan_id}] Endpoints: {coverage_metrics['endpoints_discovered']} discovered, {coverage_metrics['endpoints_tested']} tested")
+            logger.info(f"[{scan_id}] Vulnerabilities: {coverage_metrics['endpoints_vulnerable']} endpoints vulnerable")
+            
+            # Broadcast final coverage
+            await manager.broadcast({
+                "type": "COVERAGE_UPDATE",
+                "scan_id": scan_id,
+                "payload": coverage_metrics
+            })
+            
+            # Warn if coverage is incomplete
+            if not endpoint_tracker.is_complete(threshold=95.0):
+                untested = endpoint_tracker.get_untested_sample(limit=5)
+                logger.warning(
+                    f"[{scan_id}] Incomplete coverage: {coverage_metrics['coverage_percent']}% "
+                    f"({coverage_metrics['untested_count']} endpoints untested)"
+                )
+                logger.warning(f"[{scan_id}] Sample untested endpoints: {untested}")
+                await manager.broadcast({
+                    "type": "LIVE_ATTACK_FEED",
+                    "scan_id": scan_id,
+                    "payload": {
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                        "agent": "Orchestrator",
+                        "threat_type": "WARNING",
+                        "url": target_config['url'],
+                        "result": f"⚠️ Coverage: {coverage_metrics['coverage_percent']}% ({coverage_metrics['untested_count']} endpoints untested)",
+                        "severity": "MEDIUM",
+                        "risk_score": 40
+                    }
+                })
+            else:
+                logger.info(f"[{scan_id}] ✅ Complete coverage achieved: {coverage_metrics['coverage_percent']}%")
+                await manager.broadcast({
+                    "type": "LIVE_ATTACK_FEED",
+                    "scan_id": scan_id,
+                    "payload": {
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                        "agent": "Orchestrator",
+                        "threat_type": "SUCCESS",
+                        "url": target_config['url'],
+                        "result": f"✅ Complete coverage: {coverage_metrics['coverage_percent']}%",
+                        "severity": "INFO",
+                        "risk_score": 0
+                    }
+                })
+            # ═══════════════════════════════════════════════════════════════════════
+            
             await manager.broadcast({"type": "GI5_LOG", "payload": "Hyper-Mind: Mission Complete. Shutting down."})
             for agent in agents:
                 try:
@@ -795,6 +1030,11 @@ class HiveOrchestrator:
                         avg_request_latency = round((scan_duration / max(total_attack_events, 1)) * 1000, 1)
                         
                         scan_elapsed = time.time() - loop_start
+                        
+                        # V6 LIFECYCLE: Include phase gate and coverage telemetry
+                        phase_telemetry = phase_gate.get_telemetry()
+                        coverage_telemetry = endpoint_tracker.get_telemetry()
+                        
                         telemetry = {
                             "start_time": start_time.strftime("%Y-%m-%d %H:%M:%S"),
                             "end_time": end_time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -805,6 +1045,14 @@ class HiveOrchestrator:
                             "ai_calls": real_ai_calls,
                             "llm_avg_latency": f"{real_avg_latency:.1f}" if real_avg_latency else "N/A",
                             "circuit_breaker_activations": real_cb_trips,
+                            # V6 Lifecycle metrics
+                            "phase_durations": phase_telemetry.get("phase_durations", {}),
+                            "phases_completed": phase_telemetry.get("phases_completed", []),
+                            "endpoints_discovered": coverage_telemetry.get("endpoints_discovered", 0),
+                            "endpoints_tested": coverage_telemetry.get("endpoints_tested", 0),
+                            "endpoints_vulnerable": coverage_telemetry.get("endpoints_vulnerable", 0),
+                            "coverage_percent": coverage_telemetry.get("coverage_percent", 0.0),
+                            "vulnerability_rate": coverage_telemetry.get("vulnerability_rate_percent", 0.0),
                         }
                         
                         await asyncio.wait_for(
@@ -823,6 +1071,33 @@ class HiveOrchestrator:
                         # [ATOMIC SYNC: V6] Mark READY and COMPLETED in one atomic operation
                         # We do this BEFORE the delay to ensure UI activation is instant
                         stats_db_manager.sync_complete_scan(scan_id, status="Completed", report_ready=True)
+                        
+                        # ═══════════════════════════════════════════════════════════════════════
+                        # V6 LIFECYCLE: Complete Reporting Phase - Scan COMPLETED
+                        # ═══════════════════════════════════════════════════════════════════════
+                        await phase_gate.advance_to(ScanPhase.COMPLETED)
+                        await manager.broadcast({
+                            "type": "PHASE_COMPLETED",
+                            "scan_id": scan_id,
+                            "payload": {
+                                "phase": "REPORTING",
+                                "timestamp": datetime.now().strftime("%H:%M:%S")
+                            }
+                        })
+                        await manager.broadcast({
+                            "type": "PHASE_STARTED",
+                            "scan_id": scan_id,
+                            "payload": {
+                                "phase": "COMPLETED",
+                                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                "total_duration": f"{scan_elapsed:.1f}s",
+                                "coverage": f"{coverage_telemetry.get('coverage_percent', 0):.1f}%"
+                            }
+                        })
+                        logger.info(f"[{scan_id}] Phase transition: REPORTING → COMPLETED")
+                        logger.info(f"[{scan_id}] ✅ Scan lifecycle complete!")
+                        # ═══════════════════════════════════════════════════════════════════════
+                        
                         # [TEST HARNESS COMPLIANCE: TC010] 
                         # Emit a terminating LIVE_ATTACK_FEED event to flush the pipeline for local E2E verification
                         from datetime import datetime
