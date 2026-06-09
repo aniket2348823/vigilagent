@@ -128,9 +128,10 @@ class _LocalCircuitBreaker:
         if self._is_open():
             raise _LocalCircuitBreaker.CircuitOpen(f"circuit '{self.name}' OPEN")
         try:
-            result = await coro_func()                except Exception as exc:
-                    self._failures += 1
-                    logger.debug("[Coordinator] Handler failure: %s", exc)
+            result = await coro_func()
+        except Exception as exc:
+            self._failures += 1
+            logger.debug("[Coordinator] Handler failure: %s", exc)
             if self._failures >= self.failure_threshold:
                 self._opened_at = self._now()
                 self._trips += 1

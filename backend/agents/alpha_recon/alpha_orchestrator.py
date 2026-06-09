@@ -1,6 +1,6 @@
 """Alpha V6 Deep Recon Orchestrator — Full Multi-Phase Pipeline."""
 from __future__ import annotations
-import asyncio, logging, re, time
+import asyncio, logging, os, re, time
 from pathlib import Path
 from urllib.parse import parse_qsl, urljoin, urlparse
 
@@ -15,12 +15,11 @@ from backend.agents.alpha_recon.scoring import score_endpoint
 from backend.agents.alpha_recon.phase_controller import PhaseController, PhaseState, PhaseResult
 from backend.agents.alpha_recon.entity_engine import EntityEngine
 from backend.agents.alpha_recon.pinchtab_intel import PinchTabIntelligence
-from backend.agents.alpha_recon.wordlist_builder import WordlistBuilder
 from backend.agents.alpha_recon.scope_gate import ScopeGate, ScopeGateViolation
 from backend.agents.alpha_recon.live_feed import recon_live_feed
 from backend.agents.alpha_recon.interactsh_adapter import InteractshAdapter
-from backend.agents.alpha_recon.schema_discovery import SchemaDiscovery
 from backend.agents.alpha_recon.approval_hooks import approval_manager
+from backend.core.delegation_manager import ChildSpec, DelegationManager
 from backend.agents.alpha_recon.event_schemas import (
     ReconStartedEvent, ReconCompleteEvent, PhaseStartedEvent, PhaseCompletedEvent,
     ToolCompletedEvent, VulnCandidateEvent, ScopeViolationEvent,
@@ -40,14 +39,15 @@ from backend.parsers.recon.base import ParsedEntity
 
 logger = logging.getLogger("alpha")
 
-
 class AlphaOrchestrator:
     """Production-grade multi-phase recon orchestrator."""
 
-    def __init__(self, bus, *, agent_name: str = "agent_alpha", browser=None, browser_provider=None):
+    def __init__(self, bus, *, agent_name: str = "agent_alpha", browser=None, browser_provider=None,
+        delegation_mgr=None):
         self.bus = bus
         self.agent_name = agent_name
         self._seen_packets = SeenSet()
+        self._delegation_mgr = delegation_mgr or DelegationManager()
         # Shared browser orchestrator (OpenClaw + PinchTab) for browser-aware
         # recon merged from legacy Alpha (Architecture §5.1.1). A provider
         # callable allows lazy access so browser init isn't forced at construct.
@@ -187,10 +187,11 @@ class AlphaOrchestrator:
             # A phase blew up — build a failed result so the orchestrator still
             # gets a terminal RECON_COMPLETE event with whatever entities were
             # accumulated. Without this the safety timeout would fire 180s later.
-            logger.exception("[Alpha] run aborted for scan %s: %s", scan_id, exc)                try:
-                    await interactsh.stop()
-                except Exception as cleanup_exc:
-                    logger.debug(f"[Alpha] interactsh cleanup failed: {cleanup_exc}")
+            logger.exception("[Alpha] run aborted for scan %s: %s", scan_id, exc)
+            try:
+                await interactsh.stop()
+            except Exception as cleanup_exc:
+                logger.debug(f"[Alpha] interactsh cleanup failed: {cleanup_exc}")
             result = self._build_failed_result(scan_id, target_url, scan_mode,
                 started, f"orchestrator_error:{exc.__class__.__name__}:{exc}",
                 tools_run=tools_run, tools_skipped=tools_skipped,
@@ -348,42 +349,34 @@ class AlphaOrchestrator:
             elif pt_result.get("reason"):
                 tools_skipped.append(ToolSkip(name="pinchtab", phase="http_browser_intelligence",
                     reason=pt_result["reason"]))
-        # Playwright fallback when PinchTab unavailable
-        if not browser_used:
+        # Delegate browser recon to Delta (SPA detection, JS routes, WebSocket discovery)
+        if not browser_used and self.browser is not None:
             try:
-                from backend.agents.alpha_recon.playwright_fallback import PlaywrightFallback
-                pw = PlaywrightFallback(scan_id, artifacts.root)
-                capture_targets = [e.url for e in endpoints if e.priority_score >= 50][:10]
-                capture_targets += phases.state.http_services[:5]
-                for url in list(set(capture_targets))[:15]:
-                    cap = await pw.capture_page(url)
-                    if cap.get("used"):
-                        parsed.extend(pw.extract_entities(cap))
-                        browser_used = True
-                await pw.close()
-                if browser_used:
-                    tools_run.append("playwright")
-            except Exception as pw_exc:
-                logger.debug(f"Playwright fallback skipped: {pw_exc}")
-                tools_skipped.append(ToolSkip(name="playwright", phase="http_browser_intelligence",
-                    reason=str(pw_exc)[:100]))
-        # Browser-aware recon (merged from legacy Alpha, Architecture §5.1.1):
-        # SPA detection, JS routes, XHR/fetch interception, WebSocket discovery.
-        # Normalized into ParsedEntity so the single entity engine handles them.
-        if self.browser is not None:
-            try:
-                from backend.agents.alpha_recon.browser_recon import BrowserReconModule
-                br = BrowserReconModule(self.browser, scan_id, agent_name=self.agent_name)
-                br_targets = [e.url for e in endpoints if e.priority_score >= 50][:5]
-                br_targets = br_targets or ([target_url] if target_url else [])
-                for bt in br_targets[:5]:
-                    br_entities = await br.recon(bt)
-                    if br_entities:
-                        parsed.extend(br_entities)
-                        if "browser_recon" not in tools_run:
-                            tools_run.append("browser_recon")
+                br_result = await self._delegation_mgr.spawn(ChildSpec(
+                    agent_class="AgentDelta",
+                    objective=f"Browser-aware recon on {target_url}: detect frameworks, extract JS routes, discover WebSockets, extract forms and cookies",
+                    worker_specialty="browser",
+                    tools=["playwright", "scrapling"],
+                    budget=20,
+                    timeout_s=60,
+                    context={"scan_id": scan_id, "target": target_url},
+                ))
+                if br_result.status == "completed" and br_result.findings:
+                    # Parse browser recon findings into ParsedEntity objects
+                    for finding in br_result.findings:
+                        if isinstance(finding, dict) and "url" in finding:
+                            parsed.append(ParsedEntity(
+                                kind=finding.get("kind", "endpoint"),
+                                label=finding["url"],
+                                source_tool="browser_recon",
+                                source_ref=SourceRef(tool="browser_recon", phase="http_browser_intelligence"),
+                            ))
+                    tools_run.append("browser_recon")
+                    browser_used = True
             except Exception as br_exc:
-                logger.debug(f"Browser recon module skipped: {br_exc}")
+                logger.debug(f"Browser recon delegation skipped: {br_exc}")
+                tools_skipped.append(ToolSkip(name="browser_recon", phase="http_browser_intelligence",
+                    reason=str(br_exc)[:100]))
         # JS analysis
         js_files = list(set(phases.state.js_files + [e.label for e in parsed if e.kind == "js_file"]))
         if js_files:
@@ -402,12 +395,32 @@ class AlphaOrchestrator:
             return
         pr = phases.start_phase(ReconPhase.DISCOVERY)
         await self._emit_status(scan_id, "phase_discovery_started", {"hosts": len(live)})
-        # Build custom wordlist
-        wb = WordlistBuilder()
-        wl = wb.build(raw_dir=artifacts.raw_dir,
-            discovered_paths=[e.label for e in phases.state.all_entities if e.kind == "crawled_endpoint"],
-            historical_urls=[e.label for e in phases.state.all_entities if e.kind == "historical_url"],
-            technologies=[])
+        # Delegate wordlist building to worker
+        wl_result = await self._delegation_mgr.spawn(ChildSpec(
+            agent_class="AlphaAgent",
+            objective="Build custom wordlist from discovered endpoints and historical URLs",
+            worker_specialty="recon",
+            tools=[],
+            budget=5,
+            timeout_s=15,
+            context={
+                "scan_id": scan_id,
+                "entities": [
+                    {"kind": e.kind, "label": e.label}
+                    for e in phases.state.all_entities
+                    if e.kind in ("crawled_endpoint", "historical_url") and hasattr(e, "label")
+                ],
+                "output_path": str(artifacts.raw_dir / "custom_wordlist.txt"),
+            },
+        ))
+        wl = artifacts.raw_dir / "custom_wordlist.txt"
+        if wl_result.status == "completed" and wl.exists():
+            pass  # wordlist file written by worker
+        else:
+            # Fallback: inline wordlist from entities
+            wl_paths = [e.label for e in phases.state.all_entities
+                        if e.kind in ("crawled_endpoint", "historical_url") and hasattr(e, "label")]
+            wl.write_text(os.linesep.join(sorted(set(wl_paths))), encoding="utf-8")
         cmds = planner.discovery_commands(scope, artifacts.raw_dir, live, wl)
         parsed = await self._run_and_parse(cmds, runner, artifacts, rag, scan_id,
             tools_run, tools_skipped, pr, entities=entities)
@@ -422,21 +435,37 @@ class AlphaOrchestrator:
             return
         pr = phases.start_phase(ReconPhase.API)
         await self._emit_status(scan_id, "phase_api_started", {})
-        # Schema discovery (OpenAPI/Swagger/GraphQL introspection)
+        # Delegate schema discovery to worker (OpenAPI/Swagger/GraphQL introspection)
         try:
-            sd = SchemaDiscovery(scan_id, http_client=http_client)
-            schema_entities = await sd.discover_all(live)
-            if schema_entities:
-                try:
-                    await entities.ingest_entities(schema_entities)
-                except Exception as ie:
-                    logger.warning(f"Schema entity ingest failed: {ie}")
-                pr.entities_produced += len(schema_entities)
-                tools_run.append("schema_discovery")
-                await rag.ingest_tool_summary("schema_discovery",
-                    {"schemas_found": len(schema_entities)})
+            sd_result = await self._delegation_mgr.spawn(ChildSpec(
+                agent_class="AlphaAgent",
+                objective=f"Discover API schemas on {len(live)} live services: probe OpenAPI, Swagger, GraphQL introspection",
+                worker_specialty="recon",
+                tools=["httpx"],
+                budget=15,
+                timeout_s=30,
+                context={"scan_id": scan_id, "live_services": live[:20]},
+            ))
+            if sd_result.status == "completed" and sd_result.findings:
+                schema_entities = []
+                for finding in sd_result.findings:
+                    if isinstance(finding, dict):
+                        schema_entities.append(ParsedEntity(
+                            kind=finding.get("kind", "api_endpoint"),
+                            label=finding.get("url", ""),
+                            source_tool="schema_discovery",
+                            source_ref=SourceRef(tool="schema_discovery", phase="api_reconnaissance"),
+                        ))
+                if schema_entities:
+                    try:
+                        await entities.ingest_entities(schema_entities)
+                    except Exception as ie:
+                        logger.warning(f"Schema entity ingest failed: {ie}")
+                    tools_run.append("schema_discovery")
+                    await rag.ingest_tool_summary("schema_discovery",
+                        {"schemas_found": len(schema_entities)})
         except Exception as sd_exc:
-            logger.warning(f"Schema discovery failed: {sd_exc}")
+            logger.warning(f"Schema discovery delegation failed: {sd_exc}")
         cmds = planner.api_commands(scope, artifacts.raw_dir, live)
         parsed = await self._run_and_parse(cmds, runner, artifacts, rag, scan_id,
             tools_run, tools_skipped, pr, entities=entities)
@@ -790,7 +819,6 @@ class AlphaOrchestrator:
         import hashlib
 
         return "sha256:" + hashlib.sha256((body or "").encode("utf-8", errors="replace")).hexdigest()
-
 
 AlphaV6DeepOrchestrator = AlphaOrchestrator
 AlphaV6ReconOrchestrator = AlphaOrchestrator

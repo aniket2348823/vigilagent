@@ -96,12 +96,13 @@ class HybridSessionManager:
             return base64.urlsafe_b64encode(digest)
         
         # Try to load persisted key
-        key_file = storage_dir / cls._KEY_FILE            if key_file.exists():
+        key_file = storage_dir / cls._KEY_FILE
+        if key_file.exists():
             try:
-                saved = key_file.read_text(encoding='utf-8').strip()
-                # Validate it's a valid Fernet key (44 chars, url-safe base64)
+                saved = key_file.read_text(encoding="utf-8").strip()
+                # Validate it is a valid Fernet key (44 chars, url-safe base64)
                 if len(saved) == 44:
-                    return saved.encode('ascii')
+                    return saved.encode("ascii")
             except Exception as _key_err:
                 logger.debug("CRIT-02: Could not read persisted key: %s", _key_err)
         

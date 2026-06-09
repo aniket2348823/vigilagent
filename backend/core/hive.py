@@ -2,7 +2,7 @@ import asyncio
 import logging
 import json
 import time
-from typing import Callable, Dict, List, Any, Awaitable
+from typing import Callable, Dict, List, Any, Awaitable, Optional
 from pydantic import BaseModel, Field
 from enum import Enum
 import uuid
@@ -405,6 +405,7 @@ class BaseAgent:
         self.db = db_manager # Distributed Intelligence Backbone
         self.active = False
         self.status = "IDLE"
+        self._delegation_mgr = None  # Lazy-init via delegation_mgr property
         
         # Health monitoring
         self._last_task_time = time.time()
@@ -557,6 +558,64 @@ class BaseAgent:
             except Exception as e:
                 logging.error(f"[{self.name}] Health reporting error: {e}")
     
+
+    @property
+    def delegation_mgr(self) -> "DelegationManager":
+        """Lazy-init DelegationManager singleton per agent.
+
+        WHY lazy: Prevents circular imports (delegation_manager imports from core,
+        which may import from hive). Also avoids creating DelegationManager for
+        agents that never delegate (Prism, Chi for safety reasons).
+        """
+        if self._delegation_mgr is None:
+            from backend.core.delegation_manager import DelegationManager
+            self._delegation_mgr = DelegationManager()
+        return self._delegation_mgr
+
+    async def delegate(
+        self,
+        objective: str,
+        *,
+        agent_class: Optional[str] = None,
+        worker_specialty: Optional[str] = None,
+        budget: int = 10,
+        timeout: int = 30,
+        tools: Optional[List[str]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> "ChildResult":
+        """Delegate work to an isolated child worker.
+
+        EXAMPLE:
+            result = await self.delegate(
+                "Run subfinder on target.com",
+                agent_class="AlphaAgent",
+                worker_specialty="recon",
+                budget=5,
+                timeout=30,
+                tools=["subfinder", "dnsx"],
+                context={"target": "target.com"},
+            )
+            if result.status == "completed":
+                findings = result.findings
+
+        WHY this pattern:
+        - Child gets its own IterationBudget (can't drain parent's)
+        - Child gets sanitized context (no API keys/tokens)
+        - Child gets restricted tool set (can't delegate further)
+        - Parent blocks until child completes (or timeout)
+        """
+        from backend.core.delegation_manager import ChildSpec
+        spec = ChildSpec(
+            objective=objective,
+            agent_class=agent_class or self.__class__.__name__,
+            worker_specialty=worker_specialty or "hybrid",
+            budget=budget,
+            timeout_s=timeout,
+            tools=tools or [],
+            context=context or {},
+        )
+        return await self.delegation_mgr.spawn(spec)
+
     def report_task_result(self, success: bool):
         """Report task execution result for health tracking."""
         import time as time_module

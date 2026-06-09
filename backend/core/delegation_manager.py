@@ -1,3 +1,5 @@
+import logging
+_logger = logging.getLogger(__name__)
 """
 Vigilagent Delegation Manager (Architecture §5.5, §5.1.2, §29.13)
 ================================================================================
@@ -26,14 +28,13 @@ Routing pattern (Architecture §5.1.2):
   skill|hybrid) are routable per ChildSpec.worker_specialty, with agent_class
   fallback routing.
 """
-from __future__ import annotations
 
 import asyncio
 import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Literal
+from typing import Dict, Any, ClassVar, Awaitable, Callable, Literal, AsyncGenerator
 
 from backend.core.iteration_budget import IterationBudget, budget_config
 
@@ -92,7 +93,12 @@ _AGENT_CLASS_SPECIALTY: dict[str, str] = {
 
 # Bounded delegation defaults (Hermes MAX_DEPTH / max_concurrent_children).
 DEFAULT_MAX_DEPTH = 3          # parent(0) -> child(1) -> ... bounded subtree
-DEFAULT_MAX_CONCURRENT = 8     # ceiling on concurrent children to bound fan-out
+# Per-specialty concurrency limits
+WORKER_SPECIALTY_LIMITS: Dict[str, int] = {
+    "recon": 4, "browser": 2, "network": 6, "api": 4,
+    "hybrid": 3, "validation": 4, "forensics": 2, "reporting": 2, "skill": 2,
+}
+DEFAULT_MAX_CONCURRENT = 4  # Fallback for unknown specialties
 
 
 def sanitize_tools(tools: list[str] | None) -> list[str]:
@@ -164,7 +170,66 @@ class ChildSpec:
         }
 
 
-@dataclass
+
+    # Context sanitization: allowlist-based to prevent secret leakage
+    SAFE_CONTEXT_KEYS = frozenset({
+        "target", "target_url", "scope", "scope_policy",
+        "scan_id", "phase", "strategy",
+        "previous_findings", "entities", "endpoints", "services", "ports",
+        "wordlist_path", "aggression_level", "method", "targets",
+    })
+
+    BLOCKED_CONTEXT_KEYS = frozenset({
+        "api_keys", "tokens", "credentials", "secrets",
+        "passwords", "private_keys", "session_cookies",
+        "jwt_tokens", "auth_headers", "vault_tokens",
+    })
+
+
+    # Context sanitization: allowlist-based to prevent secret leakage
+    SAFE_CONTEXT_KEYS = frozenset({
+        "target", "target_url", "scope", "scope_policy",
+        "scan_id", "phase", "strategy",
+        "previous_findings", "entities", "endpoints", "services", "ports",
+        "wordlist_path", "aggression_level", "method", "targets",
+    })
+
+    BLOCKED_CONTEXT_KEYS = frozenset({
+        "api_keys", "tokens", "credentials", "secrets",
+        "passwords", "private_keys", "session_cookies",
+        "jwt_tokens", "auth_headers", "vault_tokens",
+    })
+
+    def sanitize_context(self) -> Dict:
+        r"""Return only safe context keys for child workers."""
+        if not self.context:
+            return {}
+        safe = {}
+        for key, value in self.context.items():
+            if key in self.SAFE_CONTEXT_KEYS and key not in self.BLOCKED_CONTEXT_KEYS:
+                safe[key] = value
+            elif key not in self.BLOCKED_CONTEXT_KEYS:
+                _logger.debug("Dropping unknown context key '%s'", key)
+        return safe
+    def sanitize_context(self) -> Dict[str, Any]:
+        """Return only safe context keys for child workers.
+
+        Uses allowlist approach: only passes known-safe keys.
+        """
+        _logger = logging.getLogger(__name__)
+        if not self.context:
+            return {}
+        safe = {}
+        for key, value in self.context.items():
+            if key in self.SAFE_CONTEXT_KEYS and key not in self.BLOCKED_CONTEXT_KEYS:
+                safe[key] = value
+            elif key not in self.SAFE_CONTEXT_KEYS and key not in self.BLOCKED_CONTEXT_KEYS:
+                _logger.debug(
+                    "Dropping unknown context key '%s' from child spec",
+                    key,
+                )
+        return safe
+
 class ChildResult:
     """Structured child-agent return object (Architecture §5, ResultPacket)."""
 
@@ -223,6 +288,7 @@ class DelegationManager:
         # Bound concurrent fan-out so a parent can't spawn an unbounded child swarm
         # (Architecture §5 budget boundedness; Hermes max_concurrent_children).
         self._sema = asyncio.Semaphore(max(1, int(max_concurrent)))
+        self._specialty_semaphores: Dict[str, asyncio.Semaphore] = {}
         self._active: dict[str, asyncio.Task] = {}
         self.telemetry = {
             "spawned": 0,
@@ -243,7 +309,8 @@ class DelegationManager:
         if hook is None:
             return
         try:
-            hook({"event": event, "scan_id": self.scan_id, "depth": self.depth, **fields})            except Exception:  # pragma: no cover - telemetry must never break control flow
+            hook({"event": event, "scan_id": self.scan_id, "depth": self.depth, **fields})
+        except Exception:  # pragma: no cover - telemetry must never break control flow
             logger.debug("delegation event hook failed for %s", event, exc_info=True)
 
     # ── Runner registration (Architecture §5.1.2 worker specialties) ──────────
@@ -413,7 +480,8 @@ class DelegationManager:
         # Await result key written by the worker (durable task lease §5.6).
         redis = master.redis_client
         deadline = time.time() + spec.timeout_s
-        while time.time() < deadline:            try:
+        while time.time() < deadline:
+            try:
                 raw = await redis.get(result_key)
             except Exception as redis_exc:
                 logger.debug(f"Delegation result key read failed: {redis_exc}")
@@ -434,7 +502,7 @@ class DelegationManager:
                     summary=data.get("summary", ""),
                     budget_used=data.get("budget_used", 0),
                 )
-            await asyncio.sleep(1.0)
+        await asyncio.sleep(1.0)
         return ChildResult(child_id, spec.agent_class, "timeout",
                            summary="worker result not received in time")
 
@@ -452,6 +520,47 @@ class DelegationManager:
                 await task
             except (asyncio.CancelledError, Exception):
                 pass
+
+
+    def _get_specialty_semaphore(self, specialty: str) -> asyncio.Semaphore:
+        """Get or create a semaphore for a specific worker specialty."""
+        if specialty not in self._specialty_semaphores:
+            # Constants are module-level, accessible directly
+            limit = WORKER_SPECIALTY_LIMITS.get(specialty, DEFAULT_MAX_CONCURRENT)
+            self._specialty_semaphores[specialty] = asyncio.Semaphore(limit)
+        return self._specialty_semaphores[specialty]
+
+    async def spawn_streaming(
+        self,
+        spec: ChildSpec,
+        parent_context: dict = None,
+        progress_interval: float = 5.0,
+    ) -> "AsyncGenerator[dict, None]":
+        """Spawn a worker and stream progress updates.
+
+        Yields dicts like:
+            {"type": "PROGRESS", "data": {"status": "running"}}
+            {"type": "COMPLETE", "data": {...result...}}
+            {"type": "FAILED", "error": "..."}
+
+        Only use for tasks >10 seconds (nmap, browser crawls, masscan).
+        """
+        task = asyncio.create_task(self.spawn(spec, parent_context))
+        try:
+            while not task.done():
+                await asyncio.sleep(progress_interval)
+                yield {"type": "PROGRESS", "data": {"status": "running"}}
+            result = task.result()
+            if result.status == "completed":
+                yield {"type": "COMPLETE", "data": result.to_dict()}
+            else:
+                yield {"type": "FAILED", "error": result.error or "unknown"}
+        except asyncio.CancelledError:
+            task.cancel()
+            yield {"type": "FAILED", "error": "parent cancelled"}
+        finally:
+            if not task.done():
+                task.cancel()
 
     def _tally(self, status: ChildStatus) -> None:
         if status == "completed":

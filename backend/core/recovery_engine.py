@@ -1128,16 +1128,17 @@ class RecoveryEngine:
             logger.debug("[BrowserHeal] health probe skipped: %s", exc)
 
         # Step 2 — resolve the orchestrator once; degrade gracefully when missing.
-        orchestrator = None                    try:
-                    from backend.core.browser_orchestrator import (
-                        BrowserOrchestrator,
-                        get_browser_orchestrator,
-                    )
-                    try:
-                        orchestrator = get_browser_orchestrator()
-                    except Exception as factory_exc:  # pragma: no cover - factory edge case
-                        orchestrator = BrowserOrchestrator()
-                except Exception as exc:
+        orchestrator = None
+        try:
+            from backend.core.browser_orchestrator import (
+                BrowserOrchestrator,
+                get_browser_orchestrator,
+            )
+            try:
+                orchestrator = get_browser_orchestrator()
+            except Exception as factory_exc:
+                orchestrator = BrowserOrchestrator()
+        except Exception as exc:
             logger.warning(
                 "[BrowserHeal] BrowserOrchestrator unavailable (%s: %s); "
                 "cannot restart context %s for scan %s.",
@@ -1186,9 +1187,9 @@ class RecoveryEngine:
                 else:
                     # Fall back: close + recreate. Still a §14 real action.
                     if hasattr(orchestrator, "close_context"):
-                try:
-                    await orchestrator.close_context(context_id)
-                except Exception as close_exc:
+                        try:
+                            await orchestrator.close_context(context_id)
+                        except Exception as close_exc:
                             logger.debug(
                                 "[BrowserHeal] close_context(%s) raised %s — proceeding.",
                                 context_id, close_exc,
@@ -1354,16 +1355,17 @@ class RecoveryEngine:
             implementation does not yet expose ``last_used`` timestamps; the
             return count is then derived from the active-context delta.
         """
-        # Resolve orchestrator (lazy; degrade silently when absent).                    try:
-                    from backend.core.browser_orchestrator import (
-                        BrowserOrchestrator,
-                        get_browser_orchestrator,
-                    )
-                    try:
-                        orchestrator = get_browser_orchestrator()
-                    except Exception as factory_exc:  # pragma: no cover - factory edge case
-                        orchestrator = BrowserOrchestrator()
-                except Exception as exc:
+        # Resolve orchestrator (lazy; degrade silently when absent).
+        try:
+            from backend.core.browser_orchestrator import (
+                BrowserOrchestrator,
+                get_browser_orchestrator,
+            )
+            try:
+                orchestrator = get_browser_orchestrator()
+            except Exception as factory_exc:  # pragma: no cover - factory edge case
+                orchestrator = BrowserOrchestrator()
+        except Exception as exc:
             logger.debug("[BrowserHeal] memory recovery: orchestrator unavailable: %s", exc)
             return 0
 

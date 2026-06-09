@@ -1,3 +1,5 @@
+from __future__ import annotations
+import logging
 """
 Vigilagent Iteration Budget (Architecture §5, §29.3, §29.13)
 ================================================================================
@@ -11,7 +13,6 @@ Core rules (Architecture §5, §29.14):
 
 Per-role defaults are loaded from config/budgets.yaml.
 """
-from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field

@@ -2173,7 +2173,7 @@ class CrossSystemLearningExtension:
             )
             self.engine.patterns[pattern_id] = pattern
         
-        self.engine._mark_patterns_dirty() {correlation_data['overlap_rate']:.1%} overlap")
+        self.engine._mark_patterns_dirty()
     
     def get_correlation_stats(self) -> Dict[str, Any]:
         """Get statistics about HTTP-browser correlations"""

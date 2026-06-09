@@ -107,46 +107,9 @@ class HiveOrchestrator:
              scan_id = f"HIVE-V5-{int(start_time.timestamp())}"
         http_client.scope = ScopePolicy.from_target(target_config.get("url"))
 
-        # 0. Register Scan (Idempotent Check)
-        # Check if already registered by attack.py
-        existing = next((s for s in stats_db_manager.get_stats()["scans"] if s["id"] == scan_id), None)
-        if not existing:
-            scan_record = {
-                "id": scan_id,
-                "status": "Initializing",
-                "name": target_config['url'],
-                "scope": target_config['url'],
-                "modules": ["Singularity V5"],
-                "timestamp": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "results": []
-            }
-            try:
-                await stats_db_manager.register_scan(scan_record)
-        except Exception as e:
-            logger.debug("[Orchestrator] DB registration skipped: %s", e)
-        else:
-             # Just update status if needed
-             for s in stats_db_manager.get_stats()["scans"]:
-                 if s["id"] == scan_id:
-                     s["status"] = "Running"
-                     break
-             stats_db_manager._save()
-            
-        await manager.broadcast({"type": "SCAN_UPDATE", "payload": {"id": scan_id, "status": "Initializing"}})
-        await manager.broadcast({
-            "type": "LIVE_ATTACK_FEED",
-            "scan_id": scan_id,
-            "payload": {
-                "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "agent": "Orchestrator",
-                "threat_type": "INITIALIZATION",
-                "url": target_config['url'],
-                "result": "⚡ Scan Initialized — Target Acquired",
-                "severity": "INFO",
-                "risk_score": 0
-            }
-        })
-
+        # 0. Scan registration is deferred until ScanLifecycleManager is
+        #    constructed (after scan_events, broadcast_throttle, phase_gate, bus
+        #    are all defined).  See "# --- LIFECYCLE WIRING ---" below.
         # ====================================================================
         # [TEST MODE FAST-PATH] TC005/TC010/TC011 COMPLIANCE
         # When VULAGENT_TEST_MODE is active, skip ALL agent creation,
@@ -274,6 +237,8 @@ class HiveOrchestrator:
         # The EventBus remains the telemetry/coordination plane (frontend feed).
         try:
             from backend.core.delegation_manager import make_delegation_manager
+            from backend.core.scan_lifecycle_manager import ScanLifecycleManager
+            from backend.core.cognitive_router import CognitiveRouter
             from backend.core.iteration_budget import campaign_budget
             delegation = make_delegation_manager(
                 bus=bus, master=master if redis_url else None, scan_id=scan_id or "GLOBAL")
@@ -283,7 +248,6 @@ class HiveOrchestrator:
                         HiveOrchestrator.campaign_budget.max_total)
         except Exception as _de:
             logger.warning(f"Delegation manager not attached: {_de}")
-
 
 
         
@@ -300,6 +264,7 @@ class HiveOrchestrator:
         # magnitude on noisy scans without changing the public broadcast
         # contract (event types/payload shapes are unchanged).
         broadcast_throttle = BroadcastThrottle(window_ms=500)
+        cognitive_router = None  # Set after lifecycle.activate_agents(); closure captures by ref
         async def event_listener(event: HiveEvent):
             # [CRITICAL SYNC: V6] Persist every event to the scan's hot buffer for LiveMonitor/Reports
             # IMPORTANT: serialize with mode="json" so the EventType enum is
@@ -326,6 +291,12 @@ class HiveOrchestrator:
                 if not guard_layer.filter_single(real_payload):
                     logger.debug(f"🛡️ GuardLayer Dropped VULN_CONFIRMED: Did not meet mathematical strictness bounds.")
                     return
+            # CognitiveRouter: route event to additional agents
+            if cognitive_router:
+                target_agents = cognitive_router.route_event(event)
+                if target_agents:
+                    logger.debug("[CognitiveRouter] event=%s -> targets=%s",
+                                  event.type, [a.__class__.__name__ for a in target_agents])
 
                 severity = real_payload.get('severity', 'High')
                 # Passing normalized signature data to StateManager for robust deduplication
@@ -598,6 +569,17 @@ class HiveOrchestrator:
         bus.subscribe(EventType.VULN_CONFIRMED, track_vulnerabilities)
         
         logger.info(f"[{scan_id}] PhaseGate and EndpointTracker initialized")
+
+        # --- LIFECYCLE WIRING (Two-Tiered Architecture Phase 1) ---
+        # All dependencies (scan_events, broadcast_throttle, phase_gate, bus)
+        # are now defined, so we can safely construct the lifecycle manager
+        # and perform scan registration.
+        lifecycle = ScanLifecycleManager(
+            manager=manager, stats_db=stats_db_manager, phase_gate=phase_gate,
+            event_bus=bus, scan_id=scan_id, target_config=target_config,
+            scan_events=scan_events, broadcast_throttle=broadcast_throttle,
+        )
+        await lifecycle.register_scan()
         # ═══════════════════════════════════════════════════════════════════════
 
         # --- PHASE 1: MISSION PLANNING ---
@@ -693,79 +675,30 @@ class HiveOrchestrator:
             # No modules selected = run everything (backward compatibility)
             agents = [planner, scout, kappa, sentinel, inspector, analyst, strategist, governor, delta, sigma, breaker]
 
-        # --- PHASE 2: AGENT ACTIVATION (with live visibility) ---
-        await manager.broadcast({
-            "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
-            "payload": {
-                "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "agent": "Orchestrator",
-                "threat_type": "ACTIVATION",
-                "url": target_config['url'],
-                "result": f"🤖 Activating {len(agents)} autonomous agents...",
-                "severity": "INFO", "risk_score": 0
-            }
+        # --- Agent Activation (via ScanLifecycleManager) ---
+        await lifecycle.activate_agents(agents, mission_config={
+            "target": target_config["url"],
+            "scan_id": scan_id,
+            "modules": target_config.get("modules", []),
         })
 
-        agent_role_map = {
-            "AlphaAgent": "🔍 Recon Scout", "BetaAgent": "⚔️ Attack Breaker",
-            "GammaAgent": "🧬 Forensic Analyst", "OmegaAgent": "🧠 Campaign Strategist",
-            "ZetaAgent": "⚖️ Governance Governor", "SigmaAgent": "🔧 Payload Smith",
-            "KappaAgent": "📚 Memory Librarian", "AgentPrism": "🛡️ Defense Sentinel",
-            "AgentChi": "🔎 UI Inspector", "AgentDelta": "🌐 DOM Controller",
-            "MissionPlanner": "📋 Mission Planner"
-        }
-
-        for agent in agents:
-            agent.mission_config = mission_profile # Inject Config
-            await agent.start()
-            agent._is_active = True  # Marker for watchdog
-            role = agent_role_map.get(type(agent).__name__, "Agent")
-            await manager.broadcast({
-                "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
-                "payload": {
-                    "timestamp": datetime.now().strftime("%H:%M:%S"),
-                    "agent": agent.name,
-                    "threat_type": "AGENT_ONLINE",
-                    "url": target_config['url'],
-                    "result": f"{role} — ONLINE",
-                    "severity": "INFO", "risk_score": 0
-                }
-            })
-
-        # --- ENHANCED SELF-HEALING SYSTEM ---
+        # --- Self-Healing Registration (via ScanLifecycleManager) ---
         from backend.core.recovery_engine import healing_engine
-        
-        # Register restart callbacks for all agents
-        for agent in agents:
-            async def restart_callback(a=agent):
-                try:
-                    await a.start()
-                    a._is_active = True
-                    await manager.broadcast({
-                        "type": "GI5_LOG",
-                        "payload": f"SELF-HEALING: Restarted agent {a.name}"
-                    })
-                except Exception as e:
-                    logger.error(f"[SelfHealing] Failed to restart {a.name}: {e}")
-            
-            healing_engine.register_restart_callback(agent.name, restart_callback)
-        
+        lifecycle.register_self_healing(agents, healing_engine=healing_engine)
+
         # Start self-healing monitoring loop
         healing_task = asyncio.create_task(healing_engine.monitor_and_heal())
         HiveOrchestrator._orphaned_tasks.add(healing_task)
         healing_task.add_done_callback(HiveOrchestrator._orphaned_tasks.discard)
-        
         logger.info("[Orchestrator] Self-healing engine activated")
+
+        # --- CognitiveRouter (requires active_agents populated) ---
+        cognitive_router = CognitiveRouter(HiveOrchestrator.active_agents)
         
         # ═══════════════════════════════════════════════════════════════════════
         # V6 LIFECYCLE: Complete Planning Phase, Start Reconnaissance
         # ═══════════════════════════════════════════════════════════════════════
         await phase_gate.advance_to(ScanPhase.RECONNAISSANCE)
-        await manager.broadcast({
-            "type": "PHASE_COMPLETED",
-            "scan_id": scan_id,
-            "payload": {"phase": "PLANNING", "timestamp": datetime.now().strftime("%H:%M:%S")}
-        })
         await manager.broadcast({
             "type": "PHASE_STARTED",
             "scan_id": scan_id,
@@ -773,42 +706,20 @@ class HiveOrchestrator:
         })
         logger.info(f"[{scan_id}] Phase transition: PLANNING → RECONNAISSANCE")
         # ═══════════════════════════════════════════════════════════════════════
-            
-        # Register in Global State (Dual Keying for String and Enum access)
-        # CRIT-04: Use lock to prevent concurrent mutation of active_agents
+        # Agent registry population is handled by lifecycle.activate_agents()
+        # above. Wire enum-keyed aliases for agents that need them:
         async with HiveOrchestrator._get_lock():
-            HiveOrchestrator.active_agents["agent_prism"] = sentinel
             HiveOrchestrator.active_agents[AgentID.PRISM] = sentinel
-        
-            HiveOrchestrator.active_agents["agent_chi"] = inspector
             HiveOrchestrator.active_agents[AgentID.CHI] = inspector
-        
-            HiveOrchestrator.active_agents["agent_omega"] = strategist
             HiveOrchestrator.active_agents[AgentID.OMEGA] = strategist
-        
-            HiveOrchestrator.active_agents["agent_alpha"] = scout
             HiveOrchestrator.active_agents[AgentID.ALPHA] = scout
-        
-            HiveOrchestrator.active_agents["agent_beta"] = breaker
             HiveOrchestrator.active_agents[AgentID.BETA] = breaker
-        
-            HiveOrchestrator.active_agents["agent_gamma"] = analyst
             HiveOrchestrator.active_agents[AgentID.GAMMA] = analyst
-        
-            HiveOrchestrator.active_agents["agent_zeta"] = governor
             HiveOrchestrator.active_agents[AgentID.ZETA] = governor
-        
-            HiveOrchestrator.active_agents["agent_sigma"] = sigma
             HiveOrchestrator.active_agents[AgentID.SIGMA] = sigma
-        
-            HiveOrchestrator.active_agents["agent_kappa"] = kappa
             HiveOrchestrator.active_agents[AgentID.KAPPA] = kappa
-        
-            HiveOrchestrator.active_agents["agent_delta"] = delta
             HiveOrchestrator.active_agents[AgentID.DELTA] = delta
-        
             HiveOrchestrator.active_agents["PLANNER"] = planner
-        
             if net_commander is not None:
                 HiveOrchestrator.active_agents["agent_network_commander"] = net_commander
         
@@ -857,12 +768,11 @@ class HiveOrchestrator:
         # signal, but proceed regardless so a stalled recon spine never deadlocks
         # the attack pipeline (Architecture §16 phase ordering — phases must
         # advance, not block forever). The seeder + attack stages still run with
-        # whatever recon was able to emit.
-    try:
-        recon_max_wait = float(getattr(settings, "RECON_MAX_WAIT_SECONDS", 180))
-    except Exception as exc:
-        logger.debug("[Orchestrator] RECON_MAX_WAIT_SECONDS parse failed: %s", exc)
-        recon_max_wait = 180.0
+        try:
+            recon_max_wait = float(getattr(settings, "RECON_MAX_WAIT_SECONDS", 180))
+        except Exception:
+            logger.debug("[Orchestrator] RECON_MAX_WAIT_SECONDS parse failed")
+            recon_max_wait = 180.0
         try:
             await asyncio.wait_for(alpha_recon_complete.wait(), timeout=recon_max_wait)
             logger.info(f"[{scan_id}] Alpha recon COMPLETE signal received - releasing attack agents")
@@ -924,23 +834,10 @@ class HiveOrchestrator:
             return [TaskTarget(url=target_config["url"])]
         
         # ═══════════════════════════════════════════════════════════════════════
-        # V6 LIFECYCLE: Complete Reconnaissance, Start Assessment
-        # ═══════════════════════════════════════════════════════════════════════
-        await phase_gate.advance_to(ScanPhase.ASSESSMENT)
-        await manager.broadcast({
-            "type": "PHASE_COMPLETED",
-            "scan_id": scan_id,
-            "payload": {
-                "phase": "RECONNAISSANCE",
-                "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "endpoints_discovered": len(endpoint_tracker.discovered)
-            }
-        })
-        await manager.broadcast({
-            "type": "PHASE_STARTED",
-            "scan_id": scan_id,
-            "payload": {"phase": "ASSESSMENT", "timestamp": datetime.now().strftime("%H:%M:%S")}
-        })
+            # Phase Transition via ScanLifecycleManager
+        await lifecycle.advance_phase(ScanPhase.ASSESSMENT, metadata={"scan_id": scan_id})
+        await lifecycle.broadcast_phase_feed("RECON_COMPLETE",
+                "Alpha reconnaissance phase complete")
         logger.info(f"[{scan_id}] Phase transition: RECONNAISSANCE → ASSESSMENT")
         logger.info(f"[{scan_id}] Endpoints discovered: {len(endpoint_tracker.discovered)}")
         # ═══════════════════════════════════════════════════════════════════════
@@ -1265,6 +1162,9 @@ class HiveOrchestrator:
                             "vulnerability_rate": coverage_telemetry.get("vulnerability_rate_percent", 0.0),
                         }
                         
+                        # Finalize scan lifecycle
+                        await lifecycle.finalize(ai_cortex=ai_cortex)
+
                         await asyncio.wait_for(
                             report_gen.generate_report(scan_id, scan_events, target_config['url'], telemetry=telemetry, manager=manager),
                             timeout=900.0

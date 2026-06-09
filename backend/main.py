@@ -65,11 +65,9 @@ async def lifespan(app: FastAPI):
         from backend.core.scope import scope_guard
         from backend.core.terminal_engine import terminal_engine
         from backend.core.config import settings as _settings
-        logger.info(f"[BOOT] Engagement '{scope_guard.engagement_name}' ")
-              f"authorization={scope_guard.authorization} authorized_now={scope_guard.is_authorized()}")
+        logger.info(f"[BOOT] Engagement '{scope_guard.engagement_name}' authorization={scope_guard.authorization} authorized_now={scope_guard.is_authorized()}")
         _tt = terminal_engine.get_telemetry()
-        logger.info(f"[BOOT] Terminal Engine: docker_available={_tt['docker_available']} ")
-              f"prefer_docker={_tt['prefer_docker']}")
+        logger.info(f"[BOOT] Terminal Engine: docker_available={_tt['docker_available']} ""prefer_docker={_tt['prefer_docker']}")
         logger.info(f"[BOOT] LLMs: strategic={_settings.STRATEGIC_MODEL} tactical={_settings.TACTICAL_MODEL}")
     except Exception as _e:
         logger.info(f"[BOOT] self-check warning: {_e}")
@@ -126,7 +124,7 @@ async def lifespan(app: FastAPI):
         from backend.core.browser_orchestrator import get_browser_orchestrator
         _bo = get_browser_orchestrator()
         _bo_health = await _bo.health_check()
-        logger.info()
+        logger.info(
             f"[BROWSER] OpenClaw={_bo_health.get('openclaw')} "
             f"PinchTab={_bo_health.get('pinchtab')} "
             f"reasons={_bo_health.get('reasons') or {}}"
@@ -274,7 +272,8 @@ async def health_check():
     start = _t.time()
     comps = {}
     try:
-        comps["supabase"] = "healthy" if settings.SUPABASE_URL else "not_configured"    except Exception as exc:
+        comps["supabase"] = "healthy" if settings.SUPABASE_URL else "not_configured"
+    except Exception as exc:
         import logging as _log
         _log.getLogger("main").debug("Supabase health check failed: %s", exc)
         comps["supabase"] = "unhealthy"
@@ -345,23 +344,23 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
         from urllib.parse import urlparse as _urlparse
         try:
             origin_host = (_urlparse(origin).hostname or "").lower()
-    except Exception as exc:
-        import logging as _log
-        _log.getLogger("main").debug("CORS origin parse failed: %s", exc)
-        origin_host = ""
-        if origin_host:
-            _allowed_hosts = set()
-            for _o in ALLOWED_ORIGINS:
-                try:
-                    _h = _urlparse(_o).hostname or ""
-                    if _h:
-                        _allowed_hosts.add(_h.lower())
-                except Exception as exc:
-                    import logging as _log
-                    _log.getLogger("main").debug("CORS port parse failed: %s", exc)
-            if origin_host not in _allowed_hosts:
-                await websocket.close(code=1008, reason="Policy Violation: Disallowed Origin")
-                return
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger("main").debug("CORS origin parse failed: %s", exc)
+            origin_host = ""
+            if origin_host:
+                _allowed_hosts = set()
+                for _o in ALLOWED_ORIGINS:
+                    try:
+                        _h = _urlparse(_o).hostname or ""
+                        if _h:
+                            _allowed_hosts.add(_h.lower())
+                    except Exception as exc:
+                            import logging as _log
+                            _log.getLogger("main").debug("CORS port parse failed: %s", exc)
+                if origin_host not in _allowed_hosts:
+                        await websocket.close(code=1008, reason="Policy Violation: Disallowed Origin")
+                        return
 
     # WebSocket Authentication Handshake.
     try:

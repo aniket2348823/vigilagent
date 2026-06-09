@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Optional, List
 from pathlib import Path
 
 from backend.agents.alpha_recon.models import ReconScope, ScanMode
@@ -29,6 +30,8 @@ class ReconCommand:
     metadata: dict[str, str] = field(default_factory=dict)
 
 
+    """DAG dependency support for parallel tool execution."""
+    depends_on: Optional[List[str]] = None  # DAG dependencies - tool names that must complete first
 class ReconCommandPlanner:
     """Builds phase-gated, scope-aware command plans for Alpha recon tools."""
 
@@ -37,6 +40,11 @@ class ReconCommandPlanner:
         self.timeout = int(getattr(settings, "ALPHA_TOOL_TIMEOUT_SECONDS", 180))
 
     # ── Phase 1: Passive Intelligence ──────────────────────────────
+
+
+    def get_dependency_graph(self):
+        """Return the tool dependency graph for DAG execution."""
+        return TOOL_DEPENDENCY_GRAPH
 
     @staticmethod
     def _is_registrable_domain(host: str) -> bool:
@@ -220,15 +228,8 @@ class ReconCommandPlanner:
                 stdin=f"http://{scope.base_domain}\nhttps://{scope.base_domain}\n"),
         ]
         if scope.scan_mode in {ScanMode.STANDARD, ScanMode.AGGRESSIVE}:
-            cmds.append(ReconCommand("wafw00f", "http_browser_intelligence",
-                ("wafw00f", "-i", str(hosts_file), "-o", str(raw_dir / "wafw00f.json"), "-f", "json"),
-                raw_dir / "wafw00f.stdout.txt", timeout_seconds=self.timeout,
-                parser_hint="json", metadata={"json_file": str(raw_dir / "wafw00f.json")}))
-            cmds.append(ReconCommand("whatweb", "http_browser_intelligence",
-                ("whatweb", "-i", str(hosts_file), "--log-json", str(raw_dir / "whatweb.json"), "--no-errors"),
-                raw_dir / "whatweb.stdout.txt", timeout_seconds=self.timeout,
-                parser_hint="json", metadata={"json_file": str(raw_dir / "whatweb.json")}))
-            # Parameter discovery (arjun = active probing, paramspider = passive archive mining)
+            # wafw00f removed: belongs to Sigma exploitation agent
+            # whatweb removed: belongs to Sigma exploitation agent
             cmds.append(ReconCommand("arjun", "http_browser_intelligence",
                 ("arjun", "-i", str(hosts_file), "-oJ", str(raw_dir / "arjun.json"),
                  "-t", "10", "--rate-limit", str(scope.max_rps)),
@@ -475,17 +476,7 @@ class ReconCommandPlanner:
 
         # dalfox does focused, scope-bound XSS validation on URLs that carry
         # parameters (aggressive only — it actively probes reflected/DOM XSS).
-        if scope.scan_mode == ScanMode.AGGRESSIVE:
-            param_urls = [h for h in live_hosts if "?" in h and "=" in h]
-            if param_urls:
-                dalfox_input = raw_dir / "dalfox_targets.txt"
-                dalfox_input.write_text("\n".join(param_urls[:100]) + "\n", encoding="utf-8")
-                cmds.append(ReconCommand("dalfox", "template_validation",
-                    ("dalfox", "file", str(dalfox_input), "--format", "json",
-                     "-o", str(raw_dir / "dalfox.json"), "--no-color", "--silence",
-                     "--delay", "100", "--worker", "10"),
-                    raw_dir / "dalfox.json", timeout_seconds=self.timeout * 2,
-                    parser_hint="json", metadata={"json_file": str(raw_dir / "dalfox.json")}))
+# dalfox removed: belongs to Sigma exploitation agent
         return cmds
 
     def interactsh_commands(self, raw_dir: Path) -> list[ReconCommand]:
@@ -497,3 +488,76 @@ class ReconCommandPlanner:
                 raw_dir / "interactsh.jsonl", timeout_seconds=self.timeout * 3,
                 parser_hint="jsonl"),
         ]
+
+
+# =============================================
+# TOOL DEPENDENCY GRAPH for DAG execution
+# =============================================
+# Maps tool name -> list of tool names that must complete first.
+# Used by TaskGraph.execute_dag() for parallel execution.
+#
+# KEY INSIGHT: Tools start as soon as their dependencies finish,
+# not when the entire phase finishes. This saves 15-30s per scan.
+#
+# EXAMPLE TIMELINE:
+# Current: subfinder(5s) -> wait -> amass(60s) -> ALL DONE -> dnsx(10s)
+# DAG:     subfinder(5s) -> dnsx(10s)
+#          amass(60s) ----------------------------------------> (parallel)
+
+TOOL_DEPENDENCY_GRAPH = {
+    # STAGE 1: Passive Intelligence (no dependencies - fire immediately)
+    "subfinder": [],
+    "amass": [],
+    "assetfinder": [],
+    "github-subdomains": [],
+    "gau": [],
+    "waybackurls": [],
+    "cloudlist": [],
+    "spiderfoot": [],
+
+    # STAGE 2: DNS & Infrastructure (depends on passive subdomain tools)
+    "dnsx": ["subfinder", "amass"],  # Needs subdomains to resolve
+    "shuffledns": ["subfinder", "amass"],  # Needs subdomains for DNS mass resolution
+    "puredns": ["subfinder", "amass"],  # Alternative to shuffledns
+    "cdncheck": ["dnsx"],  # Needs resolved IPs to check CDN
+
+    # STAGE 2b: Port Scanning (depends on DNS resolution)
+    "naabu": ["dnsx"],  # Needs resolved hosts
+    "masscan": ["dnsx"],  # Fast port scan on resolved hosts
+    "nmap": ["masscan"],  # Deep scan on masscan-discovered ports
+
+    # STAGE 2c: TLS Analysis (depends on DNS resolution)
+    "tlsx": ["dnsx"],  # TLS cert info on resolved hosts
+    "testssl": ["nmap"],  # Deep TLS test on nmap-discovered ports
+
+    # STAGE 3: HTTP & Browser Intelligence (depends on DNS + ports)
+    "httprobe": ["dnsx"],  # Check which DNS results are web servers
+    "httpx": ["dnsx"],  # Tech detection, status codes on live hosts
+    "katana": ["httpx"],  # Crawl live HTTP endpoints
+    "gospider": ["httpx"],  # Spider live HTTP endpoints
+    "hakrawler": ["httpx"],  # Crawl for hidden endpoints
+    "arjun": ["httpx"],  # Find hidden parameters on endpoints
+    "paramspider": ["httpx"],  # Extract parameters from URLs
+
+    # STAGE 3b: JavaScript Analysis (depends on HTTP crawl)
+    "linkfinder": ["katana", "gospider"],  # Find JS links from crawled pages
+    "secretfinder": ["linkfinder"],  # Find secrets in JS files
+
+    # STAGE 4: Directory & Route Discovery (depends on HTTP)
+    "feroxbuster": ["httpx"],  # Directory brute-force on live hosts
+    "ffuf": ["httpx"],  # Fast directory brute-force
+    "dirsearch": ["httpx"],  # Directory discovery
+    "gobuster": ["httpx"],  # Directory/file brute-force
+
+    # STAGE 4b: API Reconnaissance (depends on HTTP)
+    "kiterunner": ["httpx"],  # API route discovery
+    "inql": ["httpx"],  # GraphQL introspection
+
+    # STAGE 4c: Visual Documentation (depends on HTTP)
+    "gowitness": ["httpx"],  # Screenshot live hosts
+    "aquatone": ["httpx"],  # Visual inspection of web targets
+
+    # STAGE 5: Validation (depends on all prior stages)
+    "nuclei": ["httpx"],  # Scans URLs from httpx, not ffuf dirs  # Template-based vuln scanning on endpoints
+    "interactsh": ["httpx"],  # OOB server runs alongside nuclei  # OOB vulnerability detection
+}
