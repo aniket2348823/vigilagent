@@ -9,6 +9,7 @@ work to specialized children/workers through the DelegationManager.
 This module also registers in-process child runners with the DelegationManager
 (Architecture §5.1.2) so commanders can spawn bounded network-assessment tasks.
 """
+import logging
 from backend.agents.commanders.network_commander import NetworkServiceCommander
 
 logger = logging.getLogger(__name__)

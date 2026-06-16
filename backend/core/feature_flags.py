@@ -152,8 +152,10 @@ class FeatureFlags:
             "routing": self.routing_rollout_pct,
         }.get(feature, 0)
         
-        # Use scan_id hash for consistent rollout
-        scan_hash = hash(scan_id) % 100
+        # HIGH-31: Use deterministic hash (hashlib) instead of Python's
+        # hash() which randomizes seeds across processes (PYTHONHASHSEED).
+        import hashlib
+        scan_hash = int(hashlib.md5(scan_id.encode()).hexdigest(), 16) % 100
         return scan_hash < rollout_pct
     
     def is_feature_enabled(self, feature: str) -> bool:

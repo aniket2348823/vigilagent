@@ -170,7 +170,9 @@ class StateManager:
         self._mark_dirty()
 
     def get_stats(self) -> Dict[str, Any]:
-        return self._stats
+        """Return a deep copy of stats to prevent mutation by callers."""
+        import copy
+        return copy.deepcopy(self._stats)
 
     async def register_scan(self, scan_data: Dict[str, Any]):
         async with self._lock:
@@ -279,13 +281,11 @@ class StateManager:
 
             # Persist to per-scan ``findings`` so GET /api/scans/{id}/findings
             # surfaces this immediately, not just after the scan completes.
+            # The enriched_finding dict (from orchestrator) includes CVSS 4.0
+            # scores, evidence, remediation, CWE, and reproduction steps.
             if signature_data:
-                finding_record = {
-                    "url": signature_data.get("url", ""),
-                    "type": signature_data.get("type", ""),
-                    "severity": severity,
-                    "data": signature_data.get("data", ""),
-                }
+                finding_record = dict(signature_data)
+                finding_record.setdefault("severity", severity)
                 for s in self._stats.get("scans", []):
                     if s.get("id") == scan_id or s.get("scan_id") == scan_id:
                         if "findings" not in s:
@@ -483,17 +483,21 @@ class StateManager:
         tmp = path + ".tmp"
         async with self._lock:
             try:
-                with open(tmp, "w") as f:
-                    json.dump(data, f, indent=2, default=str)
-                os.replace(tmp, path)
+                def _write():
+                    with open(tmp, "w") as f:
+                        json.dump(data, f, indent=2, default=str)
+                    os.replace(tmp, path)
+                await asyncio.to_thread(_write)
             except Exception as e:
                 logger.error(f"[StateManager] Sharded write error: {e}")
 
     async def read_scan_state(self, scan_id: str) -> Dict[str, Any]:
         path = self._scan_file(scan_id)
         try:
-            with open(path, "r") as f:
-                return json.load(f)
+            def _read():
+                with open(path, "r") as f:
+                    return json.load(f)
+            return await asyncio.to_thread(_read)
         except FileNotFoundError:
             return {}
         except Exception as e:
@@ -501,10 +505,7 @@ class StateManager:
             return {}
     async def list_scan_states(self) -> List[Dict[str, Any]]:
         """Read all sharded scan state files via thread pool to avoid blocking the event loop."""
-        import functools
-        return await asyncio.get_event_loop().run_in_executor(
-            None, self._list_scan_states_sync
-        )
+        return await asyncio.to_thread(self._list_scan_states_sync)
 
     def _list_scan_states_sync(self) -> List[Dict[str, Any]]:
         """Synchronous implementation of list_scan_states."""
@@ -522,18 +523,23 @@ class StateManager:
 
     async def find_vulnerability(self, vuln_id: str) -> Dict[str, Any] | None:
         """Search across all sharded scan files for a specific vulnerability."""
-        self._ensure_scans_dir()
-        for fname in os.listdir(self.SCANS_DIR):
-            if fname.startswith("scan_") and fname.endswith(".json"):
-                try:
-                    with open(os.path.join(self.SCANS_DIR, fname)) as f:
-                        scan = json.load(f)
-                        for v in scan.get("vulnerabilities", []):
-                            if v.get("vuln_id") == vuln_id:
-                                return v
-                except Exception as e:
-                    logger.debug("[State] parse scan file skipped: %s", e)
-                    continue
+        def _search():
+            self._ensure_scans_dir()
+            for fname in os.listdir(self.SCANS_DIR):
+                if fname.startswith("scan_") and fname.endswith(".json"):
+                    try:
+                        with open(os.path.join(self.SCANS_DIR, fname)) as f:
+                            scan = json.load(f)
+                            for v in scan.get("vulnerabilities", []):
+                                if v.get("vuln_id") == vuln_id:
+                                    return v
+                    except Exception as e:
+                        logger.debug("[State] parse scan file skipped: %s", e)
+                        continue
+            return None
+        result = await asyncio.to_thread(_search)
+        if result:
+            return result
         # Fallback: search in stats.json scans
         for s in self._stats.get("scans", []):
             for r in s.get("results", []):

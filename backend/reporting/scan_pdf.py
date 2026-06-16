@@ -55,6 +55,8 @@ SEVERITY_COLORS = {
     "HIGH":     (230, 126, 34),   # #E67E22
     "MEDIUM":   (241, 196, 15),   # #F1C40F
     "LOW":      (39, 174, 96),    # #27AE60
+    "INFO":     (52, 152, 219),   # #3498DB
+    "NONE":     (149, 165, 166),  # #95A5A6
 }
 
 # CWE map for fallback lookups (kept aligned with reporting.py legacy map).
@@ -514,8 +516,8 @@ class VigilagentReportBuilder:
     @staticmethod
     def _severity_label(score: float) -> str:
         band = severity_band(score)
-        return {"none": "LOW", "low": "LOW", "medium": "MEDIUM",
-                "high": "HIGH", "critical": "CRITICAL"}.get(band.lower(), "MEDIUM")
+        return {"low": "LOW", "medium": "MEDIUM",
+                "high": "HIGH", "critical": "CRITICAL"}.get(band.lower(), band.upper())
 
     def _normalise_finding(self, ev: Dict[str, Any]) -> Dict[str, Any]:
         """Return a finding dict with everything the renderer needs."""
@@ -647,9 +649,8 @@ class VigilagentReportBuilder:
         tech_stack = self._infer_tech_stack(f)
         code_fix = ""
         try:
-            if cortex is not None:
-                code_fix = await asyncio.wait_for(
-                    cortex.generate_remediation_code(f["vuln_type"], tech_stack),
+            if cortex is not None:                    code_fix = await asyncio.wait_for(
+                    cortex.generate_code_fix(f["vuln_type"], f["attack_payload"], f["url"], tech_stack),
                     timeout=self.LLM_PER_CALL_TIMEOUT,
                 )
         except Exception as exc:
@@ -947,9 +948,12 @@ class VigilagentReportBuilder:
         # Severity pill
         pdf.severity_pill(f["severity"])
 
-        # CWE + CVSS
+        # CWE + CVSS 4.0
         pdf.kv_line("CWE", f["cwe"])
-        pdf.kv_line("CVSS Score", f"{f['cvss_score']} ({f['severity'].title()})")
+        pdf.kv_line("CVSS 4.0 Score", f"{f['cvss_score']} ({f['severity']})")
+        if f.get("cvss_vector"):
+            pdf.kv_line("CVSS 4.0 Vector", f["cvss_vector"])
+        pdf.kv_line("CVSS Version", "4.0")
 
         # Threat score progress bar
         pdf.threat_bar(f["threat_score"])

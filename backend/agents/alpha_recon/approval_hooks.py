@@ -132,6 +132,11 @@ class ApprovalManager:
         if not request:
             logger.warning(f"[APPROVAL] Unknown approval ID: {approval_id}")
             return False
+        
+        # H-18: Validate that only pending approvals can be responded to
+        if request.status != "pending":
+            logger.warning(f"[APPROVAL] Cannot respond to non-pending approval {approval_id} (status={request.status})")
+            return False
 
         request.status = "approved" if approved else "denied"
         request.responded_at = time.time()

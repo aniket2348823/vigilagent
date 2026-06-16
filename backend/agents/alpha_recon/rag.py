@@ -65,7 +65,7 @@ class ReconRAGPipeline:
         }
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, default=str) + "\n")
-        memory_store.remember_semantic({**record, "vector": []})
+        await memory_store.remember_semantic({**record, "vector": []})
         await db_manager.store_semantic_memory(
             memory_type=memory_type,
             endpoint_pattern=endpoint_pattern,

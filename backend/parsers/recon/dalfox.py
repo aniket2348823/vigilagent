@@ -29,9 +29,13 @@ def parse_dalfox_json(path: Path | str) -> list[ParsedEntity]:
             continue
         seen.add(poc)
         host = (urlparse(poc).hostname or "").lower()
+        severity = str(row.get("severity", "Medium")).lower()
+        # FIX: Scale confidence by severity instead of hardcoded 0.7
+        severity_conf = {"critical": 0.95, "high": 0.85, "medium": 0.7, "low": 0.5}
+        confidence = severity_conf.get(severity, 0.7)
         entities.append(ParsedEntity(
             kind="vulnerability_candidate", label=f"XSS:{param}@{host}" if param else f"XSS@{host}",
-            confidence=0.7,
+            confidence=confidence,
             properties={"vuln_type": "xss", "poc": poc, "param": param,
                         "inject_type": str(row.get("inject_type", "")),
                         "severity": str(row.get("severity", "")),

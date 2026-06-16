@@ -246,21 +246,20 @@ class CapabilityAssessor:
         # Query database for agents with higher proficiency
         try:
             await db_manager.initialize()
+            if not db_manager.supabase:
+                return None
             
-            query = """
-                SELECT agent_id, proficiency_score
-                FROM agent_proficiency
-                WHERE skill = $1
-                AND proficiency_score > $2
-                ORDER BY proficiency_score DESC
-                LIMIT 1
-            """
+            result = await db_manager._run_sync(
+                lambda: db_manager.supabase.table("agent_proficiency")
+                    .select("agent_id, proficiency_score")
+                    .eq("skill", skill)
+                    .gt("proficiency_score", proficiency)
+                    .order("proficiency_score", desc=True)
+                    .limit(1)
+                    .execute())
             
-            async with db_manager.pool.acquire() as conn:
-                row = await conn.fetchrow(query, skill, proficiency)
-                
-                if row:
-                    return row['agent_id']
+            if result.data:
+                return result.data[0]['agent_id']
             
         except Exception as e:
             logger.error(f"[CapabilityAssessor] Failed to query for delegation: {e}")
@@ -271,21 +270,20 @@ class CapabilityAssessor:
         """Load proficiency scores from database"""
         try:
             await db_manager.initialize()
+            if not db_manager.supabase:
+                return
             
-            query = """
-                SELECT skill, proficiency_score, total_attempts, successful_attempts
-                FROM agent_proficiency
-                WHERE agent_id = $1
-            """
+            result = await db_manager._run_sync(
+                lambda: db_manager.supabase.table("agent_proficiency")
+                    .select("skill, proficiency_score, total_attempts, successful_attempts")
+                    .eq("agent_id", self.agent_id)
+                    .execute())
             
-            async with db_manager.pool.acquire() as conn:
-                rows = await conn.fetch(query, self.agent_id)
-                
-                for row in rows:
-                    skill = row['skill']
-                    self._proficiency_scores[skill] = row['proficiency_score']
-                    self._attempt_counts[skill] = row['total_attempts']
-                    self._success_counts[skill] = row['successful_attempts']
+            for row in (result.data or []):
+                skill = row['skill']
+                self._proficiency_scores[skill] = row['proficiency_score']
+                self._attempt_counts[skill] = row['total_attempts']
+                self._success_counts[skill] = row['successful_attempts']
             
             logger.info(
                 f"[CapabilityAssessor] Loaded {len(self._proficiency_scores)} "
@@ -299,31 +297,20 @@ class CapabilityAssessor:
         """Save proficiency score to database"""
         try:
             await db_manager.initialize()
+            if not db_manager.supabase:
+                return
             
-            query = """
-                INSERT INTO agent_proficiency (
-                    agent_id, skill, proficiency_score,
-                    last_updated, total_attempts, successful_attempts
-                )
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (agent_id, skill)
-                DO UPDATE SET
-                    proficiency_score = $3,
-                    last_updated = $4,
-                    total_attempts = $5,
-                    successful_attempts = $6
-            """
-            
-            async with db_manager.pool.acquire() as conn:
-                await conn.execute(
-                    query,
-                    self.agent_id,
-                    skill,
-                    proficiency_score,
-                    datetime.utcnow(),
-                    self._attempt_counts.get(skill, 0),
-                    self._success_counts.get(skill, 0)
-                )
+            await db_manager._run_sync(
+                lambda: db_manager.supabase.table("agent_proficiency")
+                    .upsert({
+                        "agent_id": self.agent_id,
+                        "skill": skill,
+                        "proficiency_score": proficiency_score,
+                        "last_updated": datetime.utcnow().isoformat(),
+                        "total_attempts": self._attempt_counts.get(skill, 0),
+                        "successful_attempts": self._success_counts.get(skill, 0)
+                    }, on_conflict="agent_id,skill")
+                    .execute())
             
         except Exception as e:
             logger.error(f"[CapabilityAssessor] Failed to save to database: {e}")

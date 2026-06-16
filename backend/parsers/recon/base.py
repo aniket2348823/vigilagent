@@ -13,7 +13,9 @@ from urllib.parse import urlparse, parse_qsl
 # Module-level regex cache — base.is_valid_domain / is_ip_address are called
 # from every recon parser per emitted host/IP, so compiling these once shaves
 # real time off bulk parses.
-_DOMAIN_RE = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$')
+# FIX: Require minimum 2 chars per label to reject 'a.com' as valid domain,
+# but still accept 2-label domains like example.com
+_DOMAIN_RE = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$')
 _IPV4_RE = re.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
 _IPV6_HEX_RE = re.compile(r'^[0-9a-fA-F:]+$')
 
@@ -35,18 +37,24 @@ class ParsedEntity:
 
 
 def safe_json_lines(path: Path | str) -> Iterator[dict[str, Any]]:
-    """Yield each valid JSON object from a JSONL file, skipping bad lines."""
+    """Yield each valid JSON object from a JSONL file, skipping bad lines.
+
+    FIX: Uses a streaming file reader instead of read_text().splitlines()
+    to avoid loading the entire file into memory. For 100MB+ nmap/nuclei
+    outputs this prevents OOM.
+    """
     p = Path(path)
     if not p.exists():
         return
-    for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            yield json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue
+    with open(p, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
 
 
 def safe_json_file(path: Path | str) -> dict[str, Any] | list[Any]:
@@ -101,7 +109,7 @@ def is_ip_address(value: str) -> bool:
     return False
 
 
-def redact_secret(value: str, visible_chars: int = 4) -> str:
+def redact_secret(value: str, visible_chars: int = 8) -> str:
     """Redact a secret value, keeping first N chars visible."""
     if len(value) <= visible_chars:
         return "*" * len(value)

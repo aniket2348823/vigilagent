@@ -108,7 +108,8 @@ def _running_recon_container_cached(image: str, override: str) -> str:
     long-lived container from the SAME image runs fine. When such a container is
     already up we exec into it instead of spawning fresh ones — more reliable and
     faster (no per-tool container spin-up). Returns the container name or "".
-    """    if shutil.which("docker") is None:
+    """
+    if shutil.which("docker") is None:
         return ""
     # 1. Explicit override (VIGILAGENT_RECON_CONTAINER) wins if it is running.
     if override:
@@ -312,18 +313,27 @@ def _rewrite_loopback_host(token: str) -> str:
     return replaced
 
 
-# Tools that live INSIDE the recon image. The image is built to carry the full
-# arsenal, so this mirrors the registry. Kept explicit so availability can be
-# answered without shelling into the container.
+# Tools that live INSIDE the recon image, owned by Alpha (recon commander).
+# 34 recon tools — Alpha-exclusive. Sigma NEVER dispatches these.
 DOCKER_RECON_TOOLS: set[str] = {
     "subfinder", "amass", "assetfinder", "github-subdomains", "gau", "waybackurls",
     "cloudlist", "spiderfoot", "dnsx", "shuffledns", "puredns", "cdncheck",
-    "naabu", "masscan", "nmap", "tlsx", "testssl", "httpx", "httprobe",
-    "whatweb", "wafw00f", "katana", "gospider", "hakrawler", "linkfinder",
+    "naabu", "masscan", "nmap", "tlsx", "testssl", "httprobe",
+    "katana", "gospider", "hakrawler", "linkfinder",
     "secretfinder", "arjun", "paramspider", "feroxbuster", "ffuf", "dirsearch",
-    "gobuster", "kiterunner", "inql", "gowitness", "aquatone", "nuclei",
-    "dalfox", "interactsh",
+    "gobuster", "kiterunner", "inql", "gowitness", "aquatone",
+    "interactsh",
 }
+
+# Tools that live INSIDE the recon image, owned by Sigma (validation commander).
+# 5 validation tools — Sigma-exclusive. Alpha NEVER dispatches these.
+DOCKER_SIGMA_TOOLS: set[str] = {
+    "nuclei", "dalfox",          # vulnerability validation
+    "httpx", "whatweb", "wafw00f",  # fingerprinting & WAF detection
+}
+
+# Combined set for availability checks (all 39 tools in the image).
+DOCKER_ALL_TOOLS: set[str] = DOCKER_RECON_TOOLS | DOCKER_SIGMA_TOOLS
 
 
 def _to_container_path(host_path: str, raw_dir: Path, tool_root: Path) -> str | None:

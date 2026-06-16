@@ -100,8 +100,9 @@ class ZetaAgent(BrowserEnabledAgent):
         if "duration_ms" in payload:
             self.latency_window.append(payload["duration_ms"])
         
-        if "success" in payload:
-            is_error = not payload["success"] 
+        if "status" in payload:
+            status_val = payload["status"]
+            is_error = status_val in ("FAILED", "BLOCKED", "ERROR") or (isinstance(status_val, bool) and not status_val)
             self.error_window.append(is_error)
             
             # HYBRID AI: Deep Server Stress Analysis

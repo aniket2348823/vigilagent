@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import math
@@ -56,31 +57,43 @@ class DualStoreMemory:
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", scan_id or "GLOBAL")
         return self.episodic_dir / f"{safe}.json"
 
-    def remember_episode(self, scan_id: str, event: dict[str, Any]) -> None:
+    def _remember_episode_sync(self, scan_id: str, event: dict[str, Any]) -> None:
         path = self._episode_file(scan_id)
         self._ensure_json_list(path)
         rows = self._read_list(path)
         rows.append({"timestamp": time.time(), **event})
         self._write_list(path, rows[-1000:])
 
-    def remember_semantic(self, record: dict[str, Any]) -> None:
+    async def remember_episode(self, scan_id: str, event: dict[str, Any]) -> None:
+        await asyncio.to_thread(self._remember_episode_sync, scan_id, event)
+
+    def _remember_semantic_sync(self, record: dict[str, Any]) -> None:
         rows = self._read_list(self.semantic_file)
         rows.append({"timestamp": time.time(), **record})
         self._write_list(self.semantic_file, rows[-5000:])
 
-    def remember_notification(self, scan_id: str, message: str, payload: dict[str, Any] | None = None) -> None:
+    async def remember_semantic(self, record: dict[str, Any]) -> None:
+        await asyncio.to_thread(self._remember_semantic_sync, record)
+
+    def _remember_notification_sync(self, scan_id: str, message: str, payload: dict[str, Any] | None = None) -> None:
         rows = self._read_list(self.notifications_file)
         rows.append({"timestamp": time.time(), "scan_id": scan_id, "message": message, "payload": payload or {}})
         self._write_list(self.notifications_file, rows[-500:])
 
-    def pop_notifications(self, scan_id: str) -> list[dict[str, Any]]:
+    async def remember_notification(self, scan_id: str, message: str, payload: dict[str, Any] | None = None) -> None:
+        await asyncio.to_thread(self._remember_notification_sync, scan_id, message, payload)
+
+    def _pop_notifications_sync(self, scan_id: str) -> list[dict[str, Any]]:
         rows = self._read_list(self.notifications_file)
         matched = [row for row in rows if row.get("scan_id") in {scan_id, "GLOBAL"}]
         remaining = [row for row in rows if row not in matched]
         self._write_list(self.notifications_file, remaining)
         return matched
 
-    def recall_semantic(self, query_vector: list[float], top_k: int = 3, threshold: float = 0.3) -> list[dict[str, Any]]:
+    async def pop_notifications(self, scan_id: str) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._pop_notifications_sync, scan_id)
+
+    def _recall_semantic_sync(self, query_vector: list[float], top_k: int = 3, threshold: float = 0.3) -> list[dict[str, Any]]:
         rows = self._read_list(self.semantic_file)
         scored = []
         for row in rows:
@@ -89,6 +102,9 @@ class DualStoreMemory:
                 scored.append((score, row))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [{**row, "similarity": score} for score, row in scored[:top_k]]
+
+    async def recall_semantic(self, query_vector: list[float], top_k: int = 3, threshold: float = 0.3) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._recall_semantic_sync, query_vector, top_k, threshold)
 
 
 memory_store = DualStoreMemory()

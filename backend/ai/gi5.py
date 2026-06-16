@@ -26,7 +26,7 @@ import codecs
 import binascii
 import logging
 import sys
-from typing import Dict, Any, List, Set, Tuple
+from typing import Dict, Any, List, Optional, Set, Tuple
 
 logger = logging.getLogger("GI-5")
 # Route default logging to STDOUT (not stderr) so INFO startup banners are not
@@ -58,7 +58,7 @@ class GeneralIntelligence5:
     # Toxic Vectors: Word combinations that indicate specific attacks
     # When 2+ words from a set appear together, it's a confirmed attack vector
     TOXIC_VECTORS = [
-        ({"javascript", "vbscript", "expression", "eval", "onerror", "onload"}, "XSS Injection"),
+        ({"javascript", "vbscript", "expression", "eval", "onerror", "onload", "src", "href"}, "XSS Injection"),
         ({"union", "select", "insert", "drop", "table", "delete", "update"}, "SQL Injection"),
         ({"etc", "passwd", "shadow", "boot.ini", "win.ini", ".htaccess"}, "LFI/Path Traversal"),
         ({"location", "href", "cookie", "document", "window"}, "DOM Hijacking"),
@@ -67,7 +67,7 @@ class GeneralIntelligence5:
         ({"password", "token", "secret", "bearer", "apikey", "credentials"}, "Credential Exposure"),
         ({"redirect", "forward", "url", "next", "return", "goto"}, "Open Redirect"),
         ({"admin", "root", "superuser", "elevated", "privilege"}, "Privilege Escalation"),
-        ({"script", "img", "svg", "iframe", "object", "embed"}, "HTML Injection")
+        ({"iframe", "object", "embed", "applet", "base", "meta"}, "HTML Injection")
     ]
     
     # Injection Pattern Skeletons (after normalization)
@@ -90,7 +90,7 @@ class GeneralIntelligence5:
     
     # Leet-speak reversal map (for skeleton normalization)
     LEET_MAP = {
-        '1': 'i', '!': 'i', 'l': 'i', '|': 'i',
+        '1': 'i', '!': 'i', '|': 'i',
         '0': 'o', '3': 'e', '4': 'a', '7': 't',
         '@': 'a', '$': 's', '5': 's', '8': 'b', 
         '9': 'g', '6': 'g', '+': 't', '(': 'c'
@@ -373,10 +373,17 @@ class GeneralIntelligence5:
         
         return previous_row[-1]
 
-    def _detect_typosquatting(self, domain: str) -> Tuple[bool, str, int]:
-        """Detects if a domain is attempting to impersonate a trusted root."""
+    def _detect_typosquatting(self, domain: str) -> Optional[Tuple[bool, str, int]]:
+        """Detects if a domain is attempting to impersonate a trusted root.
+
+        Returns None when no match is found, or (True, impersonated_trusted_root, edit_distance).
+        Using None instead of (False, "", 0) avoids the Python truthiness bug where
+        a non-empty tuple is always truthy, causing every domain to be falsely flagged.
+        Callers should unpack: result = gi5._detect_typosquatting(domain)
+                                  if result is not None: is_typo, name, dist = result
+        """
         if not domain:
-            return (False, "", 0)
+            return None
         
         # Normalize and extract root
         normalized = self._normalize_skeleton(domain)
@@ -395,7 +402,7 @@ class GeneralIntelligence5:
             if trusted in root and root != trusted:
                 return (True, trusted, 1)
         
-        return (False, "", 0)
+        return None
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SIGMOID AGGREGATOR: Non-Linear Risk Fusion
@@ -448,7 +455,13 @@ class GeneralIntelligence5:
     # MASTER PROCESSOR: UNIFIED THREAT ASSESSMENT
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def analyze_threat(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def analyze_threat(self, payload):
+        """Analyze a threat payload. Accepts dict or string input."""
+        # FIX: Handle string payloads gracefully
+        if isinstance(payload, str):
+            payload = {"text": payload}
+        if not isinstance(payload, dict):
+            payload = {"text": str(payload)}
         """
         The OMEGA Processor.
         
@@ -508,8 +521,9 @@ class GeneralIntelligence5:
         
         # ─── PHASE 3: TYPOSQUATTING DETECTION ───
         if domain:
-            is_typosquat, impersonated, distance = self._detect_typosquatting(domain)
-            if is_typosquat:
+            typosquat_result = self._detect_typosquatting(domain)
+            if typosquat_result is not None:
+                is_typosquat, impersonated, distance = typosquat_result
                 risk_signals.append(95)
                 verdicts.append(f"Phishing: Mimics '{impersonated}' (distance: {distance})")
         
@@ -562,7 +576,12 @@ class GeneralIntelligence5:
     # LEGACY COMPATIBILITY LAYER
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def synthesize_payloads(self, base_request: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def synthesize_payloads(self, base_request):
+        """Synthesize attack payloads. Accepts dict or string input."""
+        if isinstance(base_request, str):
+            base_request = {"text": base_request}
+        if not isinstance(base_request, dict):
+            base_request = {"text": str(base_request)}
         """Legacy: Generates attack payload variants."""
         logger.info("GI-5: Synthesizing payload variants...")
         return [
@@ -600,3 +619,6 @@ brain = GeneralIntelligence5()
 
 # Legacy Alias
 GI5Engine = GeneralIntelligence5
+
+# Backward-compatible alias (FIX)
+GI5Kernel = GI5Engine

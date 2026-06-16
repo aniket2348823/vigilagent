@@ -10,6 +10,25 @@ import {
 } from '../lib/api';
 import { handleAutoDownload } from '../lib/downloadReport';
 import { useWebSocket } from '../hooks/useWebSocket';
+import FindingDetailModal from './FindingDetailModal';
+
+// Shared severity color mapping — single source of truth for badge styling
+const SEVERITY_STYLES = {
+    CRITICAL: 'bg-red-500/20 text-red-400',
+    HIGH: 'bg-orange-500/20 text-orange-400',
+    MEDIUM: 'bg-yellow-500/20 text-yellow-400',
+    LOW: 'bg-blue-500/20 text-blue-400',
+    INFO: 'bg-gray-500/20 text-gray-400',
+};
+
+const getSeverityClass = (severity) => SEVERITY_STYLES[(severity || '').toUpperCase()] || SEVERITY_STYLES.LOW;
+
+const getScoreClass = (score) => {
+    if (score >= 9.0) return SEVERITY_STYLES.CRITICAL;
+    if (score >= 7.0) return SEVERITY_STYLES.HIGH;
+    if (score >= 4.0) return SEVERITY_STYLES.MEDIUM;
+    return SEVERITY_STYLES.LOW;
+};
 
 const Scans = ({ navigate }) => {
     const starsRef = useRef(null);
@@ -17,6 +36,8 @@ const Scans = ({ navigate }) => {
     const [scans, setScans] = useState([]);
     const [hiddenIds, setHiddenIds] = useState(() => getHiddenScanIds());
     const [progressMap, setProgressMap] = useState({}); // Real-time report progress
+    const [expandedScan, setExpandedScan] = useState(null); // Expanded scan row for findings detail
+    const [selectedFinding, setSelectedFinding] = useState(null); // Finding detail modal
     const messageBuffer = useRef([]);
     const lastFlush = useRef(Date.now());
     const { subscribe } = useWebSocket();
@@ -231,13 +252,13 @@ const Scans = ({ navigate }) => {
                                         <th className="px-6">Scan Name</th>
                                         <th className="px-6">Target Scope</th>
                                         <th className="px-6">Modules</th>
-                                        <th className="px-6">Duration</th>
-                                        <th className="px-6 pr-8">
-                                            <div className="flex items-center gap-1 cursor-pointer hover:text-white transition-colors">
-                                                Completed
-                                                <span className="material-symbols-outlined text-xs">arrow_downward</span>
-                                            </div>
-                                        </th>
+                                        <th className="px-6">Duration</th>                                                    <th className="px-6">Findings</th>
+                                                    <th className="px-6 pr-8">
+                                                        <div className="flex items-center gap-1 cursor-pointer hover:text-white transition-colors">
+                                                            Completed
+                                                            <span className="material-symbols-outlined text-xs">arrow_downward</span>
+                                                        </div>
+                                                    </th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-white/5 text-gray-300">
@@ -248,7 +269,7 @@ const Scans = ({ navigate }) => {
                                                 animate={{ opacity: 1 }}
                                                 exit={{ opacity: 0 }}
                                             >
-                                                <td colSpan="6" className="text-center py-8 text-gray-500">
+                                                <td colSpan="7" className="text-center py-8 text-gray-500">
                                                     {hiddenIds.length > 0
                                                         ? `All ${hiddenIds.length} scan${hiddenIds.length === 1 ? '' : 's'} hidden from view. Use "Show hidden" to restore.`
                                                         : 'No scans recorded. Launch a new scan to see results here.'}
@@ -303,6 +324,33 @@ const Scans = ({ navigate }) => {
                                                             </span>
                                                         ) : scan.duration}
                                                     </td>
+                                                    <td className="px-6 py-5">
+                                                        {(() => {
+                                                            const findings = scan.findings || [];
+                                                            if (findings.length === 0) return <span className="text-gray-600 text-xs">—</span>;
+                                                            const highestCvss = findings.reduce((max, f) => Math.max(max, f.cvss_score || 0), 0);
+                                                            const highestVector = findings.find(f => (f.cvss_score || 0) === highestCvss)?.cvss_vector || '';
+                                                            return (                                                                        <button
+                                                                    onClick={() => setExpandedScan(expandedScan === scan.id ? null : scan.id)}
+                                                                    className="text-left group cursor-pointer"
+                                                                >
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-xs font-medium text-white">{findings.length}</span>
+                                                                        <span className={`material-symbols-outlined text-[14px] text-gray-500 transition-transform ${expandedScan === scan.id ? 'rotate-180' : ''}`}>expand_more</span>
+                                                                        {highestCvss > 0 && (
+                                                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${getScoreClass(highestCvss)}`}>\n                                                                                {highestCvss.toFixed(1)}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    {highestVector && (
+                                                                        <div className="text-[8px] text-gray-500 font-mono truncate max-w-[160px] mt-0.5" title={highestVector}>
+                                                                            {highestVector}
+                                                                        </div>
+                                                                    )}
+                                                                </button>
+                                                            );
+                                                        })()}
+                                                    </td>
                                                     <td className="px-6 pr-8 py-5">
                                                         <div className="flex items-center justify-between gap-6">
                                                             <span className="text-gray-400 text-xs">{scan.timestamp}</span>
@@ -329,6 +377,41 @@ const Scans = ({ navigate }) => {
                                                         </div>
                                                     </td>
                                                 </motion.tr>
+                                                {expandedScan === scan.id && (scan.findings || []).length > 0 && (
+                                                    <motion.tr
+                                                        key={`${scan.id}-findings`}
+                                                        initial={{ opacity: 0 }}
+                                                        animate={{ opacity: 1 }}
+                                                        exit={{ opacity: 0 }}
+                                                        className="bg-white/[0.01]"
+                                                    >
+                                                        <td colSpan="7" className="px-8 py-4">
+                                                            <div className="space-y-2">
+                                                                <h4 className="text-xs font-medium text-gray-400 mb-3">Findings ({(scan.findings || []).length})</h4>
+                                                                <div className="grid gap-2">
+                                                                    {(scan.findings || []).map((f, fi) => (
+                                                                        <div key={fi} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] cursor-pointer transition-colors" onClick={() => setSelectedFinding(f)}>
+                                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${getSeverityClass(f.cvss_severity || f.severity)}`}>
+                                                                                {(f.cvss_severity || f.severity || 'INFO').toUpperCase()}
+                                                                            </span>
+                                                                            <span className="text-xs text-white font-medium">{f.type || f.name || 'Finding'}</span>
+                                                                            <span className="text-[10px] text-gray-500 font-mono truncate flex-1" title={f.url || ''}>{f.url || ''}</span>
+                                                                            {f.cvss_score != null && (
+                                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                                    <span className="text-[10px] font-bold text-white">CVSS {Number(f.cvss_score).toFixed(1)}</span>
+                                                                                    {f.cvss_vector && (
+                                                                                        <span className="text-[8px] text-gray-500 font-mono truncate max-w-[200px]" title={f.cvss_vector}>{f.cvss_vector}</span>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
+                                                                            {f.cwe && <span className="text-[9px] text-gray-500 font-mono shrink-0">{f.cwe}</span>}
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                    </motion.tr>
+                                                )}
                                             ))
                                         )}
                                     </AnimatePresence>
@@ -337,6 +420,13 @@ const Scans = ({ navigate }) => {
                         </div>
                     </div>
                 </main>
+
+                <FindingDetailModal
+                    open={!!selectedFinding}
+                    onClose={() => setSelectedFinding(null)}
+                    finding={selectedFinding}
+                    severityStyles={SEVERITY_STYLES}
+                />
 
                 <footer className="mt-8 pb-8 text-center text-xs text-gray-500 font-light">
                     <p>Vulagent Scanner Intelligence Backbone © 2024</p>

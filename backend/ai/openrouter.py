@@ -7,6 +7,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 import aiohttp
+import asyncio
 import json
 import logging
 import os
@@ -19,7 +20,8 @@ logger = logging.getLogger("OPENROUTER")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "openai/gpt-oss-20b"
 OPENROUTER_TIMEOUT = 120  # seconds
-MAX_RETRIES = 2
+MAX_RETRIES = 3
+_MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB limit to prevent OOM
 
 # ─── Master System Prompts ────────────────────────────────────────────────────
 
@@ -117,6 +119,7 @@ class OpenRouterClient:
             self._api_key = ""
 
         self._session: Optional[aiohttp.ClientSession] = None
+        self._session_lock = asyncio.Lock()  # FIX: Eagerly initialized lock prevents race condition
         self._telemetry = {
             "calls": 0,
             "successes": 0,
@@ -136,9 +139,10 @@ class OpenRouterClient:
         return bool(self._api_key)
 
     async def _ensure_session(self):
-        if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=OPENROUTER_TIMEOUT)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+        async with self._session_lock:
+            if self._session is None or self._session.closed:
+                timeout = aiohttp.ClientTimeout(total=OPENROUTER_TIMEOUT)
+                self._session = aiohttp.ClientSession(timeout=timeout)
 
     async def call(
         self,
@@ -160,7 +164,6 @@ class OpenRouterClient:
 
         # Cancellation check
         if scan_ctx and getattr(scan_ctx, "is_cancelled", False):
-            import asyncio
             raise asyncio.CancelledError()
 
         await self._ensure_session()
@@ -189,7 +192,22 @@ class OpenRouterClient:
                     OPENROUTER_API_URL, headers=headers, json=payload
                 ) as response:
                     if response.status == 200:
-                        data = await response.json()
+                        # FIX: Check response size before reading to prevent OOM
+                        content_length = response.headers.get("Content-Length")
+                        if content_length:
+                            try:
+                                if int(content_length) > _MAX_RESPONSE_BYTES:
+                                    self._telemetry["errors"] += 1
+                                    logger.error("OPENROUTER: Response Content-Length too large: %s bytes", content_length)
+                                    return "[OPENROUTER ERROR] Response exceeded size limit."
+                            except (ValueError, TypeError):
+                                pass
+                        raw = await response.read()
+                        if len(raw) > _MAX_RESPONSE_BYTES:
+                            self._telemetry["errors"] += 1
+                            logger.error("OPENROUTER: Response too large (%d bytes)", len(raw))
+                            return "[OPENROUTER ERROR] Response exceeded size limit."
+                        data = json.loads(raw.decode("utf-8", errors="replace"))
                         result = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
                         # Track token usage
@@ -207,7 +225,12 @@ class OpenRouterClient:
                     elif response.status == 429:
                         # Rate limited — wait and retry
                         logger.warning(f"OPENROUTER: Rate limited (429). Retry {attempt + 1}/{MAX_RETRIES}")
-                        import asyncio
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+
+                    elif response.status in (502, 503, 504):
+                        # Transient server error — retry with backoff
+                        logger.warning(f"OPENROUTER: Transient HTTP {response.status}. Retry {attempt + 1}/{MAX_RETRIES}")
                         await asyncio.sleep(2 ** attempt)
                         continue
 
@@ -217,6 +240,8 @@ class OpenRouterClient:
                         self._telemetry["errors"] += 1
                         return f"[OPENROUTER ERROR] HTTP {response.status}: {error_text[:100]}"
 
+            except asyncio.CancelledError:
+                raise
             except aiohttp.ClientConnectorError:
                 self._telemetry["errors"] += 1
                 logger.error("OPENROUTER: Cannot connect to OpenRouter API")
@@ -225,7 +250,6 @@ class OpenRouterClient:
                 self._telemetry["errors"] += 1
                 logger.error(f"OPENROUTER: Unexpected error — {type(e).__name__}: {e}")
                 if attempt < MAX_RETRIES:
-                    import asyncio
                     await asyncio.sleep(1)
                     continue
                 return f"[OPENROUTER ERROR] {type(e).__name__}: {str(e)[:100]}"

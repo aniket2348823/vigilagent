@@ -85,25 +85,24 @@ class SigmaAgent(SkillRecallMixin, SessionLifecycleMixin, ControlSignalMixin,
             "{{{{cycler.__init__.__globals__.os.popen('{cmd}').read()}}}}"
         ]
 
-        # ── Technique↔tooling dispatch state (Architecture §5.2, §29.4) ──────
-        # Sigma is the tool/technique commander: per vuln hypothesis it decides
-        # built-in module vs browser action vs governed CLI tool. Mirrors the
-        # Hermes availability-aware dispatch (tools/registry.check_fn + TTL
-        # cache): a path is only chosen when it is actually runnable, in scope,
-        # and historically reliable.
+        # ── Sigma-exclusive tool dispatch (Architecture §5.2, §29.4) ──────────
+        # Sigma owns 5 validation/fingerprint tools exclusively (nuclei, httpx,
+        # dalfox, whatweb, wafw00f). These are registered in SIGMA_TOOLS and
+        # are NEVER dispatched by Alpha. Sigma decides per vuln hypothesis
+        # whether to use a built-in module, browser action, or governed CLI
+        # tool. Mirrors the Hermes availability-aware dispatch.
         #
-        # Technique → candidate governed CLI validators, in preference order.
-        # Only allowlisted recon binaries (backend/tools/recon/guardrails) can
-        # actually run; a missing entry means "no CLI path — use the module".
+        # Technique → candidate Sigma-exclusive CLI validators, in preference
+        # order. Only tools in SIGMA_TOOLS can be dispatched here.
         self._technique_tool_map = {
             "tech_sqli": [],            # custom in-process module preferred
             "tech_jwt": [],
             "tech_auth_bypass": [],
-            "recon_nuclei": ["nuclei"],
-            "recon_httpx": ["httpx"],
-            "tech_xss": ["dalfox"],
-            "tech_cve": ["nuclei"],
-            "tech_fingerprint": ["httpx", "whatweb", "wafw00f"],
+            "recon_nuclei": ["nuclei"],          # Sigma-exclusive
+            "recon_httpx": ["httpx"],             # Sigma-exclusive
+            "tech_xss": ["dalfox"],               # Sigma-exclusive
+            "tech_cve": ["nuclei"],               # Sigma-exclusive
+            "tech_fingerprint": ["httpx", "whatweb", "wafw00f"],  # all Sigma-exclusive
         }
         # Per-path reliability ledger (Architecture §29: "update tool
         # reliability"). Keyed by path id, e.g. "cli:nuclei", "module:tech_sqli".
@@ -196,22 +195,28 @@ class SigmaAgent(SkillRecallMixin, SessionLifecycleMixin, ControlSignalMixin,
             )
             return target, safe_text
         except Exception as e:
+            logger.debug(f"[{self.name}] [FETCH ERROR] {target.url}: {e}")
             return target, ""
 
     def _tool_available(self, tool: str) -> bool:
-        """Availability-aware check for a governed CLI tool, adopting the Hermes
-        registry pattern (tools/registry._check_fn_cached): probe the real
-        installer state once and TTL-cache the result so repeated dispatch
-        decisions are cheap. Resolves through the recon registry, which already
-        accounts for PATH, project bin, tool root, Go bin, pip scripts, and the
-        Docker recon image."""
+        """Availability-aware check for a Sigma-exclusive CLI tool.
+
+        Sigma owns 5 tools exclusively (nuclei, httpx, dalfox, whatweb, wafw00f)
+        as defined in SIGMA_TOOLS. This method checks install state via the
+        unified registry (check_tool_availability resolves from ALL_TOOLS).
+        Results are TTL-cached so repeated dispatch decisions are cheap."""
         now = time.time()
         cached = self._tool_avail_cache.get(tool)
         if cached and (now - cached[0]) < self._tool_avail_ttl:
             return cached[1]
         available = False
         try:
-            from backend.tools.recon.registry import check_tool_availability
+            from backend.tools.recon.registry import check_tool_availability, SIGMA_TOOLS
+            # Only allow Sigma to dispatch tools it exclusively owns.
+            if tool not in SIGMA_TOOLS:
+                logger.debug(f"[{self.name}] Tool '{tool}' is not in SIGMA_TOOLS, rejecting.")
+                self._tool_avail_cache[tool] = (now, False)
+                return False
             available = bool(check_tool_availability(tool).get("installed"))
         except Exception as e:
             logger.debug(f"[{self.name}] Tool availability check failed for {tool}: {e}")
@@ -428,25 +433,30 @@ class SigmaAgent(SkillRecallMixin, SessionLifecycleMixin, ControlSignalMixin,
             # 1/rps = delay between starts to maintain ceiling
             rate_limit_delay = 1.0 / rps if rps > 0 else 0
             
-            async def lane_fetch(t):
-                await self.bus.publish(HiveEvent(
-                    type=EventType.LIVE_ATTACK,
-                    source=self.name,
-                    scan_id=event.scan_id,
-                    payload={
-                        "url": t.url,
-                        "arsenal": module_id,
-                        "action": "Injecting mission-governed payload",
-                        "payload": str(t.payload)[:100] + ("..." if len(str(t.payload)) > 100 else "")
-                    }
-                ))
-                res = await self._fetch(t, scan_id=event.scan_id)
-                # Enforce RPS gap
-                if rate_limit_delay > 0:
-                    await asyncio.sleep(rate_limit_delay)
-                return res
+            # RATE LIMITING FIX: Use a semaphore + inter-request delay to
+            # enforce RPS ceiling. Previous code used asyncio.gather with a
+            # post-fetch sleep, which fired ALL requests simultaneously.
+            semaphore = asyncio.Semaphore(max(1, rps))  # cap inflight
+            async def lane_fetch(t, idx: int):
+                # Stagger starts: first request fires immediately, subsequent
+                # ones are paced at rate_limit_delay apart.
+                if idx > 0 and rate_limit_delay > 0:
+                    await asyncio.sleep(min(idx * rate_limit_delay, 5.0))
+                async with semaphore:
+                    await self.bus.publish(HiveEvent(
+                        type=EventType.LIVE_ATTACK,
+                        source=self.name,
+                        scan_id=event.scan_id,
+                        payload={
+                            "url": t.url,
+                            "arsenal": module_id,
+                            "action": "Injecting mission-governed payload",
+                            "payload": str(t.payload)[:100] + ("..." if len(str(t.payload)) > 100 else "")
+                        }
+                    ))
+                    return await self._fetch(t, scan_id=event.scan_id)
 
-            results = await asyncio.gather(*[lane_fetch(t) for t in targets])
+            results = await asyncio.gather(*[lane_fetch(t, i) for i, t in enumerate(targets)])
 
             
             # 3. OBSERVE: Analyze interactions

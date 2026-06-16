@@ -1,5 +1,5 @@
 """
-Skill ingestion loader (Architecture §5.3.1, §5.3.6)
+Skill ingestion loader (Architecture section5.3.1, section5.3.6)
 ================================================================================
 Skill ingestion pipeline:
   repo -> scanner -> metadata extractor -> classifier -> risk classifier
@@ -28,13 +28,16 @@ from backend.skills.classifier import (
 )
 from backend.skills.mapper import agents_for_domain, map_required_tools
 from backend.skills.policy import PromotionState, RiskClass
+import hashlib
+import hmac as _hmac
+import os as _os
 
 logger = logging.getLogger("vigilagent.skills.loader")
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _SKILLS_CONFIG = _PROJECT_ROOT / "config" / "skills.yaml"
 
-# Default skill roots (Architecture §5.3 important source folders).
+# Default skill roots (Architecture section5.3 important source folders).
 _DEFAULT_ROOTS = [
     _PROJECT_ROOT / ".agents" / "skills",
     _PROJECT_ROOT / "generated_skills",
@@ -54,7 +57,7 @@ def _resolve_root(entry: str) -> Path:
 
 def load_skill_roots(config_path: Path | None = None) -> list[Path]:
     """Build the list of skill roots from config/skills.yaml (Architecture
-    §5.3.6, §29.10), falling back to sensible defaults. Missing roots are kept
+    section5.3.6, section29.10), falling back to sensible defaults. Missing roots are kept
     in the list but skipped at scan time, so the system runs on any host."""
     cfg = config_path or _SKILLS_CONFIG
     roots: list[Path] = []
@@ -78,7 +81,7 @@ def _slugify(text: str) -> str:
 
 def validate_skill_format(fm: dict[str, Any], body: str) -> tuple[bool, list[str]]:
     """Validate a parsed SKILL.md against the expected format (Architecture
-    §5.3.6 "validate skill format"). Returns (ok, problems). Skills that fail
+    section5.3.6 "validate skill format"). Returns (ok, problems). Skills that fail
     validation are still ingested but flagged, so the catalog records coverage
     gaps instead of silently dropping skills."""
     problems: list[str] = []
@@ -104,15 +107,50 @@ def _parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
                     if isinstance(fm, dict):
                         return fm, body
                 except Exception as e:
-                    logger.debug("[SkillLoader] YAML frontmatter parse failed for %s: %s", path if hasattr(path, 'name') else '?', e)
+                    logger.debug("[SkillLoader] YAML frontmatter parse failed: %s", e)
     return {}, content
 
 
+# HMAC integrity verification for skill files (Architecture security hardening)
+_SKILL_HMAC_KEY = _os.getenv('VIGILAGENT_SKILL_HMAC_KEY', '')
+
+def _verify_skill_integrity(path: Path, content: str) -> bool:
+    """Verify skill file integrity via HMAC if a key is configured."""
+    if not _SKILL_HMAC_KEY:
+        return True  # No key configured, skip verification
+    
+    hmac_path = path.with_suffix('.md.hmac')
+    if not hmac_path.exists():
+        logger.warning("[SkillLoader] %s: missing .hmac integrity file (key configured) — REJECTING", path)
+        return False  # Key configured but no integrity file: reject to prevent tampering
+    
+    try:
+        expected = hmac_path.read_text(encoding='utf-8').strip()
+        actual = _hmac.new(
+            _SKILL_HMAC_KEY.encode('utf-8'),
+            content.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        if not _hmac.compare_digest(expected, actual):
+            logger.error("[SkillLoader] %s: HMAC MISMATCH - file may be tampered!", path)
+            return False
+        return True
+    except Exception as exc:
+        logger.warning("[SkillLoader] %s: HMAC verification failed: %s", path, exc)
+        return True  # Graceful degradation
+
+
 def _meta_from_skill_md(path: Path) -> Optional[SkillMeta]:
+    """Parse a SKILL.md file and verify its integrity before processing."""
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
     except Exception as exc:
         logger.warning("Could not read skill %s: %s", path, exc)
+        return None
+
+    # Verify file integrity before processing (security hardening)
+    if not _verify_skill_integrity(path, content):
+        logger.error("[SkillLoader] SKIPPING tampered skill: %s", path)
         return None
 
     fm, body = _parse_frontmatter(content)
@@ -171,7 +209,7 @@ def _meta_from_skill_md(path: Path) -> Optional[SkillMeta]:
 
 
 class SkillLoader:
-    """Scans skill roots and populates the catalog (Architecture §5.3.1)."""
+    """Scans skill roots and populates the catalog (Architecture section5.3.1)."""
 
     def __init__(self, roots: list[Path] | None = None, catalog: SkillCatalog | None = None) -> None:
         self.roots = roots or load_skill_roots()
@@ -180,18 +218,18 @@ class SkillLoader:
     def load_all(self) -> int:
         """Ingest every SKILL.md under the configured roots. Returns count.
 
-        Also processes index.json and the mappings/ folder per Architecture §5.3,
+        Also processes index.json and the mappings/ folder per Architecture section5.3,
         merging ATT&CK/OWASP/NIST mappings into the matching catalog entries."""
         count = 0
         pending_maps: dict[str, dict] = {}
         for root in self.roots:
             if not root.exists():
                 continue
-            # index.json (Architecture §5.3 / §5.3.6).
+            # index.json (Architecture section5.3 / section5.3.6).
             index = root / "index.json"
             if index.exists():
                 pending_maps.update(self._read_index(index))
-            # mappings/ folder (ATT&CK/OWASP/NIST coverage files, §5.3).
+            # mappings/ folder (ATT&CK/OWASP/NIST coverage files, section5.3).
             mappings_dir = root / "mappings"
             if mappings_dir.is_dir():
                 pending_maps.update(self._read_mappings(mappings_dir))
@@ -209,7 +247,7 @@ class SkillLoader:
 
     @staticmethod
     def _read_index(index_path: Path) -> dict[str, dict]:
-        """Read index.json → {skill_key: {attack, owasp, nist, ...}}."""
+        """Read index.json -> {skill_key: {attack, owasp, nist, ...}}."""
         try:
             data = json.loads(index_path.read_text(encoding="utf-8"))
         except Exception as e:
@@ -230,7 +268,7 @@ class SkillLoader:
 
     @staticmethod
     def _read_mappings(mappings_dir: Path) -> dict[str, dict]:
-        """Read mappings/*.json|*.md files → {skill_key: {attack/owasp/nist}}."""
+        """Read mappings/*.json|*.md files -> {skill_key: {attack/owasp/nist}}."""
         out: dict[str, dict] = {}
         for f in mappings_dir.rglob("*"):
             if f.suffix.lower() == ".json":

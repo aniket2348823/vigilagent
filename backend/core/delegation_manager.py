@@ -185,38 +185,11 @@ class ChildSpec:
         "jwt_tokens", "auth_headers", "vault_tokens",
     })
 
-
-    # Context sanitization: allowlist-based to prevent secret leakage
-    SAFE_CONTEXT_KEYS = frozenset({
-        "target", "target_url", "scope", "scope_policy",
-        "scan_id", "phase", "strategy",
-        "previous_findings", "entities", "endpoints", "services", "ports",
-        "wordlist_path", "aggression_level", "method", "targets",
-    })
-
-    BLOCKED_CONTEXT_KEYS = frozenset({
-        "api_keys", "tokens", "credentials", "secrets",
-        "passwords", "private_keys", "session_cookies",
-        "jwt_tokens", "auth_headers", "vault_tokens",
-    })
-
-    def sanitize_context(self) -> Dict:
-        r"""Return only safe context keys for child workers."""
-        if not self.context:
-            return {}
-        safe = {}
-        for key, value in self.context.items():
-            if key in self.SAFE_CONTEXT_KEYS and key not in self.BLOCKED_CONTEXT_KEYS:
-                safe[key] = value
-            elif key not in self.BLOCKED_CONTEXT_KEYS:
-                _logger.debug("Dropping unknown context key '%s'", key)
-        return safe
     def sanitize_context(self) -> Dict[str, Any]:
         """Return only safe context keys for child workers.
 
         Uses allowlist approach: only passes known-safe keys.
         """
-        _logger = logging.getLogger(__name__)
         if not self.context:
             return {}
         safe = {}
@@ -230,6 +203,7 @@ class ChildSpec:
                 )
         return safe
 
+@dataclass
 class ChildResult:
     """Structured child-agent return object (Architecture §5, ResultPacket)."""
 
@@ -486,7 +460,7 @@ class DelegationManager:
             except Exception as redis_exc:
                 logger.debug(f"Delegation result key read failed: {redis_exc}")
                 raw = None
-        if raw:
+            if raw:
                 import json
                 data = json.loads(raw)
                 raw_status = str(data.get("status", "completed"))
@@ -502,7 +476,7 @@ class DelegationManager:
                     summary=data.get("summary", ""),
                     budget_used=data.get("budget_used", 0),
                 )
-        await asyncio.sleep(1.0)
+            await asyncio.sleep(1.0)
         return ChildResult(child_id, spec.agent_class, "timeout",
                            summary="worker result not received in time")
 

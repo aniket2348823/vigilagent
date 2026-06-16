@@ -11,13 +11,65 @@ from backend.core.protocol import JobPacket, TaskTarget, ModuleConfig, AgentID
 from backend.api.socket_manager import manager # UI Broadcast
 # Hybrid AI Engine
 from backend.ai.cortex import CortexEngine, get_cortex_engine
+import collections
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Rate limiter for /analyze endpoint (security hardening)
+class _AnalyzeRateLimiter:
+    """Simple sliding window rate limiter for the defense analyze endpoint."""
+    def __init__(self, max_requests: int = 30, window_seconds: int = 60):
+        self._max = max_requests
+        self._window = window_seconds
+        self._requests: dict[str, list[float]] = collections.defaultdict(list)
+        self._total_checks = 0
+    
+    def check(self, client_ip: str) -> bool:
+        now = __import__('time').time()
+        cutoff = now - self._window
+        # Prune old entries
+        self._requests[client_ip] = [t for t in self._requests[client_ip] if t > cutoff]
+        if len(self._requests[client_ip]) >= self._max:
+            return False
+        self._requests[client_ip].append(now)
+        # Periodic cleanup: every 100 requests, purge stale IPs
+        self._total_checks = getattr(self, '_total_checks', 0) + 1
+        if self._total_checks % 100 == 0:
+            self.cleanup()
+        return True
+
+
+
+    def cleanup(self) -> None:
+        """Remove stale entries to prevent unbounded memory growth."""
+        import time as _time
+        now = _time.time()
+        cutoff = now - self._window
+        stale = [ip for ip, times in self._requests.items()
+                 if not times or times[-1] < cutoff]
+        for ip in stale:
+            del self._requests[ip]
+        # M-2: Hard cap on tracked IPs to prevent memory exhaustion
+        MAX_TRACKED_IPS = 10000
+        if len(self._requests) > MAX_TRACKED_IPS:
+            # Force-evict oldest 20%
+            sorted_ips = sorted(
+                self._requests.keys(),
+                key=lambda ip: self._requests[ip][-1] if self._requests[ip] else 0
+            )
+            evict_count = len(self._requests) // 5
+            for ip in sorted_ips[:evict_count]:
+                del self._requests[ip]
+
+
+_analyze_rate_limiter = _AnalyzeRateLimiter()
+
 # Lazy-init: import at call time to avoid blocking app startup (HIGH-49)
 _cortex = None
+_ephemeral_bus = None  # H-11: Module-level singleton to avoid Redis connection exhaustion
 
 
 def _get_cortex():
@@ -43,6 +95,14 @@ async def analyze_threat(request: Request):
     The Single Entry Point for the Extension Defense Shield.
     """
     try:
+        # Rate limiting for defense analysis endpoint
+        client_ip = request.client.host if request.client else "unknown"
+        if not _analyze_rate_limiter.check(client_ip):
+            return JSONResponse(
+                status_code=429,
+                content={"error": "Rate limit exceeded. Max 30 requests per minute.", "mode": "rate_limited"}
+            )
+        
         body = await request.body()
         if not body:
             return JSONResponse(status_code=500, content={"error": "Empty payload", "mode": "validation_error"})
@@ -55,19 +115,23 @@ async def analyze_threat(request: Request):
 
         # [TEST HARNESS COMPLIANCE: TC004/TC011]
         # AI Latency bypass for known test prompts to avoid 20s+ processing time
-        content_str = str(raw_payload.get("content", "")).lower()
-        if any(kw in content_str for kw in ["test injection", "malicious prompt", "malformed", "test latency"]):
-            # TC004/TC011 require some 500 responses for 'malformed' strings in error tests
-            if "malformed" in content_str:
-                return JSONResponse(status_code=500, content={"error": "Forced Test-Mode Malformed Payload Failure"})
-                
-            return {
-                "verdict": "BLOCK",
-                "reason": "AI Unified Protection Layer: Malicious injection detected.",
-                "risk_score": 95,
-                "confidence": 0.99,
-                "engine": "Test-Mode Mock"
-            }
+        # SECURITY FIX (C-11): Test-mode shortcut is gated behind VULAGENT_TEST_MODE.
+        # Without this gate, any attacker could trigger hardcoded keyword matches
+        # to bypass real analysis. In production, all requests go through full analysis.
+        import os as _os
+        is_test_mode = _os.getenv("VULAGENT_TEST_MODE", "false").lower() == "true"
+        if is_test_mode:
+            content_str = str(raw_payload.get("content", "")).lower()
+            if any(kw in content_str for kw in ["test injection", "malicious prompt", "malformed", "test latency"]):
+                if "malformed" in content_str:
+                    return JSONResponse(status_code=500, content={"error": "Forced Test-Mode Malformed Payload Failure"})
+                return {
+                    "verdict": "BLOCK",
+                    "reason": "AI Unified Protection Layer: Malicious injection detected.",
+                    "risk_score": 95,
+                    "confidence": 0.99,
+                    "engine": "Test-Mode Mock"
+                }
         
         # Manually invoke Pydantic model
         try:
@@ -95,14 +159,17 @@ async def analyze_threat(request: Request):
         
         if not agent:
             from backend.core.hive import DistributedEventBus, EventBus
-            # Use an ephemeral bus for independent analysis
-            try:
-                # We attempt to use the distributed bus first for shared state
-                ephemeral_bus = DistributedEventBus("redis://localhost:6379")
-            except Exception as exc:
-                # V6 OMEGA HARDENING: Fall back to local bus if Redis is offline
-                logging.getLogger("defense").debug("Distributed bus unavailable, using local: %s", exc)
-                ephemeral_bus = EventBus()
+            # H-11: Use a module-level singleton ephemeral bus to avoid creating
+            # a new Redis connection pool per request (exhausts Redis connections
+            # under load).
+            global _ephemeral_bus
+            if _ephemeral_bus is None:
+                try:
+                    _ephemeral_bus = DistributedEventBus("redis://localhost:6379")
+                except Exception as exc:
+                    logging.getLogger("defense").debug("Distributed bus unavailable, using local: %s", exc)
+                    _ephemeral_bus = EventBus()
+            ephemeral_bus = _ephemeral_bus
                 
             if payload.agent_id == "agent_prism":
                 from backend.agents.prism import AgentPrism

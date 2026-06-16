@@ -153,7 +153,10 @@ const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
                             threat_type: data.payload?.type || 'VULNERABILITY',
                             url: data.payload?.url || data.payload?.id || 'Confirmed Exploit',
                             severity: confirmedSev,
-                            risk_score: severityToRisk(confirmedSev)
+                            risk_score: severityToRisk(confirmedSev),
+                            cvss_score: data.payload?.cvss_score || null,
+                            cvss_vector: data.payload?.cvss_vector || '',
+                            cwe: data.payload?.cwe || '',
                         };
                     } else if (data.type === 'LOG') {
                         threat = {
@@ -476,7 +479,7 @@ const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
                                         </span>
                                     )}
                                 </div>
-                                <div className="flex-grow overflow-y-auto scrollbar-thin px-1">
+                                <div className="flex-grow overflow-y-auto overflow-x-auto scrollbar-thin px-1">
                                     {(persistentState.threat_feed || []).length === 0 ? (
                                         <div className="flex items-center justify-center h-full text-gray-600 opacity-40">
                                             <div className="text-center">
@@ -492,6 +495,7 @@ const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
                                                     <th className="px-4 py-2 font-medium">Agent</th>
                                                     <th className="px-4 py-2 font-medium">Type</th>
                                                     <th className="px-4 py-2 font-medium">Target</th>
+                                                    <th className="px-4 py-2 font-medium">CVSS 4.0</th>
                                                     <th className="px-4 py-2 font-medium">Severity</th>
                                                 </tr>
                                             </thead>
@@ -511,6 +515,20 @@ const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
                                                             <td className="px-4 py-2 text-purple-300 font-mono">{t.agent}</td>
                                                             <td className="px-4 py-2 text-gray-300 font-mono">{t.threat_type}</td>
                                                             <td className="px-4 py-2 text-gray-400 font-mono truncate max-w-[200px]" title={t.url}>{t.url}</td>
+                                                            <td className="px-4 py-2 w-[140px]">
+                                                                {t.cvss_score != null ? (
+                                                                    <div className="flex flex-col">
+                                                                        <span className="text-[10px] font-bold text-white">{Number(t.cvss_score).toFixed(1)}</span>
+                                                                        {t.cvss_vector && (
+                                                                            <span className="text-[8px] text-gray-500 font-mono truncate" title={t.cvss_vector}>
+                                                                                {t.cvss_vector}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                ) : (
+                                                                    <span className="text-gray-600 text-[10px]">—</span>
+                                                                )}
+                                                            </td>
                                                             <td className="px-4 py-2">
                                                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${sevClass}`}>
                                                                     {t.severity || 'INFO'}

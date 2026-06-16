@@ -61,10 +61,23 @@ class ForensicCollector:
                 return
             
             # Derive encryption key from password using PBKDF2
+            # HIGH-18: Use per-installation salt from env or persisted random,
+            # not a static constant that's the same across all deployments.
+            salt = os.getenv("FORENSIC_SALT")
+            if not salt:
+                salt_file = self.storage_dir / ".forensic_salt"
+                try:
+                    if salt_file.exists():
+                        salt = salt_file.read_bytes().strip().decode()
+                    else:
+                        salt = os.urandom(16).hex()
+                        salt_file.write_text(salt)
+                except Exception:
+                    salt = "forensic_salt_v1"  # last resort
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
                 length=32,
-                salt=b'forensic_salt_v1',  # In production, use a random salt stored securely
+                salt=salt.encode() if isinstance(salt, str) else salt,
                 iterations=100000,
             )
             key = base64.urlsafe_b64encode(kdf.derive(key_material.encode()))
@@ -77,6 +90,12 @@ class ForensicCollector:
             self.cipher = None
             self.encryption_enabled = False
     
+    def _write_bytes(self, filepath: Path, data: bytes) -> None:
+        """Synchronous file write helper — called via asyncio.to_thread (§29.13)."""
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, 'wb') as f:
+            f.write(data)
+
     def _encrypt_data(self, data: bytes) -> bytes:
         """
         Encrypt data if encryption is enabled.
@@ -146,10 +165,8 @@ class ForensicCollector:
                 screenshot_bytes = await context.screenshot(full_page=full_page)
                 
                 # Encrypt if enabled
-                encrypted_data = self._encrypt_data(screenshot_bytes)
-                
-                with open(filepath, 'wb') as f:
-                    f.write(encrypted_data)
+                encrypted_data = self._encrypt_data(screenshot_bytes)        # Write in a thread to avoid blocking the event loop (§29.13)
+        await asyncio.to_thread(self._write_bytes, filepath, encrypted_data)
                     
             elif engine == "pinchtab":
                 # PinchTab screenshot (placeholder - depends on PinchTab API)
@@ -228,9 +245,8 @@ class ForensicCollector:
             # Encrypt if enabled
             encrypted_data = self._encrypt_data(data)
             
-            # Save
-            with open(filepath, 'wb') as f:
-                f.write(encrypted_data)
+            # Save (async file write to avoid blocking event loop)
+            await asyncio.to_thread(self._write_bytes, filepath, encrypted_data)
             
             # Store metadata
             self._add_evidence(scan_id, {
@@ -294,9 +310,8 @@ class ForensicCollector:
             # Encrypt if enabled
             encrypted_data = self._encrypt_data(data)
             
-            # Save
-            with open(filepath, 'wb') as f:
-                f.write(encrypted_data)
+            # Save (async file write)
+            await asyncio.to_thread(self._write_bytes, filepath, encrypted_data)
             
             # Store metadata
             self._add_evidence(scan_id, {
@@ -359,9 +374,8 @@ class ForensicCollector:
             # Encrypt if enabled
             encrypted_data = self._encrypt_data(data)
             
-            # Save
-            with open(filepath, 'wb') as f:
-                f.write(encrypted_data)
+            # Save (async file write)
+            await asyncio.to_thread(self._write_bytes, filepath, encrypted_data)
             
             # Store metadata
             self._add_evidence(scan_id, {
@@ -432,20 +446,17 @@ class ForensicCollector:
             # Encrypt if enabled
             encrypted_data = self._encrypt_data(compressed_data)
             
-            # Save bundle
-            with open(bundle_path, 'wb') as f:
-                f.write(encrypted_data)
+            # Save bundle (async file write)
+            await asyncio.to_thread(self._write_bytes, bundle_path, encrypted_data)
             
             return str(bundle_path)
             
         except Exception as e:
             logger.error(f"[ForensicCollector] Evidence bundling failed: {e}")
-            return None
-    
-    def _add_evidence(self, scan_id: str, evidence: Dict[str, Any]):
+            return None    def _add_evidence(self, scan_id: str, evidence: Dict[str, Any]):
         """
         Add evidence metadata to cache.
-        
+
         Args:
             scan_id: Scan identifier
             evidence: Evidence metadata
@@ -454,6 +465,9 @@ class ForensicCollector:
             self.evidence_cache[scan_id] = []
         
         self.evidence_cache[scan_id].append(evidence)
+        # HIGH-23: Bound evidence cache per scan to prevent unbounded growth
+        if len(self.evidence_cache[scan_id]) > 1000:
+            self.evidence_cache[scan_id] = self.evidence_cache[scan_id][-500:]
     
     def get_evidence_summary(self, scan_id: str) -> Dict[str, Any]:
         """

@@ -237,18 +237,37 @@ class RedisClient:
             logger.error(f"Failed to acquire lock {key}: {e}")
             return False
     
-    async def release_lock(self, key: str) -> None:
+    async def release_lock(self, key: str, owner: str | None = None) -> None:
         """
         Release a distributed lock.
+
+        SECURITY FIX (C-5): Owner is now REQUIRED for safe release. Without
+        ownership verification, a stale ``release_lock`` call from a previous
+        holder could destroy a new holder's lock after TTL expiry.
         
         Args:
             key: Lock key
+            owner: Owner value to verify before deleting. If None, the lock
+                   is NOT deleted (safe default).
         """
         if not self._is_healthy or not self._client:
             return
         
         try:
-            await self._client.delete(key)
+            if owner:
+                # Atomic check-and-delete via Lua script
+                lua_script = """
+                if redis.call("get", KEYS[1]) == ARGV[1] then
+                    return redis.call("del", KEYS[1])
+                else
+                    return 0
+                end
+                """
+                await self._client.eval(lua_script, 1, key, owner)
+            else:
+                # SECURITY: Refuse to delete without owner verification.
+                # Log a warning so callers know they need to pass owner.
+                logger.warning("release_lock called without owner for key '%s' — refusing unsafe delete", key)
         except Exception as e:
             logger.error(f"Failed to release lock {key}: {e}")
 
@@ -280,3 +299,28 @@ async def shutdown_redis_client() -> None:
     if _redis_client is not None:
         await _redis_client.shutdown()
         _redis_client = None
+
+
+# ============================================================
+# Synchronous Redis access wrapper (FIX: async/sync bridge)
+# ============================================================
+_sync_redis_instance = None
+
+def get_sync_redis():
+    """Get a synchronous Redis connection for use in sync code."""
+    global _sync_redis_instance
+    if _sync_redis_instance is not None:
+        try:
+            _sync_redis_instance.ping()
+            return _sync_redis_instance
+        except Exception:
+            pass
+    try:
+        import redis as _redis_mod
+        url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+        _sync_redis_instance = _redis_mod.Redis.from_url(url, decode_responses=True)
+        _sync_redis_instance.ping()
+        return _sync_redis_instance
+    except Exception as e:
+        logger.warning(f"Sync Redis unavailable: {e}")
+        return None

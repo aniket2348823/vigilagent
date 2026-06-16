@@ -66,6 +66,10 @@ class Learning:
             self.timestamp = datetime.utcnow()
 
 
+_MAX_STRATEGIES = 500
+_MAX_FAILED_APPROACHES = 200
+
+
 class LearningIntegrator:
     """Integrates learning from action outcomes"""
     
@@ -125,6 +129,10 @@ class LearningIntegrator:
                 # Increment success count
                 self.successful_strategies[strategy_key].success_count += 1
             else:
+                # Evict oldest entry if at capacity
+                if len(self.successful_strategies) >= _MAX_STRATEGIES:
+                    oldest_key = min(self.successful_strategies, key=lambda k: self.successful_strategies[k].success_count)
+                    del self.successful_strategies[oldest_key]
                 # Add new strategy
                 self.successful_strategies[strategy_key] = strategy
             
@@ -168,6 +176,10 @@ class LearningIntegrator:
                 self.failed_approaches[approach_key].failure_count += 1
                 self.failed_approaches[approach_key].last_failure = datetime.utcnow()
             else:
+                # Evict oldest entry if at capacity
+                if len(self.failed_approaches) >= _MAX_FAILED_APPROACHES:
+                    oldest_key = min(self.failed_approaches, key=lambda k: self.failed_approaches[k].failure_count)
+                    del self.failed_approaches[oldest_key]
                 # Add new failed approach
                 self.failed_approaches[approach_key] = approach
             
@@ -287,8 +299,9 @@ class LearningIntegrator:
         """
         if approach_type in self.failed_approaches:
             approach = self.failed_approaches[approach_type]
-            # Avoid if failed 3+ times
-            if approach.failure_count >= 3:
+            # Use config threshold instead of hardcoded 3
+            threshold = self.config.stuck_state_threshold
+            if approach.failure_count >= threshold:
                 logger.debug(f"[LearningIntegrator] Avoiding approach {approach_type} (failed {approach.failure_count} times)")
                 return True
         return False

@@ -20,6 +20,9 @@ class RateLimiter:
     Uses threading.Lock for thread-safety when accessed from asyncio.to_thread.
     """
     
+    # Maximum number of distinct IP+endpoint buckets to prevent unbounded memory growth
+    MAX_BUCKETS = 50000
+
     def __init__(self):
         # Structure: {ip: {endpoint: (tokens, last_refill_time)}}
         self._buckets: Dict[str, Dict[str, Tuple[float, float]]] = defaultdict(dict)
@@ -97,12 +100,34 @@ class RateLimiter:
                     headers={"Retry-After": str(retry_after)}
                 )
     
-    async def cleanup_old_buckets(self, max_age_seconds: int = 3600):
-        """Remove buckets for IPs that haven't made requests recently."""
+    async def cleanup_old_buckets(self, max_age_seconds: int = 1800):
+        """Remove buckets for IPs that haven't made requests recently.
+
+        SECURITY FIX: Reduced max_age from 3600 to 1800s and added a hard
+        cap on total bucket count to prevent unbounded memory growth from
+        distributed scanners or bots generating millions of unique IPs.
+        """
         current_time = time.time()
         ips_to_remove = []
         
         with self._lock:
+            total_buckets = sum(len(eps) for eps in self._buckets.values())
+            # Hard cap: if we exceed MAX_BUCKETS, force-evict oldest 25%
+            if total_buckets > self.MAX_BUCKETS:
+                all_entries = []
+                for ip, endpoints in self._buckets.items():
+                    for endpoint, (tokens, last_refill) in endpoints.items():
+                        all_entries.append((last_refill, ip, endpoint))
+                all_entries.sort(key=lambda x: x[0])
+                evict_count = len(all_entries) // 4
+                for _, ip, endpoint in all_entries[:evict_count]:
+                    self._buckets.get(ip, {}).pop(endpoint, None)
+                # Clean up empty IPs
+                ips_to_remove = [ip for ip, eps in self._buckets.items() if not eps]
+                for ip in ips_to_remove:
+                    del self._buckets[ip]
+                ips_to_remove = []
+            
             for ip, endpoints in self._buckets.items():
                 endpoints_to_remove = []
                 for endpoint, (tokens, last_refill) in endpoints.items():
@@ -149,8 +174,18 @@ def rate_limit(endpoint_override: str = None):
                 request = kwargs.get('request')
             
             if request:
-                # Get client IP
+                # Get client IP — support X-Forwarded-For for reverse proxies/LBs
+                # HIGH-14: Falls back to X-Forwarded-For first header value when
+                # request.client.host is a known LB/loopback address.
                 client_ip = request.client.host if request.client else "unknown"
+                forwarded = request.headers.get("x-forwarded-for")
+                if forwarded:
+                    # Take the first (leftmost) IP which is the original client
+                    client_ip = forwarded.split(",")[0].strip()
+                elif client_ip in ("127.0.0.1", "::1", ""):
+                    real_ip = request.headers.get("x-real-ip")
+                    if real_ip:
+                        client_ip = real_ip.strip()
                 
                 # Use override endpoint or actual path
                 endpoint = endpoint_override or request.url.path

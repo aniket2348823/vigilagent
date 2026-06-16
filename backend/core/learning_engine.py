@@ -95,6 +95,9 @@ class ContinuousLearningEngine:
         self.redis_client = redis_client
         self._learning_cache: Dict[str, bool] = {}
         
+        # H-12: Hard cap on pattern count to prevent unbounded memory growth
+        self.MAX_PATTERNS = 10000
+        
         # HIGH-67: Dirty-flag batching — avoid rewriting the entire JSON
         # file on every single pattern change.
         self._patterns_dirty = False
@@ -119,6 +122,16 @@ class ContinuousLearningEngine:
         try:
             data = json.loads(self.patterns_file.read_text(encoding="utf-8"))
             for item in data:
+                # M-8: Validate required fields before constructing LearningPattern
+                required = {"pattern_id", "pattern_type", "pattern_data", "confidence",
+                            "success_count", "failure_count", "last_seen", "first_seen", "scan_count"}
+                if not required.issubset(item.keys()):
+                    continue
+                # Ensure numeric fields are valid
+                item["confidence"] = float(item.get("confidence", 0))
+                item["success_count"] = int(item.get("success_count", 0))
+                item["failure_count"] = int(item.get("failure_count", 0))
+                item["scan_count"] = int(item.get("scan_count", 0))
                 pattern = LearningPattern(**item)
                 self.patterns[pattern.pattern_id] = pattern
             logger.debug(f"[LearningEngine] Loaded {len(self.patterns)} patterns from disk")
@@ -198,6 +211,21 @@ class ContinuousLearningEngine:
         """
         self._save_patterns()
         self._save_metrics()
+
+    def _evict_low_confidence_patterns(self):
+        """H-12: Evict lowest-confidence patterns when at MAX_PATTERNS capacity."""
+        if len(self.patterns) <= self.MAX_PATTERNS:
+            return
+        # Sort by confidence ascending (lowest first), evict bottom 20%
+        sorted_patterns = sorted(
+            self.patterns.values(),
+            key=lambda p: (p.confidence, p.success_count)
+        )
+        evict_count = len(self.patterns) - int(self.MAX_PATTERNS * 0.8)
+        for pattern in sorted_patterns[:evict_count]:
+            self.patterns.pop(pattern.pattern_id, None)
+        if evict_count > 0:
+            logger.info(f"[LearningEngine] Evicted {evict_count} low-confidence patterns")
 
     def _generate_pattern_id(self, pattern_type: str, pattern_data: Dict[str, Any]) -> str:
         """Generate unique pattern ID."""
@@ -286,6 +314,10 @@ class ContinuousLearningEngine:
             pattern.update_confidence()
             self.patterns[pattern_id] = pattern
         
+        # H-12: Evict lowest-confidence patterns when at capacity
+        if len(self.patterns) > self.MAX_PATTERNS:
+            self._evict_low_confidence_patterns()
+        
         self._mark_patterns_dirty()
     
     async def _learn_payload_pattern(self, vuln_type: str, payload: str, success: bool):
@@ -337,7 +369,12 @@ class ContinuousLearningEngine:
             return
         
         try:
-            episodes = json.loads(episode_file.read_text(encoding="utf-8"))
+            # HIGH-67: Run synchronous file read off the event loop to avoid
+            # blocking other coroutines during large episode files.
+            raw_text = await asyncio.to_thread(
+                episode_file.read_text, encoding="utf-8"
+            )
+            episodes = json.loads(raw_text)
             vuln_events = [e for e in episodes if e.get("type") == "vulnerability"]
             
             if len(vuln_events) < 2:

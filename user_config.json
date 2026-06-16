@@ -1,1 +1,5 @@
-{"secret": "XOGL46BOLQBTW5BE5A24354QFCJDDD5K", "enabled": true}
+{
+  "enabled": true,
+  "secret_source": "env:VIGILAGENT_USER_SECRET",
+  "note": "Secret must be provided via VIGILAGENT_USER_SECRET environment variable"
+}

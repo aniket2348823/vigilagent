@@ -200,7 +200,7 @@ class PerformanceOptimizer:
         }
         
         if recommendation["recommend_http"]:
-            logger.info(f"[PerfOptimizer] Recommending HTTP (${speedup_factor:.1f}x faster)")
+            logger.info(f"[PerfOptimizer] Recommending HTTP ({speedup_factor:.1f}x faster)")
         
         return recommendation
     

@@ -44,3 +44,10 @@ def parse_nuclei_jsonl(path: Path | str) -> list[ParsedEntity]:
         entities.append(ParsedEntity(kind=kind, label=f"nuclei:{template_id}:{matched}",
             confidence=conf, properties=props, source_tool="nuclei", phase="template_validation"))
     return entities
+
+class NucleiParser:
+    """Parser wrapper for backward compatibility."""
+    @staticmethod
+    def parse_nuclei_jsonl(*args, **kwargs):
+        return parse_nuclei_jsonl(*args, **kwargs)
+

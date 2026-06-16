@@ -76,10 +76,9 @@ def _validate_auth(authorization: str = None):
             return False, session
 
     if not session.get("authenticated"):
-        # If they provided an authorization header but no session exists, we reject it
-        if authorization:
-           return False, session
-        return True, session  # No active session means no auth enforcement
+        # SECURITY FIX (C-1): No active session means auth is required.
+        # Return False so unauthenticated requests are rejected by default.
+        return False, session
         
     # Active session exists — validate the token from the header
     if not authorization or not authorization.startswith("Bearer "):

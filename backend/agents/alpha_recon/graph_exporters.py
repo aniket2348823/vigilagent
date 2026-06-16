@@ -71,10 +71,16 @@ class Neo4jExporter:
         lines.append("")
 
         # Relationship creation
+        # SECURITY FIX (C-14): Sanitize rel_type to prevent Cypher injection.
+        # Only allow alphanumeric characters and underscores in relationship names.
+        import re as _re
         for rel in relationships:
             src_id = rel.get("src_entity_id", "")
             dst_id = rel.get("dst_entity_id", "")
-            rel_type = rel.get("relationship", "RELATED_TO").upper().replace(" ", "_")
+            raw_rel = rel.get("relationship", "RELATED_TO")
+            rel_type = _re.sub(r'[^A-Za-z0-9_]', '_', raw_rel.upper())
+            if not rel_type:
+                rel_type = "RELATED_TO"
             conf = rel.get("confidence", 0.5)
             lines.append(
                 f"MATCH (a {{id: {json.dumps(src_id)}}}), (b {{id: {json.dumps(dst_id)}}}) "

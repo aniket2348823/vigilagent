@@ -274,3 +274,6 @@ def _is_private_like(host: str) -> bool:
 # Global guard. Loads engagement scope from config/scope.yaml when present,
 # otherwise starts in safe passive/recon-only mode.
 scope_guard = ScopePolicy.from_yaml()
+
+# Backward-compatible alias (FIX)
+ScopeGuard = ScopePolicy

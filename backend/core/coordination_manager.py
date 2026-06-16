@@ -11,6 +11,7 @@ This manager:
 """
 
 import logging
+import time
 from typing import Dict, Any, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 from enum import Enum
@@ -125,10 +126,18 @@ class CoordinationManager:
         if self.agent_id.lower() != "omega":
             return
         
+        # HIGH-41: Stamp with timestamp for correct age-based eviction
+        capabilities["_updated_at"] = time.time()
         self._meta_awareness[agent_id] = capabilities
-        # HIGH-41: Evict oldest entry when capacity exceeded
+        # HIGH-41: Evict oldest entry when capacity exceeded.
+        # Use insertion-order (Python 3.7+ dict) + timestamp to ensure
+        # the truly oldest entry is evicted, not an arbitrary one.
         if len(self._meta_awareness) > self._meta_awareness_max:
-            oldest_key = next(iter(self._meta_awareness))
+            # Find entry with oldest _updated_at timestamp
+            oldest_key = min(
+                self._meta_awareness,
+                key=lambda k: self._meta_awareness[k].get("_updated_at", 0),
+            )
             del self._meta_awareness[oldest_key]
         logger.debug(f"[CoordinationManager] Updated meta-awareness for {agent_id}")
     

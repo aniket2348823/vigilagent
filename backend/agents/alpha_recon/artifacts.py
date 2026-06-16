@@ -26,15 +26,26 @@ class ArtifactStore:
         self.manifest_path = root / "artifact_manifest.json"
         self._manifest: list[dict[str, Any]] = []
 
+    def _safe_resolve(self, relative: str) -> Path:
+        """Resolve a relative path safely, preventing path traversal (C-10).
+
+        Raises ValueError if the resolved path escapes self.root.
+        """
+        resolved = (self.root / relative).resolve()
+        if not str(resolved).startswith(str(self.root.resolve())):
+            raise ValueError(
+                f"Path traversal blocked: '{relative}' resolves outside artifact root")
+        return resolved
+
     async def write_json(self, relative: str, payload: Any, *, tool_name: str, artifact_type: str, scan_id: str) -> str:
-        path = self.root / relative
+        path = self._safe_resolve(relative)
         path.parent.mkdir(parents=True, exist_ok=True)
         data = json.dumps(payload, indent=2, default=str)
         path.write_text(data, encoding="utf-8")
         return await self.register(path, tool_name=tool_name, artifact_type=artifact_type, scan_id=scan_id)
 
     async def write_text(self, relative: str, text: str, *, tool_name: str, artifact_type: str, scan_id: str) -> str:
-        path = self.root / relative
+        path = self._safe_resolve(relative)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8", errors="replace")
         return await self.register(path, tool_name=tool_name, artifact_type=artifact_type, scan_id=scan_id)

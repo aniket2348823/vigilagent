@@ -27,7 +27,8 @@ GEMINI_EMBEDDING_FALLBACK_MODELS = [
     if model.strip()
 ]
 GEMINI_TIMEOUT = 120  # seconds
-MAX_RETRIES = 2
+MAX_RETRIES = 5
+_MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB limit to prevent OOM
 
 
 class GeminiClient:
@@ -38,9 +39,6 @@ class GeminiClient:
     """
 
     def __init__(self, api_key: Optional[str] = None):
-        from dotenv import load_dotenv
-        load_dotenv(override=True)
-
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
 
         if self._api_key == "your_gemini_api_key_here":
@@ -48,6 +46,7 @@ class GeminiClient:
             self._api_key = ""
 
         self._session: Optional[aiohttp.ClientSession] = None
+        self._session_lock = asyncio.Lock()  # FIX: Initialize lock eagerly to prevent race condition
         self._telemetry = {
             "calls": 0,
             "successes": 0,
@@ -67,9 +66,14 @@ class GeminiClient:
         return bool(self._api_key)
 
     async def _ensure_session(self):
-        if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=GEMINI_TIMEOUT)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+        async with self._session_lock:
+            try:
+                is_closed = self._session.closed if self._session else True
+            except Exception:
+                is_closed = True
+            if self._session is None or is_closed:
+                timeout = aiohttp.ClientTimeout(total=GEMINI_TIMEOUT)
+                self._session = aiohttp.ClientSession(timeout=timeout)
 
     async def call(
         self,
@@ -95,7 +99,7 @@ class GeminiClient:
 
         await self._ensure_session()
 
-        url = f"{GEMINI_API_URL}/models/{GEMINI_MODEL}:generateContent?key={self._api_key}"
+        url = f"{GEMINI_API_URL}/models/{GEMINI_MODEL}:generateContent"
 
         body: Dict[str, Any] = {
             "contents": [{"parts": [{"text": prompt}]}],
@@ -109,6 +113,11 @@ class GeminiClient:
         if system_prompt:
             body["systemInstruction"] = {"parts": [{"text": system_prompt}]}
 
+        request_headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self._api_key,
+        }
+
         for attempt in range(MAX_RETRIES + 1):
             try:
                 if scan_ctx and getattr(scan_ctx, "is_cancelled", False):
@@ -117,10 +126,25 @@ class GeminiClient:
                 async with self._session.post(
                     url,
                     json=body,
-                    headers={"Content-Type": "application/json"},
+                    headers=request_headers,
                 ) as response:
                     if response.status == 200:
-                        data = await response.json()
+                        # Check Content-Length before reading body to prevent OOM
+                        content_length = response.headers.get("Content-Length")
+                        if content_length:
+                            try:
+                                if int(content_length) > _MAX_RESPONSE_BYTES:
+                                    self._telemetry["errors"] += 1
+                                    logger.error("GEMINI: Response Content-Length too large: %s bytes", content_length)
+                                    return "[GEMINI ERROR] Response exceeded size limit."
+                            except (ValueError, TypeError):
+                                pass  # Malformed header; fall through to body size check
+                        raw = await response.read()
+                        if len(raw) > _MAX_RESPONSE_BYTES:
+                            self._telemetry["errors"] += 1
+                            logger.error("GEMINI: Response too large (%d bytes)", len(raw))
+                            return "[GEMINI ERROR] Response exceeded size limit."
+                        data = json.loads(raw.decode("utf-8", errors="replace"))
 
                         candidates = data.get("candidates", [])
                         if not candidates:
@@ -188,8 +212,10 @@ class GeminiClient:
         return await self.call(prompt, temperature=0.2, max_tokens=max_tokens, scan_ctx=scan_ctx)
 
     async def validate_candidate(self, prompt: str, *, max_tokens: int = 4096, scan_ctx=None) -> str:
-        """Validate a vulnerability candidate with deterministic reasoning."""
-        return await self.call(prompt, temperature=0.0, max_tokens=max_tokens, scan_ctx=scan_ctx)
+        """Validate a vulnerability candidate. Uses temperature=0.1 (not 0.0) so the
+        self-consistency check in cortex.py actually tests for agreement rather than
+        producing deterministic identical output."""
+        return await self.call(prompt, temperature=0.1, max_tokens=max_tokens, scan_ctx=scan_ctx)
 
     async def generate_narrative(self, prompt: str, scan_ctx=None) -> str:
         """Generate narrative text for reports and summaries."""
@@ -216,7 +242,8 @@ class GeminiClient:
                 continue
             seen_models.add(model)
 
-            url = f"{GEMINI_API_URL}/models/{model}:embedContent?key={self._api_key}"
+            # FIX: Use header for API key instead of URL query parameter
+            url = f"{GEMINI_API_URL}/models/{model}:embedContent"
             body = {
                 "content": {"parts": [{"text": text[:8000]}]},
                 "taskType": "RETRIEVAL_DOCUMENT",
@@ -227,10 +254,14 @@ class GeminiClient:
                 async with self._session.post(
                     url,
                     json=body,
-                    headers={"Content-Type": "application/json"},
+                    headers={"Content-Type": "application/json", "x-goog-api-key": self._api_key},
                 ) as response:
                     if response.status == 200:
-                        data = await response.json()
+                        raw = await response.read()
+                        if len(raw) > _MAX_RESPONSE_BYTES:
+                            logger.error("GEMINI: Embedding response too large (%d bytes)", len(raw))
+                            return []
+                        data = json.loads(raw.decode("utf-8", errors="replace"))
                         values = data.get("embedding", {}).get("values", [])
                         logger.info(f"GEMINI: Embedding generated by {model} (dim={len(values)})")
                         return values

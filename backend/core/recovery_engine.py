@@ -286,8 +286,15 @@ class SelfHealingEngine:
                 "circuit_breakers": {ep: asdict(b) for ep, b in self.circuit_breakers.items()},
                 "restart_counts": dict(self.restart_counts),
             }
-            state_file = self.healing_dir / f"state_{int(time.time())}.json"
-            state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
+            # SECURITY FIX (H-13): Use atomic write (tmp + replace) to prevent
+            # corruption from concurrent writers. Previous code used a single
+            # timestamp filename which would clobber if two coroutines wrote
+            # in the same second.
+            import os as _os
+            tmp_file = self.healing_dir / "healing_state.tmp"
+            final_file = self.healing_dir / "healing_state.json"
+            tmp_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
+            _os.replace(str(tmp_file), str(final_file))
             for old_state in sorted(self.healing_dir.glob("state_*.json"))[:-10]:
                 old_state.unlink()
         except Exception as e:
@@ -1036,7 +1043,9 @@ class RecoveryEngine:
             outcome = RecoveryOutcome(RecoveryAction.ABORT, False, "diminishing returns; aborting", detail)
 
         if outcome.success:
-            self._attempts[key] = 0
+            # H-22: Remove the key entirely instead of resetting to 0
+            # so the dict doesn't accumulate stale zero-count entries.
+            self._attempts.pop(key, None)
             await self._learn(agent, error_class, action, context)
         return outcome
 
@@ -1300,11 +1309,27 @@ class RecoveryEngine:
                 # Enum member not yet declared — caller-side wiring will land
                 # in a later task; skip cleanly per the contract.
                 return
-            bus = (
-                getattr(_hive_mod, "event_bus", None)
-                or getattr(_hive_mod, "hive_bus", None)
-                or getattr(_hive_mod, "bus", None)
-            )
+            # The bus is per-scan (created in orchestrator.bootstrap_hive),
+            # not a module-level attribute. Check the active orchestrator
+            # registry for a live bus instance.
+            bus = None
+            try:
+                from backend.core.orchestrator import HiveOrchestrator
+                # The bus is passed to every agent's __init__; we can reach it
+                # via any active agent's .bus attribute.
+                for agent in HiveOrchestrator.active_agents.values():
+                    candidate = getattr(agent, "bus", None)
+                    if candidate is not None and hasattr(candidate, "publish"):
+                        bus = candidate
+                        break
+            except Exception:
+                pass
+            if bus is None:
+                bus = (
+                    getattr(_hive_mod, "event_bus", None)
+                    or getattr(_hive_mod, "hive_bus", None)
+                    or getattr(_hive_mod, "bus", None)
+                )
             if bus is None or not hasattr(bus, "publish"):
                 return
             evt = HiveEvent(

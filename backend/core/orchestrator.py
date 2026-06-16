@@ -9,7 +9,7 @@ import psutil
 import importlib
 import aiohttp
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Any
 import redis
 from supabase import create_client, Client
@@ -32,15 +32,8 @@ from backend.core.task_manager import TaskManager
 from backend.core.broadcast_throttle import BroadcastThrottle
 
 
-# Cached CVSS calculator class — imported once at module load instead of
-# per VULN_CONFIRMED event. The class itself is cheap to instantiate; it's
-# the ``importlib.import_module`` call (called ~1500 times per scan) that
-# was hot. We keep the per-finding instance because it's stateless and
-# tiny — the win is in the import side-effect.
-try:
-    from backend.reporting.cvss_engine import CVSSCalculator as _CachedCVSSCalculator
-except Exception:  # pragma: no cover - import-time defensive fallback
-    _CachedCVSSCalculator = None  # type: ignore[assignment]
+# CVSS 4.0 engine is imported per-finding inside the event_listener
+# (see enrichment block below). No module-level cached calculator needed.
 
 # V6 Lifecycle Management
 from backend.core.phase_gate import PhaseGate, ScanPhase
@@ -80,6 +73,20 @@ from backend.core.planner import MissionPlanner
 logger = logging.getLogger("HiveOrchestrator")
 ai_cortex = get_cortex_engine()
 
+# Short-name alias mapping: API sends "sqli", orchestrator needs "SQL Injection Probe"
+# Module-level constant — recreated on every import, never changes.
+_MODULE_ALIASES = {
+    "sqli": "SQL Injection Probe",
+    "xss": "API Fuzzer (REST)",
+    "cmdi": "The Skipper",
+    "path_traversal": "The Escalator",
+    "idor": "Doppelganger (IDOR)",
+    "ssti": "The Tycoon",
+    "open_redirect": "Chronomancer",
+    "ssrf": "Auth Bypass Tester",
+    "jwt": "JWT Token Cracker",
+}
+
 class HiveOrchestrator:
     # Global Registry for API Access (Nervous System)
     active_agents = {}
@@ -118,8 +125,13 @@ class HiveOrchestrator:
         # outbound HTTP connections during concurrent automated test scans.
         # ====================================================================
         is_test_mode = getattr(ai_cortex, 'test_mode', False)
+        # SECURITY FIX (C-2): Test mode requires BOTH the cortex flag AND
+        # an environment variable. This prevents leaked test mode from
+        # bypassing all security in production.
+        _env_test_mode = os.getenv('VULAGENT_TEST_MODE', 'false').lower() == 'true'
+        is_test_mode = is_test_mode and _env_test_mode
         if is_test_mode:
-            logger.info(f"[Orchestrator] TEST MODE ACTIVE for scan {scan_id}. Fast-path enabled.")
+            logger.warning(f"[Orchestrator] TEST MODE ACTIVE for scan {scan_id}. Security bypasses enabled — NEVER use in production.")
             
             # Update status to Running
             for s in stats_db_manager.get_stats()["scans"]:
@@ -280,7 +292,8 @@ class HiveOrchestrator:
             if event.type == EventType.RECON_COMPLETE and event.source == "agent_alpha":
                 alpha_recon_complete.set()
             
-            # REAL-TIME DASHBOARD SYNC
+            real_payload = None  # Initialized safely; set per event type below
+                # REAL-TIME DASHBOARD SYNC
             if event.type == EventType.VULN_CONFIRMED:
                 # Update global stats immediately
                 real_payload = event.payload
@@ -292,131 +305,167 @@ class HiveOrchestrator:
                 if not guard_layer.filter_single(real_payload):
                     logger.debug(f"🛡️ GuardLayer Dropped VULN_CONFIRMED: Did not meet mathematical strictness bounds.")
                     return
-            # CognitiveRouter: route event to additional agents
-            if cognitive_router:
-                target_agents = cognitive_router.route_event(event)
-                if target_agents:
-                    logger.debug("[CognitiveRouter] event=%s -> targets=%s",
-                                  event.type, [a.__class__.__name__ for a in target_agents])
+                if real_payload is not None:
+                    # CognitiveRouter: route event to additional agents
+                    if cognitive_router:
+                        target_agents = cognitive_router.route_event(event)
+                        if target_agents:
+                            logger.debug("[CognitiveRouter] event=%s -> targets=%s",
+                                          event.type, [a.__class__.__name__ for a in target_agents])
 
-                severity = real_payload.get('severity', 'High')
-                # Passing normalized signature data to StateManager for robust deduplication
-                sig_data = {
-                    "url": str(real_payload.get('url', '')).strip().lower(),
-                    "type": str(real_payload.get('type', '')).upper(),
-                    "data": str(real_payload.get('data', real_payload.get('payload', '')))
-                }
-                
-                # [NEW] Distributed Intelligence Injection (Supabase Backbone)
-                # Schedule the Supabase write off the listener's critical path
-                # so 1500+ VULN_CONFIRMED events don't serialize behind HTTPS
-                # round-trips. Errors are absorbed inside report_vulnerability
-                # and surface in db_manager logs.
-                async def _persist_vuln():
-                    try:
-                        await db_manager.initialize()
-                        await db_manager.report_vulnerability(
-                            scan_id=scan_id,
-                            endpoint=sig_data["url"],
-                            vuln_type=sig_data["type"],
-                            severity=severity,
-                            evidence=real_payload,
-                            validated_by=event.source,
-                        )
-                    except Exception as _persist_err:
-                        logger.warning(
-                            "[Orchestrator] Deferred vuln persist failed: %s",
-                            _persist_err,
-                        )
-
-                _persist_task = asyncio.create_task(_persist_vuln())
-                HiveOrchestrator._orphaned_tasks.add(_persist_task)
-                _persist_task.add_done_callback(
-                    HiveOrchestrator._orphaned_tasks.discard)
-
-                await stats_db_manager.record_finding(scan_id, severity, sig_data)
-
-                # PROBLEM 7 FIX: Live CVSS scoring at confirmation time (not just report time)
-                # Optimization: import the calculator class once at module load
-                # (see _CachedCVSSCalculator above) and run the synchronous
-                # math via asyncio.to_thread so the event loop isn't blocked
-                # on the (cheap, but cumulative) calculation when 1500+
-                # findings arrive in a tight burst.
-                try:
-                    if _CachedCVSSCalculator is None:
-                        raise RuntimeError("cvss_engine import failed at startup")
-                    cvss_calc = _CachedCVSSCalculator(
-                        success_count=1,
-                        body_content=str(real_payload.get('data', '')),
-                        target_url=sig_data["url"],
-                        vuln_type=sig_data["type"]
-                    )
-                    cvss_score, cvss_vector = await asyncio.wait_for(asyncio.to_thread(cvss_calc.calculate), timeout=60)
-                    # Inject CVSS into payload for downstream consumers
-                    real_payload["cvss_score"] = cvss_score
-                    real_payload["cvss_vector"] = cvss_vector
-                    real_payload["cvss_severity"] = "CRITICAL" if cvss_score >= 9.0 else "HIGH" if cvss_score >= 7.0 else "MEDIUM" if cvss_score >= 4.0 else "LOW"
-                    
-                    # Bayesian Fusion: Combine CVSS with existing signals
-                    gamma_score = real_payload.get("gamma_score", 0.5)
-                    gi5_score = real_payload.get("gi5_risk", 0.5)
-                    cvss_normalized = cvss_score / 10.0
-                    final_risk = (gi5_score * 0.35 + gamma_score * 0.30 + cvss_normalized * 0.35)
-                    real_payload["final_risk_score"] = round(final_risk, 4)
-                except Exception as cvss_err:
-                    logger.warning(f"Live CVSS scoring failed: {cvss_err}")
-                
-                # Broadcast authoritative stats to UI
-                # Throttle: VULN_UPDATE is just dashboard counters; emitting
-                # one per finding floods the WebSocket with redundant frames.
-                # 500ms window keeps the dashboard reactive while collapsing
-                # bursts. The throttle key is per-scan so two scans don't
-                # mask each other's metric updates.
-                current_stats = stats_db_manager.get_stats()
-                if broadcast_throttle.should_emit(("VULN_UPDATE", scan_id, "_metrics")):
-                    await manager.broadcast({
-                        "type": "VULN_UPDATE",
-                        "payload": {
-                            "metrics": {
-                                "vulnerabilities": current_stats["vulnerabilities"],
-                                "critical": current_stats["critical"],
-                                "active_scans": current_stats["active_scans"],
-                                "total_scans": current_stats["total_scans"]
-                            },
-                            "graph_data": current_stats["history"]
+                        severity = real_payload.get('severity', 'High')
+                        # Passing normalized signature data to StateManager for robust deduplication
+                        sig_data = {
+                            "url": str(real_payload.get('url', '')).strip().lower(),
+                            "type": str(real_payload.get('type', '')).upper(),
+                            "data": str(real_payload.get('data', real_payload.get('payload', '')))
                         }
-                    })
+                
+                        # [NEW] Distributed Intelligence Injection (Supabase Backbone)
+                        # Schedule the Supabase write off the listener's critical path
+                        # so 1500+ VULN_CONFIRMED events don't serialize behind HTTPS
+                        # round-trips. Errors are absorbed inside report_vulnerability
+                        # and surface in db_manager logs.
+                        async def _persist_vuln():
+                            try:
+                                await db_manager.initialize()
+                                await db_manager.report_vulnerability(
+                                    scan_id=scan_id,
+                                    endpoint=sig_data["url"],
+                                    vuln_type=sig_data["type"],
+                                    severity=severity,
+                                    evidence=real_payload,
+                                    validated_by=event.source,
+                                )
+                            except Exception as _persist_err:
+                                logger.warning(
+                                    "[Orchestrator] Deferred vuln persist failed: %s",
+                                    _persist_err,
+                                )
 
-                # V6: Persist Threat Metrics (Async Fix)
-                threat_type = real_payload.get("type", "Unknown Threat")
-                risk_score = real_payload.get("data", {}).get("risk_score", 0)
-                await stats_db_manager.record_threat(threat_type, risk_score)
+                        _persist_task = asyncio.create_task(_persist_vuln())
+                        HiveOrchestrator._orphaned_tasks.add(_persist_task)
+                        _persist_task.add_done_callback(
+                            HiveOrchestrator._orphaned_tasks.discard)
+
+                        # Generate CVSS 4.0 score, evidence, and remediation for this finding
+                        try:
+                            from backend.reporting.cvss_engine import (
+                                score_for_vuln_class, generate_evidence,
+                                generate_cwe, severity_band,
+                            )
+                            _import_ok = True
+                        except Exception as _import_err:
+                            logger.warning("CVSS engine import failed: %s", _import_err)
+                            _import_ok = False
+
+                        # Default CVSS values — overridden below if enrichment succeeds
+                        cvss_score_val = 0.0
+                        cvss_vector_val = ""
+
+                        if _import_ok:
+                            try:
+                                vuln_type_key = sig_data["type"]
+                                _data_str = str(real_payload.get("data", "")).lower()
+                                cvss_score_val, cvss_vector_val = score_for_vuln_class(
+                                    vuln_type_key,
+                                    data_leak="leak" in _data_str or "sensitive" in _data_str,
+                                )
+                                evidence_record = generate_evidence(
+                                    vuln_type_key, url=sig_data["url"]
+                                )
+                                enriched_finding = {
+                                    "url": sig_data["url"],
+                                    "type": vuln_type_key,
+                                    "severity": severity,
+                                    "data": sig_data["data"],
+                                    "cvss_score": round(cvss_score_val, 1),
+                                    "cvss_vector": cvss_vector_val,
+                                    "cvss_version": "4.0",
+                                    "cvss_severity": severity_band(cvss_score_val),
+                                    "cwe": generate_cwe(vuln_type_key),
+                                    "evidence": evidence_record,
+                                    "remediation": evidence_record.get("remediation", ""),
+                                    "agent": event.source,
+                                    "discovered_at": datetime.now(timezone.utc).isoformat(),
+                                }
+                                await stats_db_manager.record_finding(scan_id, severity, enriched_finding)
+                            except Exception as _enrich_err:
+                                logger.debug("Finding enrichment failed, recording raw: %s", _enrich_err)
+                                sig_data["severity"] = severity
+                                await stats_db_manager.record_finding(scan_id, severity, sig_data)
+                        else:
+                            sig_data["severity"] = severity
+                            await stats_db_manager.record_finding(scan_id, severity, sig_data)
+
+                        # Inject CVSS into real_payload for downstream consumers
+                        # (WebSocket broadcast, Bayesian fusion).
+                        if cvss_score_val > 0:
+                            try:
+                                real_payload["cvss_score"] = cvss_score_val
+                                real_payload["cvss_vector"] = cvss_vector_val
+                                real_payload["cvss_severity"] = severity_band(cvss_score_val)
+
+                                # Bayesian Fusion: Combine CVSS with existing signals
+                                gamma_score = real_payload.get("gamma_score", 0.5)
+                                gi5_score = real_payload.get("gi5_risk", 0.5)
+                                cvss_normalized = cvss_score_val / 10.0
+                                final_risk = (gi5_score * 0.35 + gamma_score * 0.30 + cvss_normalized * 0.35)
+                                real_payload["final_risk_score"] = round(final_risk, 4)
+                            except Exception as cvss_err:
+                                logger.debug(f"CVSS payload injection failed: {cvss_err}")
+                
+                        # Broadcast authoritative stats to UI
+                        # Throttle: VULN_UPDATE is just dashboard counters; emitting
+                        # one per finding floods the WebSocket with redundant frames.
+                        # 500ms window keeps the dashboard reactive while collapsing
+                        # bursts. The throttle key is per-scan so two scans don't
+                        # mask each other's metric updates.
+                        current_stats = stats_db_manager.get_stats()
+                        if broadcast_throttle.should_emit(("VULN_UPDATE", scan_id, "_metrics")):
+                            await manager.broadcast({
+                                "type": "VULN_UPDATE",
+                                "payload": {
+                                    "metrics": {
+                                        "vulnerabilities": current_stats["vulnerabilities"],
+                                        "critical": current_stats["critical"],
+                                        "active_scans": current_stats["active_scans"],
+                                        "total_scans": current_stats["total_scans"]
+                                    },
+                                    "graph_data": current_stats["history"]
+                                }
+                            })
+
+                        # V6: Persist Threat Metrics (Async Fix)
+                        threat_type = real_payload.get("type", "Unknown Threat")
+                        risk_score = real_payload.get("data", {}).get("risk_score", 0)
+                        await stats_db_manager.record_threat(threat_type, risk_score)
 
 
-                # Broadcast LIVE THREAT LOG (New Feature)
-                log_payload = {
-                        "agent": event.source,
-                        "agent_role": _role_for(str(event.source)),
-                        "threat_type": threat_type,
-                        "url": real_payload.get("url", "Unknown Source"),
-                        "severity": severity,
-                        "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        "risk_score": risk_score
-                    }
-                # Throttle key: (event_type, url, agent) — same triple
-                # firing inside 500ms is treated as the same logical
-                # alert. Persistence to the scan buffer still happens so
-                # report builders see every event.
-                _threat_key = ("LIVE_THREAT_LOG",
-                               log_payload["url"], log_payload["agent"])
-                if broadcast_throttle.should_emit(_threat_key):
-                    await manager.broadcast({
-                        "type": "LIVE_THREAT_LOG",
-                        "scan_id": scan_id,  # [V7] Isolation Injection
-                        "payload": log_payload
-                    })
-                # Ensure the filtered log also makes it to the scan buffer
-                await stats_db_manager.add_scan_event(scan_id, {"type": "LIVE_THREAT_LOG", "scan_id": scan_id, "payload": log_payload})
+                        # Broadcast LIVE THREAT LOG (New Feature)
+                        log_payload = {
+                                "agent": event.source,
+                                "agent_role": _role_for(str(event.source)),
+                                "threat_type": threat_type,
+                                "url": real_payload.get("url", "Unknown Source"),
+                                "severity": severity,
+                                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                "risk_score": risk_score
+                            }
+                        # Throttle key: (event_type, url, agent) — same triple
+                        # firing inside 500ms is treated as the same logical
+                        # alert. Persistence to the scan buffer still happens so
+                        # report builders see every event.
+                        _threat_key = ("LIVE_THREAT_LOG",
+                                       log_payload["url"], log_payload["agent"])
+                        if broadcast_throttle.should_emit(_threat_key):
+                            await manager.broadcast({
+                                "type": "LIVE_THREAT_LOG",
+                                "scan_id": scan_id,  # [V7] Isolation Injection
+                                "payload": log_payload
+                            })
+                        # Ensure the filtered log also makes it to the scan buffer
+                        await stats_db_manager.add_scan_event(scan_id, {"type": "LIVE_THREAT_LOG", "scan_id": scan_id, "payload": log_payload})
                 
             elif event.type == EventType.VULN_CANDIDATE:
                 real_payload = event.payload
@@ -663,18 +712,21 @@ class HiveOrchestrator:
             "Auth Bypass Tester": [breaker, sigma],
         }
         
+        # Resolve short names to full names
         selected_modules = target_config.get("modules", [])
+        selected_modules = [_MODULE_ALIASES.get(m, m) for m in selected_modules]
+        
+        # BUG FIX: Always include Sigma and Beta — they handle unconditional
+        # jobs (sigma_generative_blast, beta_direct_assault) that are always
+        # dispatched regardless of module selection.
+        agents = core_agents + [sigma, breaker]
         
         if selected_modules:
-            # Build unique set of agents from selected modules
-            offensive_agents_set = set()
+            # Also add offensive agents for any matched modules
             for mod in selected_modules:
                 for agent in module_agent_map.get(mod, []):
-                    offensive_agents_set.add(agent)
-            agents = core_agents + list(offensive_agents_set)
-        else:
-            # No modules selected = run everything (backward compatibility)
-            agents = [planner, scout, kappa, sentinel, inspector, analyst, strategist, governor, delta, sigma, breaker]
+                    if agent not in agents:
+                        agents.append(agent)
 
         # --- Agent Activation (via ScanLifecycleManager) ---
         await lifecycle.activate_agents(agents, mission_config={
@@ -870,12 +922,16 @@ class HiveOrchestrator:
         }
         
         # Bug Fix #5: Core Module Fallback Breakage
+        # selected_modules was already resolved from short names to full names above.
+        # If empty, dispatch all modules.
         if not selected_modules:
             selected_modules = list(module_mapper.keys())
         
         for ui_module_name in selected_modules:
             internal_id = module_mapper.get(ui_module_name)
-            if not internal_id: continue
+            if not internal_id:
+                logger.debug("[Orchestrator] No internal_id for module '%s', skipping", ui_module_name)
+                continue
 
             # Dispatch one job PER seeded target so each module attacks the real
             # vulnerable endpoints (with auth + params), not just the base URL.
@@ -1303,17 +1359,22 @@ class HiveOrchestrator:
 
     @staticmethod
     async def _cluster_telemetry_loop(redis_url: str, scan_id: str):
-        """Syncs distributed cluster metrics to the UI Dashboard."""
-        import redis
+        """Syncs distributed cluster metrics to the UI Dashboard.
+
+        HIGH-10: Uses ``redis.asyncio`` (non-blocking) instead of the
+        synchronous ``redis`` client which blocked the event loop on every
+        iteration.
+        """
+        import redis.asyncio as aioredis
         import json
         try:
-            r = redis.from_url(redis_url)
+            r = aioredis.from_url(redis_url)
             while True:
-                # 1. Gather Metrics
-                worker_data = r.hgetall("workers")
+                # 1. Gather Metrics (async — no event-loop blocking)
+                worker_data = await r.hgetall("workers")
                 worker_count = len(worker_data)
-                queue_depth = r.llen("pending_tasks")
-                audit_depth = r.llen("xytherion_audit_queue")
+                queue_depth = await r.llen("pending_tasks")
+                audit_depth = await r.llen("xytherion_audit_queue")
                 
                 # 2. Broadcast to UI
                 await manager.broadcast({

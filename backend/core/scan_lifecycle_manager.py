@@ -160,7 +160,7 @@ class ScanLifecycleManager:
         from_phase = getattr(self._phase_gate, "current_phase", "UNKNOWN")
         phase_start = time.time()
         try:
-            self._phase_gate.advance_to(to_phase)
+            await self._phase_gate.advance_to(to_phase)
         except Exception as exc:
             logger.error("[Lifecycle] Phase advance failed: %s", exc)
             return
@@ -242,16 +242,17 @@ class ScanLifecycleManager:
                 "status": status, "timestamp": time.strftime("%H:%M:%S"),
             })
         except Exception as exc:
-            logger.debug("[Lifecycle] broadcast_scan_update: %s", exc)
+            # HIGH-9: Log at warning level so broadcast failures are visible
+            logger.warning("[Lifecycle] broadcast_scan_update failed: %s", exc)
 
     async def _broadcast_live_feed(self, action: str, data: Dict[str, Any]) -> None:
         try:
             await self._manager.broadcast({"type": "LIVE_ATTACK_FEED", **data})
         except Exception as exc:
-            logger.debug("[Lifecycle] broadcast_live_feed: %s", exc)
+            logger.warning("[Lifecycle] broadcast_live_feed failed: %s", exc)
 
     async def _broadcast_event(self, event_type: str, data: Dict[str, Any]) -> None:
         try:
             await self._manager.broadcast({"type": event_type, **data})
         except Exception as exc:
-            logger.debug("[Lifecycle] broadcast_event: %s", exc)
+            logger.warning("[Lifecycle] broadcast_event failed: %s", exc)

@@ -2,6 +2,7 @@ import difflib
 from backend.core.base import BaseArsenalModule
 from backend.core.protocol import JobPacket, Vulnerability, TaskTarget
 from backend.core.credential_vault import credential_vault
+from backend.modules.evidence import classify_response_evidence
 
 # Lazy-init: import at call time to avoid blocking app startup (HIGH-49)
 _cortex = None
@@ -56,17 +57,28 @@ class Doppelganger(BaseArsenalModule):
         
         vulns = []
         if isinstance(attack_text, str) and isinstance(baseline_text, str):
+            # WRONG-CLASS SUPPRESSION: drop if response clearly belongs to another class
+            for _t, text in interactions:
+                if isinstance(text, str):
+                    classes = classify_response_evidence(text)
+                    if classes - {"IDOR"}:
+                        return []
+
             # HIGH-36: Truncate large responses before O(n²) comparison
             max_cmp = 50000
             b_text = baseline_text[:max_cmp] if len(baseline_text) > max_cmp else baseline_text
             a_text = attack_text[:max_cmp] if len(attack_text) > max_cmp else attack_text
             ratio = difflib.SequenceMatcher(None, b_text, a_text).ratio()
+            # NC-7: Require multi-signal confirmation — high similarity alone is insufficient
             if ratio > 0.95:
                 cortex = _get_cortex()
                 idor_analysis = await cortex.classify_idor_response(attack_text, ratio)
                 sensitivity = idor_analysis.get("sensitivity", "HIGH")
                 data_types = idor_analysis.get("data_types", [])
-                
+                is_leak = idor_analysis.get("is_leak", False)
+                # Require at least one signal: AI-confirmed leak or data types exposed
+                if not is_leak and not data_types:
+                    return []
                 vulns.append(Vulnerability(
                     name="IDOR (Broken Access Control)",
                     severity="CRITICAL" if sensitivity in ["CRITICAL", "HIGH"] else "HIGH",

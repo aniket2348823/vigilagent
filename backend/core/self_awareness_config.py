@@ -346,22 +346,13 @@ def get_self_awareness_config(agent_id: Optional[str] = None) -> SelfAwarenessCo
     global _global_config
     
     if _global_config is None:
-        # Determine environment
-        env = os.getenv("ENVIRONMENT", "development").lower()
-        
-        if env == "production":
-            _global_config = PRODUCTION_CONFIG
-        elif env == "staging":
-            _global_config = STAGING_CONFIG
-        else:
-            _global_config = DEVELOPMENT_CONFIG
-        
-        # Override with environment variables
+        # Load from environment variables (which include per-agent overrides)
         _global_config = SelfAwarenessConfig.from_env(agent_id)
         
         # Validate configuration
         try:
             _global_config.validate()
+            env = os.getenv("ENVIRONMENT", "development").lower()
             logger.info(f"Self-awareness configuration loaded for {env} environment")
         except ValueError as e:
             logger.error(f"Invalid self-awareness configuration: {e}")

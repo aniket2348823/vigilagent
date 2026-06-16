@@ -82,6 +82,10 @@ class ContentBoundary:
         result = re.sub(r'(?i)data\s*:\s*text/html', '[REDACTED_URI]', result)
         # 3. Neutralize on* event handlers (onclick, onerror, onload, etc.)
         result = re.sub(r'(?i)\bon[a-z]+\s*=', '[REDACTED_HANDLER]', result)
+        # 4. FIX: Neutralize dangerous HTML attributes (srcset, formaction, etc.)
+        result = re.sub(r'(?i)\bsrcset\s*=', '[REDACTED_ATTR]', result)
+        result = re.sub(r'(?i)\bformaction\s*=', '[REDACTED_ATTR]', result)
+        result = re.sub(r'(?i)\bhref\s*=\s*["\']?javascript\s*:', '[REDACTED_ATTR]', result)
         return result
 
     def strip_ansi_escapes(self, text: str) -> str:

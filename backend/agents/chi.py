@@ -107,7 +107,7 @@ class AgentChi(BrowserEnabledAgent):
         if redis_url:
             try:
                 import redis.asyncio as aioredis
-                self.redis_client = aioredis.from_url(redis_url, decode_responses=True)
+                self.redis_client = aioredis.from_url(redis_url, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
                 # Active payload auditing loop
                 self._task_manager.create_task(
                     self._audit_cluster_payloads(),
@@ -118,6 +118,7 @@ class AgentChi(BrowserEnabledAgent):
 
     async def stop(self):
         """Cleanup tasks on agent shutdown."""
+        self.active = False  # Signal audit loop to exit
         await self._task_manager.cancel_all()
         await super().stop()
 

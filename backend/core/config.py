@@ -109,7 +109,7 @@ def load_workers_config() -> Dict[str, Any]:
                 defaults["specialties"] = list(data["specialties"])
             if data.get("default_specialty"):
                 defaults["default_specialty"] = str(data["default_specialty"])
-    except Exception as exc:  # pragma: no cover - fail safe to defaults
+    except Exception as exc:  # pragma: no cover - fail safe to defaults (yaml.YAMLError, OSError, etc.)
         logger.warning("Could not parse workers.yaml (%s); using defaults.", exc)
     return defaults
 
@@ -126,7 +126,7 @@ class GlobalSettings:
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
-    SCAN_TIMEOUT: int = max(1, int(os.getenv("SCAN_TIMEOUT", "600") or "600"))  # Default 10 minutes
+    SCAN_TIMEOUT: int = max(1, int(os.getenv("SCAN_TIMEOUT", "3600") or "3600"))  # Default 1 hour
     ALPHA_ENABLE_V6: bool = os.getenv("ALPHA_ENABLE_V6", "true").lower() == "true"
     ALPHA_TOOL_ROOT: str = os.getenv("ALPHA_TOOL_ROOT", os.path.join(PROJECT_ROOT, "data"))
     ALPHA_ARTIFACT_ROOT: str = os.getenv("ALPHA_ARTIFACT_ROOT", "data/scans")
@@ -135,15 +135,15 @@ class GlobalSettings:
     ALPHA_MAX_HTTPX_THREADS: int = int(os.getenv("ALPHA_MAX_HTTPX_THREADS", "50"))
     ALPHA_MAX_CRAWL_DEPTH: int = int(os.getenv("ALPHA_MAX_CRAWL_DEPTH", "3"))
     ALPHA_ENABLE_EXTERNAL_TOOLS: bool = os.getenv("ALPHA_ENABLE_EXTERNAL_TOOLS", "false").lower() == "true"
-    ALPHA_TOOL_TIMEOUT_SECONDS: int = int(os.getenv("ALPHA_TOOL_TIMEOUT_SECONDS", "180"))
+    ALPHA_TOOL_TIMEOUT_SECONDS: int = int(os.getenv("ALPHA_TOOL_TIMEOUT_SECONDS", "3600"))
     ALPHA_ENABLE_PINCHTAB: bool = os.getenv("ALPHA_ENABLE_PINCHTAB", "true").lower() == "true"
     ALPHA_RECON_VIA_PLANNER: bool = os.getenv("ALPHA_RECON_VIA_PLANNER", "true").lower() == "true"
-    ALPHA_RECON_TIMEOUT_SECONDS: int = int(os.getenv("ALPHA_RECON_TIMEOUT_SECONDS", "180"))
+    ALPHA_RECON_TIMEOUT_SECONDS: int = int(os.getenv("ALPHA_RECON_TIMEOUT_SECONDS", "3600"))
     # Hard upper bound on how long Omega waits for the recon RECON_COMPLETE
     # event before degrading gracefully and proceeding with whatever recon
     # was able to emit. Read by the orchestrator at scan time
     # (Architecture §29.13: never starve the attack phase on a slow recon).
-    RECON_MAX_WAIT_SECONDS: int = int(os.getenv("RECON_MAX_WAIT_SECONDS", "180"))
+    RECON_MAX_WAIT_SECONDS: int = int(os.getenv("RECON_MAX_WAIT_SECONDS", "3600"))
     ALPHA_EXPLICIT_AUTHORIZATION: bool = os.getenv("ALPHA_EXPLICIT_AUTHORIZATION", "false").lower() == "true"
     PINCHTAB_BASE_URL: str = os.getenv("PINCHTAB_BASE_URL", "http://127.0.0.1:9867")
     ALPHA_ENABLE_NEO4J: bool = os.getenv("ALPHA_ENABLE_NEO4J", "false").lower() == "true"
@@ -305,7 +305,7 @@ class ConfigManager:
     
     def _validate_worker(self):
         """Validate Worker configuration."""
-        valid_specialties = ['hybrid', 'recon', 'attack', 'analysis']
+        valid_specialties = ['hybrid', 'recon', 'browser', 'api', 'network', 'validation', 'forensics', 'reporting', 'skill', 'attack', 'analysis']
         if self.worker.specialty not in valid_specialties:
             self.validation_errors.append(f"Worker specialty must be one of {valid_specialties}")
         

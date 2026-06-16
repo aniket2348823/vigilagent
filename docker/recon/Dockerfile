@@ -1,8 +1,11 @@
 # Vigilagent Recon Arsenal Image (Architecture §7 rule 3, §8)
 # =============================================================================
-# Bundles the full 39-tool recon arsenal into one Linux image so Alpha can run
-# every tool identically on any host, with NO per-host installs. Built once,
-# runs everywhere the Docker daemon is available.
+# Bundles 34 Alpha recon tools + 5 Sigma validation tools = 39 total into one
+# Linux image so both agents run every tool identically on any host, with NO
+# per-host installs. Built once, runs everywhere the Docker daemon is available.
+#
+#   Alpha (recon):  34 tools — passive intel, DNS, HTTP, dirs, API, visual, OOB
+#   Sigma (validation): 5 tools — nuclei, dalfox, httpx, whatweb, wafw00f
 #
 # Build:  docker build -t vigilagent/recon:latest docker/recon
 # Use:    the TerminalEngine Docker backend mounts the scan dir at /scan and the
@@ -47,11 +50,12 @@ FROM debian:bookworm-slim AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 # System recon tools + interpreters. masscan/nmap/whatweb come from apt; amass built in Go stage.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl wget git \
+      ca-certificates curl wget git unzip \
       nmap masscan whatweb \
       python3 python3-pip python3-venv pipx \
       ruby bash dnsutils \
       libpcap0.8 \
+      chromium \
  && rm -rf /var/lib/apt/lists/*
 
 # Go binaries from the build stage.
@@ -64,18 +68,29 @@ RUN curl -sL https://github.com/epi052/feroxbuster/releases/latest/download/x86_
  && chmod +x /usr/local/bin/feroxbuster \
  && rm -f /tmp/ferox.tar.gz
 
-# Python tools via pipx (isolated) — arjun, wafw00f, dirsearch.
+# Go tool: aquatone (prebuilt release binary — visual documentation / screenshots).
+RUN curl -sL https://github.com/michenriksen/aquatone/releases/download/v1.7.0/aquatone_linux_amd64_1.7.0.zip \
+      -o /tmp/aquatone.zip \
+ && unzip -o /tmp/aquatone.zip -d /tmp/aquatone \
+ && mv /tmp/aquatone/aquatone /usr/local/bin/aquatone \
+ && chmod +x /usr/local/bin/aquatone \
+ && rm -rf /tmp/aquatone.zip /tmp/aquatone
+# Set chromium path for aquatone headless screenshots.
+ENV CHROMIUM_PATH=/usr/bin/chromium
+
+# Python tools via pipx (isolated) — arjun, wafw00f, dirsearch, inql.
 ENV PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin PATH="/usr/local/bin:${PATH}"
 RUN pipx install arjun \
  && pipx install wafw00f \
- && pipx install dirsearch
+ && pipx install dirsearch \
+ && pipx install inql
 
-# testssl.sh + vendored Python scripts (LinkFinder, SecretFinder, inql, ParamSpider, SpiderFoot).
+# testssl.sh + vendored Python scripts (LinkFinder, SecretFinder, ParamSpider, SpiderFoot).
+# NOTE: inql is now installed via pipx above (creates a proper CLI entry point).
 RUN git clone --depth 1 https://github.com/drwetter/testssl.sh.git /opt/testssl \
  && ln -s /opt/testssl/testssl.sh /usr/local/bin/testssl.sh \
  && git clone --depth 1 https://github.com/GerbenJavado/LinkFinder.git /opt/LinkFinder \
  && git clone --depth 1 https://github.com/m4ll0k/SecretFinder.git /opt/SecretFinder \
- && git clone --depth 1 https://github.com/doyensec/inql.git /opt/inql \
  && git clone --depth 1 https://github.com/devanshbatham/ParamSpider.git /opt/ParamSpider \
  && git clone --depth 1 https://github.com/smicallef/spiderfoot.git /opt/spiderfoot \
  && pip3 install --no-cache-dir --break-system-packages \
@@ -96,4 +111,4 @@ USER recon
 # ENTRYPOINT allows TerminalEngine to exec any tool via `docker exec`.
 # CMD keeps the container alive when started standalone or from Docker Desktop.
 ENTRYPOINT ["/bin/bash"]
-CMD ["-c", "echo '🛡️ Vigilagent Recon Arsenal Active — 39 tools ready' && tail -f /dev/null"]
+CMD ["-c", "echo '🛡️ Vigilagent Arsenal Active — 34 recon (Alpha) + 5 validation (Sigma) = 39 tools ready' && tail -f /dev/null"]

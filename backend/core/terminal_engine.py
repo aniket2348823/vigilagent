@@ -266,7 +266,7 @@ class TerminalEngine:
         scan_id: str = "GLOBAL",
         agent: str = "terminal",
         output_path: str | Path | None = None,
-        timeout_seconds: int = 180,
+        timeout_seconds: int = 3600,
         budget: IterationBudget | None = None,
         parser_hint: str = "lines",
         priority: LanePriority = LanePriority.NORMAL,
@@ -1020,7 +1020,7 @@ def register_terminal_tool() -> None:
         return
 
     async def _handler(argv, scan_id: str = "GLOBAL", agent: str = "terminal",
-                       timeout_seconds: int = 180, **kwargs):
+                       timeout_seconds: int = 3600, **kwargs):
         result = await terminal_engine.run(
             argv, scan_id=scan_id, agent=agent, timeout_seconds=timeout_seconds, **kwargs
         )

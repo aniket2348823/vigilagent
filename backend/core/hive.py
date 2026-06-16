@@ -1,7 +1,10 @@
 import asyncio
+import os as _os
 import logging
 import json
 import time
+import hmac as _hmac
+import hashlib as _hashlib
 from typing import Callable, Dict, List, Any, Awaitable, Optional
 from pydantic import BaseModel, Field
 from enum import Enum
@@ -62,6 +65,23 @@ from backend.core.unified_knowledge_graph import knowledge_graph
 from backend.core.task_manager import TaskManager
 import collections
 
+
+# EventBus message authentication (security hardening)
+_EVENT_BUS_HMAC_KEY = _os.getenv('VIGILAGENT_EVENT_BUS_HMAC_KEY', '')
+
+def _sign_event(event_json: str) -> str:
+    if not _EVENT_BUS_HMAC_KEY:
+        return ''
+    return _hmac.new(_EVENT_BUS_HMAC_KEY.encode(), event_json.encode(), _hashlib.sha256).hexdigest()
+
+def _verify_event_signature(event_json: str, signature: str) -> bool:
+    if not _EVENT_BUS_HMAC_KEY:
+        return True
+    if not signature:
+        return False
+    expected = _hmac.new(_EVENT_BUS_HMAC_KEY.encode(), event_json.encode(), _hashlib.sha256).hexdigest()
+    return _hmac.compare_digest(expected, signature)
+
 class EventBus:
     """
     The central message broker. 
@@ -112,17 +132,34 @@ class EventBus:
             self.subscribers[event_type].remove(handler)
 
     def _sanitize_event_payload(self, event: HiveEvent) -> Dict[str, Any]:
-        attack_payload_events = {
+        # Internal event types that carry legitimate attack payloads (SQLi, XSS,
+        # command injection test strings). These naturally contain keywords like
+        # "execute", "exec", "eval", "subprocess", "shell" that the
+        # guard_layer's prompt-injection patterns match. We must NOT run
+        # guard_layer sanitization on these events — only control-token
+        # sanitization to strip terminal escapes.
+        _internal_event_types = {
             EventType.LIVE_ATTACK,
             EventType.JOB_ASSIGNED,
             EventType.JOB_COMPLETED,
             EventType.VULN_CANDIDATE,
             EventType.VULN_CONFIRMED,
+            EventType.RECON_PACKET,
+            EventType.RECON_COMPLETE,
+            EventType.AGENT_STATUS,
+            EventType.TARGET_ACQUIRED,
+            EventType.LOG,
+            EventType.PHASE_STARTED,
+            EventType.PHASE_COMPLETED,
+            EventType.ENDPOINT_DISCOVERED,
+            EventType.ENDPOINT_TESTED,
+            EventType.COVERAGE_UPDATE,
         }
-        payload_keys = {"payload", "generated_payloads", "payloads", "all_payloads"}
 
         def sanitize_value(value: Any, key: str = "") -> Any:
-            if key in payload_keys and event.type in attack_payload_events:
+            if event.type in _internal_event_types:
+                # For internal events, only sanitize control tokens — never
+                # run prompt-injection checks on legitimate attack payloads.
                 if isinstance(value, str):
                     return content_boundary.sanitize_control_tokens(value)[:4096]
                 if isinstance(value, list):
@@ -130,6 +167,7 @@ class EventBus:
                 if isinstance(value, dict):
                     return {k: sanitize_value(v, k) for k, v in value.items()}
                 return value
+            # For external/untrusted events, run full guard_layer sanitization
             if isinstance(value, dict):
                 return {k: sanitize_value(v, k) for k, v in value.items()}
             if isinstance(value, list):
@@ -160,9 +198,9 @@ class EventBus:
             logging.warning("[EventBus] Guard layer failed open for event %s: %s", event.id, exc)
 
         if event.type == EventType.JOB_COMPLETED:
-            memory_store.remember_notification(event.scan_id, "Background job completed", event.payload)
+            await memory_store.remember_notification(event.scan_id, "Background job completed", event.payload)
         if event.type in {EventType.RECON_PACKET, EventType.RECON_COMPLETE, EventType.SCHEMA_DISCOVERED}:
-            memory_store.remember_episode(event.scan_id, {
+            await memory_store.remember_episode(event.scan_id, {
                 "event_type": event.type.value,
                 "source": event.source,
                 "payload": event.payload,
@@ -302,7 +340,7 @@ class DistributedEventBus(EventBus):
     def __init__(self, redis_url: str):
         super().__init__()
         import redis.asyncio as aioredis
-        self.redis_client = aioredis.from_url(redis_url, decode_responses=True)
+        self.redis_client = aioredis.from_url(redis_url, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
         self.pubsub = self.redis_client.pubsub()
         self.is_running = False
         self._is_redis_online = None # Lazy check
@@ -336,13 +374,35 @@ class DistributedEventBus(EventBus):
 
 
     async def _listen_loop(self):
-        """Listens for global events and injects them into the local hive (Fixed Async)."""
+        """Listens for global events and injects them into the local hive (Fixed Async).
+
+        SECURITY FIX (C-13): Verify HMAC signature on Redis messages before
+        deserializing and publishing to the local bus. If HMAC_KEY is set,
+        unsigned or tampered messages are rejected to prevent event injection.
+        """
         try:
             async for message in self.pubsub.listen():
                 if not self.is_running: break
                 if message['type'] == 'message':
                     try:
-                        event_data = json.loads(message['data'])
+                        raw_data = message['data']
+                        # Extract signature if present (format: "signature|json")
+                        signature = None
+                        if isinstance(raw_data, str) and '|' in raw_data:
+                            sep_idx = raw_data.index('|')
+                            signature = raw_data[:sep_idx]
+                            raw_data = raw_data[sep_idx + 1:]
+
+                        event_data = json.loads(raw_data)
+
+                        # HMAC verification when key is configured
+                        if _EVENT_BUS_HMAC_KEY:
+                            if not _verify_event_signature(raw_data, signature or ''):
+                                logging.warning(
+                                    "[DistributedEventBus] HMAC verification failed — "
+                                    "dropping potentially tampered event")
+                                continue
+
                         event = HiveEvent(**event_data)
                         
                         # Local Broadcast
@@ -362,7 +422,11 @@ class DistributedEventBus(EventBus):
         # 2. Global Broadcast (Resilient Redis Attempt)
         try:
             event_json = event.model_dump_json()
-            await self.redis_client.publish("xytherion_events", event_json)
+            # HIGH-15: Sign events with HMAC before publishing to Redis
+            # so _listen_loop can verify integrity on the receiving end.
+            signature = _sign_event(event_json)
+            signed_payload = f"{signature}|{event_json}" if signature else event_json
+            await self.redis_client.publish("xytherion_events", signed_payload)
             
             # 3. WORKER ROUTING & SAFETY LOCKING (Async-Harden)
             if event.type == EventType.JOB_ASSIGNED:
@@ -660,3 +724,4 @@ class BaseAgent:
             execution_time_ms=0,
             data={}
         )
+

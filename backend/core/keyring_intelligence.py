@@ -83,8 +83,10 @@ class KeyringIntelligence:
         entry = {
             "fingerprint": fp,
             "type": token_type.value,
-            "token_preview": token[:50] + "..." if len(token) > 50 else token,
-            "full_token": token,
+            "token_preview": token[:8] + "****" + token[-4:] if len(token) > 12 else "****",
+            # FIX: Do NOT persist the full token to disk. Only store the
+            # preview and fingerprint. This prevents secret leakage if the
+            # keyring.json file is exfiltrated.
             "source_url": url,
             "context": context,
             "expired": expired,

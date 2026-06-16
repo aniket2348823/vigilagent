@@ -1,0 +1,37 @@
+# Vigilagent Data Retention Policy
+# -----------------------------------
+# GDPR-compliant data retention settings.
+# All durations are in days. Set to 0 for no retention (delete immediately).
+
+retention:
+  # Scan results and findings
+  scan_data:
+    default_days: 90
+    max_days: 365
+  
+  # Agent memory and learning data
+  memory:
+    default_days: 180
+    max_days: 730
+  
+  # Skill artifacts and evaluation data
+  skills:
+    default_days: 365
+    max_days: null  # Skills are retained indefinitely
+  
+  # Audit logs and security events
+  audit_logs:
+    default_days: 365
+    max_days: 2555  # 7 years for compliance
+  
+  # Brain episodes and learning patterns
+  brain_episodes:
+    default_days: 90
+    max_days: 365
+
+# Automatic cleanup settings
+cleanup:
+  enabled: true
+  schedule: "0 3 * * *"  # Daily at 3 AM UTC
+  dry_run: false
+  batch_size: 100

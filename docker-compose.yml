@@ -8,6 +8,7 @@ services:
     env_file: .env
     environment:
       - CORS_ORIGINS=http://localhost:5173
+      - REDIS_URL=redis://:vigilagent-redis-secret@redis:6379/0
     depends_on:
       redis:
         condition: service_healthy
@@ -27,12 +28,13 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: redis-server --requirepass vigilagent-redis-secret
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "vigilagent-redis-secret", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3

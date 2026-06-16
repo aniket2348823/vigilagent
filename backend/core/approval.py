@@ -20,6 +20,9 @@ class ApprovalTicket:
     decided_by: str = ""
 
 
+_MAX_TICKETS = 5000
+
+
 class ApprovalStore:
     def __init__(self) -> None:
         self._tickets: dict[str, ApprovalTicket] = {}
@@ -33,6 +36,11 @@ class ApprovalStore:
             payload=payload or {},
         )
         self._tickets[ticket.id] = ticket
+        # Evict oldest resolved tickets when at capacity
+        if len(self._tickets) > _MAX_TICKETS:
+            resolved = [tid for tid, t in self._tickets.items() if t.status != "pending"]
+            for tid in resolved[:len(resolved) // 2]:
+                self._tickets.pop(tid, None)
         return ticket
 
     def approve(self, ticket_id: str, *, decided_by: str = "human") -> ApprovalTicket:

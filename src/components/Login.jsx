@@ -6,9 +6,30 @@ const Login = ({ onLoginSuccess }) => {
     const [token, setToken] = useState('');
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [attemptCount, setAttemptCount] = useState(() => {
+        try {
+            const stored = localStorage.getItem('vigilagent_login_attempts');
+            const data = stored ? JSON.parse(stored) : { count: 0, lockedUntil: 0 };
+            // Reset if lockout expired
+            if (data.lockedUntil && Date.now() > data.lockedUntil) {
+                return { count: 0, lockedUntil: 0 };
+            }
+            return data;
+        } catch { return { count: 0, lockedUntil: 0 }; }
+    });
+    const MAX_ATTEMPTS = 5;
+    const LOCKOUT_MS = 300000; // 5 minutes
 
     const handleLogin = async (e) => {
         e.preventDefault();
+        
+        // Check lockout
+        if (attemptCount.lockedUntil && Date.now() < attemptCount.lockedUntil) {
+            const remaining = Math.ceil((attemptCount.lockedUntil - Date.now()) / 1000);
+            setError();
+            return;
+        }
+        
         setIsLoading(true);
         setError('');
 
@@ -22,12 +43,23 @@ const Login = ({ onLoginSuccess }) => {
 
             if (data.status === 'success') {
                 if (data.token) localStorage.setItem('vulagent_ws_token', data.token);
+                // Reset attempt counter on successful login
+                try { localStorage.removeItem('vigilagent_login_attempts'); } catch {}
                 onLoginSuccess();
             } else {
                 setError(data.message || 'Verification Failed');
             }
         } catch (err) {
-            setError("Connection Error");
+            const newCount = attemptCount.count + 1;
+            const newLockedUntil = newCount >= MAX_ATTEMPTS ? Date.now() + LOCKOUT_MS : 0;
+            const newAttempt = { count: newCount >= MAX_ATTEMPTS ? 0 : newCount, lockedUntil: newLockedUntil };
+            setAttemptCount(newAttempt);
+            try { localStorage.setItem('vigilagent_login_attempts', JSON.stringify(newAttempt)); } catch {}
+            if (newLockedUntil) {
+                setError();
+            } else {
+                setError();
+            }
         } finally {
             setIsLoading(false);
         }

@@ -62,7 +62,7 @@ class CreateScanRequest(BaseModel):
         if not isinstance(v, str) or not _TARGET_URL_PATTERN.match(v):
             raise ValueError("target_url must be a valid HTTP/HTTPS URL")
         # Block private IP ranges and metadata endpoints
-        from urllib.parse import PassiveIPv4AddressDetector, urlparse
+        from urllib.parse import urlparse
         parsed = urlparse(v)
         hostname = (parsed.hostname or "").lower()
         if hostname in forbidden_hosts or hostname.startswith(("192.168.", "10.", "172.")):

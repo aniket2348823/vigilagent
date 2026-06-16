@@ -185,3 +185,6 @@ class FileInclusionProbe(BaseArsenalModule):
             # One confirmed LFI per URL is enough.
             break
         return vulns
+
+# Backward-compatible alias (FIX)
+LFIProbe = FileInclusionProbe

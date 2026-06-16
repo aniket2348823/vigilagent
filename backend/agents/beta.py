@@ -64,8 +64,19 @@ class BetaAgent(SkillRecallMixin, ControlSignalMixin, ScanContextRecorderMixin, 
         self.bandit = payload_bandit
         self.delivery = PayloadDeliveryEngine()
         
+        # Persistent aiohttp session to prevent socket exhaustion (same pattern
+        # as Sigma's SessionLifecycleMixin). Created lazily in _get_session().
+        self._session = None
+        
         # Browser Integration inherited from BrowserEnabledAgent
         # self.browser, self.session_manager, self.forensics available via properties
+
+    async def stop(self):
+        """Gracefully close the persistent session to prevent socket leaks."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+        await super().stop()
 
     async def setup(self):
         self.bus.subscribe(EventType.JOB_ASSIGNED, self.handle_job)
@@ -381,6 +392,14 @@ class BetaAgent(SkillRecallMixin, ControlSignalMixin, ScanContextRecorderMixin, 
                   f"({signals} signals, controls={controls})")
         return success
 
+    async def _get_session(self):
+        """Lazy-create a persistent aiohttp session to prevent socket exhaustion
+        (mirrors Sigma's SessionLifecycleMixin pattern)."""
+        if self._session is None or self._session.closed:
+            import aiohttp
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
+        return self._session
+
     async def _execute_real_attack(self, url: str, payload_str: str, scan_id: str = None,
                                    headers: dict | None = None):
         """Execute a real HTTP attack against the target with the given payload.
@@ -406,67 +425,66 @@ class BetaAgent(SkillRecallMixin, ControlSignalMixin, ScanContextRecorderMixin, 
         start_t = time.time()
         try:
             target = url + ("&" if "?" in url else "?") + f"test={payload_str}"
-            import aiohttp
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                response = await network_interceptor.fetch(
-                    "GET", target, session=session,
-                    headers=outbound_headers or None, timeout=10)
-                text = response.body
-                status = response.status
-                latency = response.elapsed_ms
+            session = await self._get_session()
+            response = await network_interceptor.fetch(
+                "GET", target, session=session,
+                headers=outbound_headers or None, timeout=10)
+            text = response.body
+            status = response.status
+            latency = response.elapsed_ms
 
-                anomaly = False
-                result = "OK"
-                from backend.core.exploit_engine import MultiLayerVerifier
-                base_status = 200
-                base_text = ""
-                try:
-                    base_response = await network_interceptor.fetch(
-                        "GET", url.split("?")[0], session=session,
-                        headers=outbound_headers or None, timeout=5)
-                    base_status = base_response.status; base_text = base_response.body
-                except Exception as e:
-                    logger.debug(f"[{self.name}] Baseline fetch failed: {e}")
+            anomaly = False
+            result = "OK"
+            from backend.core.exploit_engine import MultiLayerVerifier
+            base_status = 200
+            base_text = ""
+            try:
+                base_response = await network_interceptor.fetch(
+                    "GET", url.split("?")[0], session=session,
+                    headers=outbound_headers or None, timeout=5)
+                base_status = base_response.status; base_text = base_response.body
+            except Exception as e:
+                logger.debug(f"[{self.name}] Baseline fetch failed: {e}")
 
-                verified, confidence, signals = MultiLayerVerifier.verify(
-                    {"status": base_status, "response": base_text},
-                    {"status": status, "body": text}
-                )
+            verified, confidence, signals = MultiLayerVerifier.verify(
+                {"status": base_status, "response": base_text},
+                {"status": status, "body": text}
+            )
 
-                # Strict mathematical payload verification.
-                if not verified or signals < 2:
-                    return
+            # Strict mathematical payload verification.
+            if not verified or signals < 2:
+                return
 
-                anomaly = True
-                result = f"EXPLOIT VERIFIED (Signals: {signals})"
+            anomaly = True
+            result = f"EXPLOIT VERIFIED (Signals: {signals})"
 
-                try:
-                    await publish_request_event({
-                        "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        "method": "GET",
-                        "endpoint": url.split("?")[0][-30:] if len(url) > 30 else url,
-                        "payload": payload_str[:25],
-                        "status": status,
-                        "latency": latency,
-                        "result": result,
-                        "anomaly": anomaly
-                    }, scan_id=scan_id)
-                except Exception as e:
-                    logger.debug(f"[{self.name}] publish_request_event failed: {e}")
+            try:
+                await publish_request_event({
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "method": "GET",
+                    "endpoint": url.split("?")[0][-30:] if len(url) > 30 else url,
+                    "payload": payload_str[:25],
+                    "status": status,
+                    "latency": latency,
+                    "result": result,
+                    "anomaly": anomaly
+                }, scan_id=scan_id)
+            except Exception as e:
+                logger.debug(f"[{self.name}] publish_request_event failed: {e}")
 
-                evidence = content_boundary.wrap_http_response(status, response.headers, text, response.url)
-                await self.bus.publish(HiveEvent(
-                    type=EventType.VULN_CANDIDATE,
-                    source=self.name,
-                    scan_id=scan_id or "GLOBAL",
-                    payload={
-                        "url": url,
-                        "payload": payload_str,
-                        "description": evidence[:1200],
-                        "evidence": f"HTTP {status} with payload '{payload_str[:80]}' triggered anomalous response."
-                    }
-                ))
-                logger.info(f"[{self.name}] [HIT] Anomaly detected on {url}: {result}")
+            evidence = content_boundary.wrap_http_response(status, response.headers, text, response.url)
+            await self.bus.publish(HiveEvent(
+                type=EventType.VULN_CANDIDATE,
+                source=self.name,
+                scan_id=scan_id or "GLOBAL",
+                payload={
+                    "url": url,
+                    "payload": payload_str,
+                    "description": evidence[:1200],
+                    "evidence": f"HTTP {status} with payload '{payload_str[:80]}' triggered anomalous response."
+                }
+            ))
+            logger.info(f"[{self.name}] [HIT] Anomaly detected on {url}: {result}")
         except Exception as e:
             logger.error(f"[{self.name}] [ATTACK ERROR] {e}")
 
@@ -669,23 +687,24 @@ class BetaAgent(SkillRecallMixin, ControlSignalMixin, ScanContextRecorderMixin, 
                 except Exception as e:
                     logger.debug(f"[{self.name}] CSRF bypass invalid_token failed: {e}")
             
-            # Technique 4: Try changing request method (POST -> GET)
+            # Technique 4: POST without any CSRF token in the body
             if not bypassed:
                 try:
                     async with aiohttp.ClientSession() as session:
                         response = await network_interceptor.fetch(
-                            "GET",
+                            "POST",
                             url,
                             session=session,
+                            headers={"Content-Type": "application/x-www-form-urlencoded"},
                             timeout=10
                         )
                         
                         if 200 <= response.status < 300:
                             bypassed = True
-                            bypass_method = "method_change"
-                            logger.info(f"[{self.name}] CSRF bypass: Request succeeded with method change")
+                            bypass_method = "no_token_body"
+                            logger.info(f"[{self.name}] CSRF bypass: POST succeeded with empty body (no token)")
                 except Exception as e:
-                    logger.debug(f"[{self.name}] CSRF bypass method_change failed: {e}")
+                    logger.debug(f"[{self.name}] CSRF bypass no_token_body failed: {e}")
             
             return {
                 "bypassed": bypassed,

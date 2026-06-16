@@ -72,6 +72,7 @@ class ReplayHTTPClient:
         self.history = history or BoundedHTTPHistory()
         self.cookie_jar: aiohttp.CookieJar | None = None
         self.scope = scope
+        self._session: aiohttp.ClientSession | None = None
 
     async def request(
         self,
@@ -91,11 +92,19 @@ class ReplayHTTPClient:
         if self.cookie_jar is None:
             self.cookie_jar = aiohttp.CookieJar(unsafe=False)
         start = time.time()
-        async with aiohttp.ClientSession(cookie_jar=self.cookie_jar, timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+        # Reuse cached session for connection pooling (HIGH-1 fix)
+        if self._session is None or self._session.closed:
+            if self.cookie_jar is None:
+                self.cookie_jar = aiohttp.CookieJar(unsafe=False)
+            self._session = aiohttp.ClientSession(
+                cookie_jar=self.cookie_jar,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            )
+        try:
             response = await network_interceptor.fetch(
                 method,
                 url,
-                session=session,
+                session=self._session,
                 headers=headers,
                 json=json,
                 data=data,
@@ -130,6 +139,12 @@ class ReplayHTTPClient:
             )
             knowledge_graph.ingest_http_record(record, scan_id=scan_id)
             return record
+        except Exception:
+            # On connection errors, discard session so next request creates fresh one
+            if self._session and not self._session.closed:
+                await self._session.close()
+            self._session = None
+            raise
 
     async def replay(self, record_id: str, **overrides: Any) -> HTTPRecord:
         record = self.history.get(record_id)

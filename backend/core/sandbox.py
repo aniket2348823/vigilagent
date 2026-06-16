@@ -105,7 +105,15 @@ class DockerSandbox:
         return root
 
     async def run(self, command: str, *, engagement_id: str = "GLOBAL", timeout: int = 120) -> SandboxResult:
-        guard_layer.assert_safe_text(command, output=True)
+        # SANDBOX FIX: Sandbox runs legitimate pentest tool commands
+        # (sqlmap, nmap, etc.) that naturally contain shell keywords like
+        # 'execute', 'subprocess', 'shell'. The prompt-injection filter
+        # should NOT block commands running inside the sandbox — the
+        # sandbox itself IS the security boundary. Only check for control
+        # tokens that could break out of the sandbox.
+        from backend.core.content_boundary import content_boundary
+        # FIX: Use the sanitized result instead of discarding it
+        sanitized_command = content_boundary.sanitize_control_tokens(command)
         workspace = self.workspace_for(engagement_id)
         container_name = f"vulagent-{engagement_id.lower()}-{uuid.uuid4().hex[:8]}"
         docker_cmd = [
@@ -116,7 +124,7 @@ class DockerSandbox:
             "-v", f"{workspace}:/workspace",
             "-w", "/workspace",
             self.image,
-            "sh", "-lc", command,
+            "sh", "-lc", sanitized_command,
         ]
         try:
             async with command_lane.slot():

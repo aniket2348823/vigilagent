@@ -25,7 +25,7 @@ class ReconCommand:
     output_path: Path
     cwd: Path | None = None
     stdin: str = ""
-    timeout_seconds: int = 180
+    timeout_seconds: int = 3600
     parser_hint: str = "lines"
     metadata: dict[str, str] = field(default_factory=dict)
 

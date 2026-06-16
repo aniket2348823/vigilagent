@@ -154,6 +154,7 @@ class AgentHealthMonitor:
         
         # Active alerts
         self.alerts: List[HealthAlert] = []
+        self._max_alerts = 2000
 
         # Dedup / downgrade state per (agent_name, category) key. Prevents the
         # flood of duplicate "[HealthMonitor] CRITICAL: agent_X - Critical
@@ -460,6 +461,9 @@ class AgentHealthMonitor:
             if since_last_log >= _CRITICAL_DEDUP_WINDOW_S:
                 state["last_log_ts"] = now
                 self.alerts.append(alert)
+                # Bound alerts list to prevent unbounded growth
+                if len(self.alerts) > self._max_alerts:
+                    self.alerts = self.alerts[-self._max_alerts:]
                 logger.warning(f"[HealthMonitor] {severity.upper()}: {agent_name} - {issue}")
             # else: dedup'd, drop the log.
             return
@@ -480,6 +484,8 @@ class AgentHealthMonitor:
 
         if not recent_alerts:
             self.alerts.append(alert)
+            if len(self.alerts) > self._max_alerts:
+                self.alerts = self.alerts[-self._max_alerts:]
             logger.warning(f"[HealthMonitor] {severity.upper()}: {agent_name} - {issue}")
     
     def check_heartbeats(self) -> List[str]:
@@ -577,13 +583,13 @@ class AgentHealthMonitor:
                 "summary": self.get_system_health_summary()
             }
             
-            snapshot_file = self.health_dir / f"snapshot_{int(time.time())}.json"
-            snapshot_file.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
-            
-            # Keep only last 10 snapshots
-            snapshots = sorted(self.health_dir.glob("snapshot_*.json"))
-            for old_snapshot in snapshots[:-10]:
-                old_snapshot.unlink()
+            def _write_snapshot():
+                snapshot_file = self.health_dir / f"snapshot_{int(time.time())}.json"
+                snapshot_file.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+                snapshots = sorted(self.health_dir.glob("snapshot_*.json"))
+                for old_snapshot in snapshots[:-10]:
+                    old_snapshot.unlink()
+            await asyncio.to_thread(_write_snapshot)
                 
         except Exception as e:
             logger.error(f"[HealthMonitor] Failed to save snapshot: {e}")

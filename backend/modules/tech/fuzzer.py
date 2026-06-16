@@ -33,7 +33,7 @@ _FUZZ_VECTORS = (
     "{{7*7}}",
     "%00",
     "A" * 4096,
-    f"${{{{{_SSTI_SENTINEL}}}}}",
+    f"{{{_SSTI_SENTINEL}}}",
 )
 
 _PASSWD_LINE = re.compile(r"^(root|daemon|nobody):[x*!]:\d+:\d+:", re.M)

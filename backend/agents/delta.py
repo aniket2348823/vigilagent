@@ -47,7 +47,7 @@ class AgentDelta(BrowserEnabledAgent):
         except Exception as e:
             logger.debug(f"[{self.name}] Skill recall failed: {e}")
             recs = []
-        cache[target_url] = recs
+        cache[cache_key] = recs
         return recs
 
     async def _safe_kill(self, proc):

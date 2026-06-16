@@ -7,6 +7,17 @@ import random
 import time
 import collections
 from backend.core.task_manager import TaskManager
+import hashlib
+import json
+import logging
+
+# Message schema validation (security hardening)
+_ALLOWED_EVENT_TYPES = {
+    "LIVE_ATTACK_FEED", "VULN_UPDATE", "SPY_STATUS", "BATCH",
+    "LIFECYCLE_EVENT", "LIVE_THREAT_LOG", "SCAN_UPDATE",
+    "AGENT_HEARTBEAT", "RECON_PROGRESS", "EXPLOIT_PROGRESS",
+}
+_MAX_MESSAGE_SIZE = 65536  # 64KB max message size
 
 # --- Adaptive 300 Monitoring Logic ---
 def get_display_limit(rps):
@@ -239,6 +250,21 @@ class SocketManager:
         self.packet_count += 1 # Count for RPS
 
     async def connect(self, websocket: WebSocket, client_type: str = "ui"):
+        # H-9/H-10: Validate WebSocket origin to prevent cross-site hijacking
+        origin = websocket.headers.get("origin", "")
+        if origin:
+            try:
+                from urllib.parse import urlparse
+                origin_host = urlparse(origin).hostname or ""
+                # Reject if origin doesn't match expected hosts
+                allowed_origins = {"localhost", "127.0.0.1", ""}
+                if origin_host and origin_host not in allowed_origins:
+                    self.logger.warning(f"WebSocket rejected: suspicious origin {origin_host}")
+                    await websocket.close(code=4003, reason="Invalid origin")
+                    return
+            except Exception:
+                pass  # If origin parsing fails, allow (backward compat)
+
         # FIX-047: Enforce connection limits to prevent resource exhaustion
         if client_type == "spy" and len(self.spy_connections) >= self.MAX_SPY_CONNECTIONS:
             self.logger.warning("Spy connection limit reached, rejecting")
@@ -288,17 +314,52 @@ class SocketManager:
         elif websocket in self.ui_connections:
             self.ui_connections.remove(websocket)
 
+    @staticmethod
+    def _validate_message(data: dict) -> bool:
+        """Validate message structure before broadcasting.
+        
+        Prevents malformed or excessively large messages from being
+        broadcast to connected clients (security hardening).
+        """
+        if not isinstance(data, dict):
+            return False
+        # Check message size
+        try:
+            msg_size = len(json.dumps(data, default=str).encode('utf-8'))
+            if msg_size > _MAX_MESSAGE_SIZE:
+                logging.getLogger("Vigilagent.SocketManager").warning(
+                    "Message too large (%d bytes), dropping", msg_size
+                )
+                return False
+        except Exception:
+            return False
+        # Validate event type if present
+        evt_type = data.get("type")
+        if evt_type and evt_type not in _ALLOWED_EVENT_TYPES:
+            logging.getLogger("Vigilagent.SocketManager").debug(
+                "Unknown event type: %s", evt_type
+            )
+        return True
+
     async def broadcast(self, data: dict):
+        if not self._validate_message(data):
+            return
         await self.broadcast_to_ui(data)
 
     async def broadcast_immediate(self, data: dict):
-        """Bypass batching for critical TC010 control events."""
+        """Bypass batching for critical TC010 control events.
+
+        SECURITY FIX (M-1): Apply the same validation that broadcast() uses
+        so oversized or malformed messages cannot be pushed via this path.
+        """
+        if not self._validate_message(data):
+            return
         message = json.dumps(data)
         if self.ui_connections:
             await asyncio.gather(*(conn.send_text(message) for conn in self.ui_connections), return_exceptions=True)
 
     async def broadcast_to_ui(self, data: dict):
-        # Cache for late-joiners. We only retain "live" event types — system
+        # Cache for late-joiners. Validation already done in broadcast(). We only retain "live" event types — system
         # heartbeats and SPY_STATUS pings would just clutter the replay. The
         # buffer is bounded by REPLAY_BUFFER_SIZE so memory stays flat under
         # high RPS.

@@ -5,7 +5,8 @@ def findings_to_sarif(findings: list[dict[str, Any]]) -> dict[str, Any]:
     rules = {}
     results = []
     for finding in findings:
-        rule_id = finding.get("cwe", ["VULAGENT"])[0] if isinstance(finding.get("cwe"), list) else finding.get("vuln_type", "VULAGENT")
+        raw_cwe = finding.get("cwe", ["VULAGENT"])
+        rule_id = raw_cwe[0] if isinstance(raw_cwe, list) and raw_cwe else str(raw_cwe) if raw_cwe else finding.get("vuln_type", "VULAGENT")
         rules.setdefault(rule_id, {
             "id": rule_id,
             "name": finding.get("title") or finding.get("name") or rule_id,

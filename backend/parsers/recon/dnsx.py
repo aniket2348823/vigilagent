@@ -22,9 +22,12 @@ def parse_dnsx_jsonl(path: Path | str) -> list[ParsedEntity]:
         txt_recs = _lf(row, "txt")
 
         has_res = bool(a_recs or aaaa_recs)
-        is_dangling = bool(cname_recs and not has_res)
+        # FIX: Dangling CNAME detection now also checks if the CNAME target itself
+        # resolves to A/AAAA records. CDNs like Cloudflare return A records directly
+        # (not via CNAME), so behind_cdn=True + dangling_cname=True was contradictory.
         cdn_words = {"cloudfront", "cloudflare", "akamai", "fastly", "incapsula"}
         behind_cdn = any(any(c in cn.lower() for c in cdn_words) for cn in cname_recs)
+        is_dangling = bool(cname_recs and not has_res and not behind_cdn)
 
         props = {"a": a_recs, "aaaa": aaaa_recs, "cname": cname_recs, "mx": mx_recs,
                  "txt": txt_recs, "behind_cdn": behind_cdn, "dangling_cname": is_dangling,

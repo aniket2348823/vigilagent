@@ -15,7 +15,11 @@ def parse_gospider_jsonl(path: Path | str) -> list[ParsedEntity]:
     seen: set[str] = set()
     for row in safe_json_lines(path):
         url = str(row.get("output", row.get("url", ""))).strip()
-        if not url.startswith(("http://", "https://")) or url in seen:
+        if not url.startswith(("http://", "https://")):
+            continue
+        # FIX: Normalize URL to prevent duplicates from casing/trailing slashes
+        url = url.lower().rstrip("/")
+        if url in seen:
             continue
         seen.add(url)
         item_type = str(row.get("type", "url")).lower()

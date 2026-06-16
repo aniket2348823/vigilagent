@@ -31,11 +31,11 @@ import time as _time
 # route onto `_call_gemini`. No on-device / Ollama / NVIDIA endpoint exists.
 # ------------------------------------------------------------
 
-import requests
 import aiohttp
 import json
 import logging
 import math
+import re
 import os
 from typing import List, Dict, Any, Optional
 from backend.core.content_boundary import content_boundary
@@ -96,6 +96,7 @@ class BayesianWeightMatrix:
         self.save()
 
 
+# TOKEN_BUDGETS: Reserved for future token budgeting implementation.
 TOKEN_BUDGETS = {
     "sqli": 100,
     "fuzz": 100,
@@ -239,18 +240,19 @@ class CortexEngine:
     def _compress_context(text: str, max_len: int = 200) -> str:
         if not isinstance(text, str):
             text = str(text)
-        import re
         text = re.sub(r'\s+', ' ', text).strip()
         if len(text) > max_len:
             text = text[:max_len] + "...[truncated]"
         return text
 
-    def _cache_key(self, prompt: str) -> str:
-        return hashlib.sha256(prompt.encode('utf-8', errors='ignore')).hexdigest()
+    def _cache_key(self, prompt: str, scan_ctx=None) -> str:
+        scan_id = getattr(scan_ctx, 'scan_id', 'default') if scan_ctx else 'default'
+        raw = f"{scan_id}:{prompt}"
+        return hashlib.sha256(raw.encode('utf-8', errors='ignore')).hexdigest()
 
-    def _get_cached(self, prompt: str):
+    def _get_cached(self, prompt: str, scan_ctx=None):
         import time
-        key = self._cache_key(prompt)
+        key = self._cache_key(prompt, scan_ctx)
         entry = self._response_cache.get(key)
         if entry and (time.time() - entry["ts"]) < CACHE_TTL:
             self._cache_hits += 1
@@ -261,9 +263,9 @@ class CortexEngine:
         self._cache_misses += 1
         return None
 
-    def _set_cached(self, prompt: str, result: str):
+    def _set_cached(self, prompt: str, result: str, scan_ctx=None):
         import time
-        key = self._cache_key(prompt)
+        key = self._cache_key(prompt, scan_ctx)
         if key in self._response_cache:
             self._response_cache.move_to_end(key)
         self._response_cache[key] = {"result": result, "ts": time.time()}
@@ -301,7 +303,7 @@ class CortexEngine:
                 logger.info("CORTEX: Circuit breaker reset - attempting Gemini recovery")
         prompt = self._prompt_with_transcript(prompt, scan_ctx)
         if not _skip_cache:
-            cached = self._get_cached(prompt)
+            cached = self._get_cached(prompt, scan_ctx)
             if cached is not None:
                 self._telemetry["cache_hits"] += 1
                 return cached
@@ -332,7 +334,7 @@ class CortexEngine:
             self._telemetry["llm_successes"] += 1
             self._telemetry["llm_total_latency"] += latency
             self._consecutive_failures = 0
-            self._set_cached(prompt, result)
+            self._set_cached(prompt, result, scan_ctx)
             return result
         except asyncio.TimeoutError:
             self._consecutive_failures += 1
@@ -374,12 +376,22 @@ class CortexEngine:
         return await self._call_gemini(prompt, temperature=temperature, max_tokens=max_tokens, scan_ctx=scan_ctx, _skip_cache=_skip_cache)
 
     async def _call_nvidia_payload_model(self, prompt, max_tokens=1024, scan_ctx=None):
-        """LEGACY ALIAS: payload generation via Gemini (gemini-2.5-flash)."""
+        """LEGACY ALIAS: payload generation via Gemini (gemini-2.5-flash).
+        Now participates in the circuit breaker for consistent protection."""
+        if self._circuit_open:
+            if _time.time() < self._circuit_open_until:
+                self._telemetry["degraded_mode_responses"] += 1
+                return "[CORTEX DEGRADED] Circuit breaker open - GI5-only mode active."
+            else:
+                self._circuit_open = False
+                self._consecutive_failures = 0
         if not self._gemini or not self._gemini.is_available:
+            self._consecutive_failures += 1
+            self._check_circuit_breaker("OFFLINE")
             return "[CORTEX OFFLINE] Gemini API is not configured."
         try:
             async with command_lane.slot(LanePriority.LOW):
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     self._gemini.generate_payloads(
                         self._prompt_with_transcript(prompt, scan_ctx),
                         max_tokens=max_tokens,
@@ -387,17 +399,31 @@ class CortexEngine:
                     ),
                     timeout=10.0
                 )
+            self._consecutive_failures = 0
+            return result
         except asyncio.TimeoutError:
+            self._consecutive_failures += 1
+            self._check_circuit_breaker("TIMEOUT")
             logger.warning("CORTEX: _call_nvidia_payload_model timed out")
             return "[CORTEX TIMEOUT] Payload generation timed out"
 
     async def _call_nvidia_validation_model(self, prompt, max_tokens=4096, scan_ctx=None):
-        """LEGACY ALIAS: validation via Gemini (gemini-2.5-flash)."""
+        """LEGACY ALIAS: validation via Gemini (gemini-2.5-flash).
+        Now participates in the circuit breaker for consistent protection."""
+        if self._circuit_open:
+            if _time.time() < self._circuit_open_until:
+                self._telemetry["degraded_mode_responses"] += 1
+                return "[CORTEX DEGRADED] Circuit breaker open - GI5-only mode active."
+            else:
+                self._circuit_open = False
+                self._consecutive_failures = 0
         if not self._gemini or not self._gemini.is_available:
+            self._consecutive_failures += 1
+            self._check_circuit_breaker("OFFLINE")
             return "[CORTEX OFFLINE] Gemini API is not configured."
         try:
             async with command_lane.slot(LanePriority.LOW):
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     self._gemini.validate_candidate(
                         self._prompt_with_transcript(prompt, scan_ctx),
                         max_tokens=max_tokens,
@@ -405,7 +431,11 @@ class CortexEngine:
                     ),
                     timeout=10.0
                 )
+            self._consecutive_failures = 0
+            return result
         except asyncio.TimeoutError:
+            self._consecutive_failures += 1
+            self._check_circuit_breaker("TIMEOUT")
             logger.warning("CORTEX: _call_nvidia_validation_model timed out")
             return "[CORTEX TIMEOUT] Validation timed out"
 
@@ -563,7 +593,6 @@ No markdown. No headers. Just the analysis."""
     def _extract_json(self, text: str) -> Optional[Dict[str, Any]]:
         """Robustly extract and clean JSON from LLM output."""
         if not text: return None
-        import re
         try:
             # 1. Try to find JSON block in markdown
             match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
@@ -576,10 +605,13 @@ No markdown. No headers. Just the analysis."""
                 if start != -1 and end != -1:
                     json_str = json_str[start:end+1]
             
-            # 3. Defensive cleaning: remove common LLM trailing commas or stray text
+            # 3. Defensive: try parsing as-is first, then fix trailing commas outside strings
             json_str = json_str.strip()
-            # Remove trailing commas before closing braces/brackets
-            json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+            json_str = re.sub(r'(?<!")\s*,\s*([\}\]])', r'\1', json_str)
             
             return json.loads(json_str)
         except Exception as e:
@@ -826,7 +858,10 @@ Output ONLY valid JSON. No markdown. No explanations."""
                 "\n"
                 "def validate_url(url):\n"
                 "    parsed = urlparse(url)\n"
-                "    ip = ipaddress.ip_address(parsed.hostname)\n"
+                "    hostname = parsed.hostname\n"
+                "    if not hostname:\n"
+                "        raise ValueError('Invalid URL: no hostname')\n"
+                "    ip = ipaddress.ip_address(hostname)\n"
                 "    for blocked in BLOCKED_RANGES:\n"
                 "        if ip in ipaddress.ip_network(blocked):\n"
                 "            raise ValueError('Internal URL blocked')\n"
@@ -1184,7 +1219,7 @@ RULES:
             if not data or not isinstance(data, dict):
                 # Fallback for small models that fail JSON but provide text
                 lower_res = result.lower()
-                if "vulnerable\": true" in lower_res or "vulnerability detected" in lower_res or "access confirmed" in lower_res:
+                if '"vulnerable": true' in lower_res or '"vulnerable\": true' in lower_res or "vulnerability detected" in lower_res or "access confirmed" in lower_res:
                     data = {"vulnerable": True, "confidence": 70, "type": "DETECTED", "evidence": "Keyword fallback detection."}
                 else:
                     raise ValueError("JSON is not a dict or extraction failed")

@@ -45,7 +45,29 @@ CredKind = Literal["password", "token", "jwt", "cookie", "api_key", "session"]
 Privilege = Literal["unknown", "user", "admin"]
 
 _VAULT_DIR = Path("scan_states") / "vault"
-_VAULT_SALT = b"vigilagent-credential-vault-v1"
+# HIGH-18: Derive per-installation salt from environment or persisted random
+# value. platform.node()/machine() are identical inside Docker/K8s containers
+# (same image), so we prefer os.getenv("HOSTNAME") which can be overridden
+# via Docker --hostname or Kubernetes downward API.
+_VAULT_SALT = b"vigilagent-credential-vault-v1"  # static fallback
+try:
+    _hostname = os.getenv("HOSTNAME", "")
+    if _hostname.strip():
+        _VAULT_SALT = hashlib.sha256(_hostname.encode()).digest()[:16]
+    else:
+        # Persist a random salt on first run so it stays stable across restarts
+        _VAULT_DIR.mkdir(parents=True, exist_ok=True)
+        _salt_file = _VAULT_DIR / ".vault_salt"
+        if _salt_file.exists():
+            _VAULT_SALT = _salt_file.read_bytes().strip()[:16]
+        else:
+            _VAULT_SALT = os.urandom(16)
+            try:
+                _salt_file.write_bytes(_VAULT_SALT)
+            except Exception:
+                pass  # best-effort; falls back to static salt next time
+except Exception:
+    pass  # use static fallback
 
 
 def _now() -> str:
@@ -137,13 +159,27 @@ class CredentialVault:
         This keeps the vault stable across restarts when no VIGILAGENT_VAULT_KEY
         is set, instead of regenerating an ephemeral key each run. The key file
         is gitignored via the scan_states/ data path."""
-        import fcntl
+        import platform
+
+        try:
+            import fcntl
+        except ImportError:
+            fcntl = None
+        try:
+            import msvcrt
+        except ImportError:
+            msvcrt = None
+
         key_path = self.storage_dir / ".vault_key"
         try:
             # FIX-019: Atomic file creation to prevent TOCTOU race
             lock_path = self.storage_dir / ".vault_key.lock"
             with open(lock_path, "w") as lock_file:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                if fcntl:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                elif msvcrt:
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                # On other platforms, file is already exclusive via 'x' mode
                 try:
                     if key_path.exists():
                         data = key_path.read_bytes().strip()
@@ -160,7 +196,13 @@ class CredentialVault:
                         logger.debug("[Vault] chmod failed (non-POSIX?): %s", exc)  # best-effort on platforms without POSIX perms
                     return key
                 finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                    if fcntl:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                    elif msvcrt:
+                        try:
+                            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                        except Exception:
+                            pass
         except Exception as exc:  # pragma: no cover - fall back to in-memory key
             logger.debug("[Vault] local key persistence unavailable (%s); using in-memory key.", exc)
             return Fernet.generate_key()

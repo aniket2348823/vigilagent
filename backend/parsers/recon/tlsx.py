@@ -11,7 +11,9 @@ def parse_tlsx_jsonl(path: Path | str) -> list[ParsedEntity]:
         host = str(row.get("host", row.get("address", ""))).strip()
         port = int(row.get("port", 443) or 443)
         if not host: continue
-        key = f"{host}:{port}"
+        # FIX: Include serial in dedup key to preserve multiple certs per host (SNI)
+        serial = str(row.get("serial", ""))
+        key = f"{host}:{port}:{serial}" if serial else f"{host}:{port}"
         if key in seen: continue
         seen.add(key)
 

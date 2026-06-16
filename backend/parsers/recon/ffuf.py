@@ -49,3 +49,10 @@ def parse_ffuf_json(path: Path | str) -> list[ParsedEntity]:
                          "duration_ns": duration, "host": host, "fuzz_input": fuzz_input},
             source_tool="ffuf", phase="directory_route_discovery"))
     return entities
+
+class FfufParser:
+    """Parser wrapper for backward compatibility."""
+    @staticmethod
+    def parse_ffuf_json(*args, **kwargs):
+        return parse_ffuf_json(*args, **kwargs)
+

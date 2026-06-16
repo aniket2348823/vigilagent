@@ -5,7 +5,10 @@
 import re
 import asyncio
 import json
-import redis
+try:
+    import redis
+except ImportError:
+    redis = None
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from backend.core.hive import EventType, HiveEvent
@@ -64,7 +67,7 @@ class AgentPrism(BrowserEnabledAgent):
         ]
         
         # 1. Distributed Health Watchdog (Cluster Mode)
-        self.redis_client: Optional[redis.Redis] = None
+        self.redis_client = None  # type: Any  # Optional[redis.asyncio.Redis], set in setup()
         self.config = ConfigManager()
         self.threshold_5xx = 0.30
         self.status_history = []

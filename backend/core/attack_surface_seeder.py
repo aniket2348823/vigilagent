@@ -70,10 +70,17 @@ def _base(url: str) -> str:
 
 async def _scope_allows(url: str) -> bool:
     try:
+        # SCOPE FIX: Use the per-scan http_client scope (which has the
+        # target host in allowed_hosts) instead of the global scope_guard
+        # (which only reads scope.yaml and may not have the target).
+        from backend.modules.tech.http_client import http_client
+        if hasattr(http_client, 'scope') and http_client.scope:
+            return http_client.scope.allows(url)
+        # Fallback to global scope_guard if per-scan scope not set.
         from backend.core.scope import scope_guard
         return scope_guard.allows(url)
     except Exception as exc:
-        logger.debug("[seeder] scope_guard check failed: %s", exc)
+        logger.debug("[seeder] scope check failed: %s", exc)
         return True
 
 

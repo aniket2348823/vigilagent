@@ -103,7 +103,7 @@ class KappaAgent(BrowserEnabledAgent):
         }
 
         self._save_record(archive_data)
-        memory_store.remember_episode(event.scan_id, {"type": "vulnerability", "payload": archive_data})
+        await memory_store.remember_episode(event.scan_id, {"type": "vulnerability", "payload": archive_data})
 
         # Test compatibility: publish LOG event immediately for test compatibility
         await self.bus.publish(HiveEvent(
@@ -132,7 +132,7 @@ class KappaAgent(BrowserEnabledAgent):
                 # so semantic recall sees the vector. _save_record is idempotent
                 # only by append, so we re-save with the embedding attached.
                 self._save_record({**archive_data, "embedded": True})
-                memory_store.remember_semantic(archive_data)
+                await memory_store.remember_semantic(archive_data)
 
             await self.bus.publish(HiveEvent(
                 type=EventType.LOG,
@@ -193,6 +193,7 @@ class KappaAgent(BrowserEnabledAgent):
                 data = json.load(f)
                 data.append(record)
                 f.seek(0)
+                f.truncate()  # Prevent data corruption when new JSON is shorter
                 json.dump(data, f, indent=2)
         except Exception as e:
             logger.error(f"[{self.name}] Memory Write Error: {e}")
@@ -203,7 +204,7 @@ class KappaAgent(BrowserEnabledAgent):
         query_vec = await self._get_embedding(query)
         if not query_vec: return []
 
-        semantic_hits = memory_store.recall_semantic(query_vec, top_k=top_k)
+        semantic_hits = await memory_store.recall_semantic(query_vec, top_k=top_k)
         sanitized_hits = []
         if semantic_hits:
             for hit in semantic_hits:

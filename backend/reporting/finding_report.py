@@ -239,8 +239,8 @@ class FindingReportEngine:
             pdf.set_font("Arial", "B", 12)
             pdf.multi_cell(w, 6, _s(f"[{f.severity.value.upper()}] {f.title}"))
             pdf.set_font("Arial", "", 9)
-            pdf.multi_cell(w, 5, _s(f"Asset: {f.affected_target} | Scope: {f.scope_status} | "
-                                    f"CVSS: {f.cvss_score or 'n/a'} | State: {f.state.value}"))
+            pdf.multi_cell(w, 5, _s(f"Asset: {f.affected_target} | Scope: {f.scope_status} | State: {f.state.value}"))
+            pdf.multi_cell(w, 5, _s(f"CVSS: {f.cvss_score or 'n/a'} | {f.cvss_vector or 'n/a'}"))
             if technical:
                 pdf.multi_cell(w, 5, _s(f"Description: {f.description[:1500]}"))
                 if f.steps_to_reproduce:

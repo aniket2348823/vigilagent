@@ -1,18 +1,26 @@
-"""Alpha Unified Recon Tool Registry — Full 39-Tool Matrix (Architecture §7, §5.1.1).
+"""Unified Tool Registry — 34 Recon (Alpha) + 5 Validation (Sigma) = 39 Tools.
 
-Alpha is the recon commander. It runs the full real-tool recon pipeline across
-all 7 phases. Binaries resolve from PATH first, then the project-local recon bin
+Architecture §7, §5.1.1, §5.2:
+
+  RECON_TOOLS (34) — owned exclusively by Alpha, the recon commander.
+  SIGMA_TOOLS (5)  — owned exclusively by Sigma, the validation/exploitation
+                     commander (nuclei, httpx, dalfox, whatweb, wafw00f).
+
+All 39 tools live in the same Docker recon image but are dispatched by different
+agents. Alpha never calls Sigma tools; Sigma never calls recon tools. The
+check_tool_availability() function resolves from BOTH dicts so any caller can
+verify install state regardless of ownership.
+
+Binaries resolve from PATH first, then the project-local recon bin
 (tools/recon_bin), then ALPHA_TOOL_ROOT (D:\\projects), Go bin, and pip Scripts.
-
-The §7 document lists the primary 25-tool baseline; this registry extends it to
-the full 39-tool arsenal the user requires Alpha to drive (adds assetfinder,
-github-subdomains, puredns, cdncheck, masscan, testssl, httprobe, whatweb,
-wafw00f, gospider, arjun, paramspider, aquatone, dalfox).
 """
 from __future__ import annotations
+import logging
 import shutil
 from pathlib import Path
 from backend.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 RECON_TOOLS = {
@@ -36,10 +44,8 @@ RECON_TOOLS = {
     "tlsx":         {"phase": "dns_infrastructure",      "binary": "tlsx",         "modes": ["STANDARD", "AGGRESSIVE"]},
     "testssl":      {"phase": "dns_infrastructure",      "binary": "testssl.sh",   "modes": ["AGGRESSIVE"]},
     # ── Phase 3: HTTP & Browser Intelligence ───────────────────────────────
-    "httpx":        {"phase": "http_browser_intelligence","binary": "httpx",       "modes": ["STANDARD", "AGGRESSIVE"]},
+    # NOTE: httpx, whatweb, wafw00f moved to SIGMA_TOOLS (Sigma-exclusive).
     "httprobe":     {"phase": "http_browser_intelligence","binary": "httprobe",    "modes": ["STANDARD", "AGGRESSIVE"]},
-    "whatweb":      {"phase": "http_browser_intelligence","binary": "whatweb",     "modes": ["STANDARD", "AGGRESSIVE"]},
-    "wafw00f":      {"phase": "http_browser_intelligence","binary": "wafw00f",     "modes": ["STANDARD", "AGGRESSIVE"]},
     "katana":       {"phase": "http_browser_intelligence","binary": "katana",      "modes": ["STANDARD", "AGGRESSIVE"]},
     "gospider":     {"phase": "http_browser_intelligence","binary": "gospider",    "modes": ["STANDARD", "AGGRESSIVE"]},
     "hakrawler":    {"phase": "http_browser_intelligence","binary": "hakrawler",   "modes": ["STANDARD", "AGGRESSIVE"]},
@@ -59,24 +65,44 @@ RECON_TOOLS = {
     "gowitness":    {"phase": "visual_documentation",    "binary": "gowitness",    "modes": ["STANDARD", "AGGRESSIVE"]},
     "aquatone":     {"phase": "visual_documentation",    "binary": "aquatone",     "modes": ["STANDARD", "AGGRESSIVE"]},
     # ── Phase 7: Template Validation ───────────────────────────────────────
-    "nuclei":       {"phase": "template_validation",     "binary": "nuclei",       "modes": ["STANDARD", "AGGRESSIVE"]},
-    "dalfox":       {"phase": "template_validation",     "binary": "dalfox",       "modes": ["AGGRESSIVE"]},
+    # NOTE: nuclei, dalfox moved to SIGMA_TOOLS (Sigma-exclusive).
     "interactsh":   {"phase": "template_validation",     "binary": "interactsh-client", "modes": ["AGGRESSIVE"]},
 }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SIGMA_TOOLS — 5 validation/exploitation tools, owned EXCLUSIVELY by Sigma.
+# These live in the same Docker image but are NEVER dispatched by Alpha.
+# Sigma uses them for vulnerability validation, fingerprinting, and WAF detection.
+# ═══════════════════════════════════════════════════════════════════════════════
+SIGMA_TOOLS = {
+    # ── Vulnerability Validation (Sigma §5.2, §29.4) ──────────────────────
+    "nuclei":       {"phase": "sigma_validation",        "binary": "nuclei",       "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
+    "dalfox":       {"phase": "sigma_validation",        "binary": "dalfox",       "modes": ["AGGRESSIVE"],             "owner": "sigma"},
+    # ── Fingerprinting & WAF Detection (Sigma §5.2) ───────────────────────
+    "httpx":        {"phase": "sigma_fingerprint",       "binary": "httpx",        "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
+    "whatweb":      {"phase": "sigma_fingerprint",       "binary": "whatweb",      "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
+    "wafw00f":      {"phase": "sigma_fingerprint",       "binary": "wafw00f",      "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
+}
+
+# Combined registry for availability lookups (all 39 tools).
+ALL_TOOLS = {**RECON_TOOLS, **SIGMA_TOOLS}
 
 
 def check_tool_availability(name: str) -> dict:
     """Check if a tool is installed and accessible.
 
+    Resolves from ALL_TOOLS (34 recon + 5 Sigma = 39 total) so any caller
+    can verify install state regardless of tool ownership.
+
     Resolution order (Architecture §7 rule 2 + project-local integration):
       1. System PATH.
-      2. Project-local recon bin: tools/recon_bin/ (installed by the recon
-         installer script — keeps all 39 tools inside the project).
+      2. Project-local recon bin: tools/recon_bin/.
       3. ALPHA_TOOL_ROOT (D:\\projects) — binary, binary.exe, binary/binary.
       4. Go bin (~/go/bin) and Python Scripts dir (pip console scripts).
       5. Vendored Python scripts under the tool root for git-only tools.
     """
-    spec = RECON_TOOLS.get(name)
+    spec = ALL_TOOLS.get(name)
     if not spec:
         return {"installed": False, "reason": f"unknown_tool:{name}"}
     binary = spec["binary"]
@@ -87,8 +113,8 @@ def check_tool_availability(name: str) -> dict:
     # recon image are ready, every arsenal tool is available with no host
     # install. This is the preferred backend for Linux-native tools on Windows.
     try:
-        from backend.tools.recon.docker_runtime import DOCKER_RECON_TOOLS, docker_recon_ready
-        if name in DOCKER_RECON_TOOLS and docker_recon_ready():
+        from backend.tools.recon.docker_runtime import DOCKER_ALL_TOOLS, docker_recon_ready
+        if name in DOCKER_ALL_TOOLS and docker_recon_ready():
             return {"installed": True, "path": "docker://vigilagent-recon", "source": "docker"}
     except Exception as e:
         logger.debug("Docker recon check skipped: %s", e)
@@ -109,12 +135,21 @@ def check_tool_availability(name: str) -> dict:
         if cand.exists():
             return {"installed": True, "path": str(cand), "source": "tool_root"}
 
-    # 4. Go bin + Python Scripts dir
+    # 4. Go bin, Python Scripts dir, user-local bins
     import os
-    go_bin = Path(os.path.expanduser("~")) / "go" / "bin"
-    for cand in (go_bin / binary, go_bin / f"{binary}.exe"):
+    _home = Path(os.path.expanduser("~"))
+    go_bin = _home / "go" / "bin"
+    local_bin = _home / ".local" / "bin"
+    user_tools = _home / "tools"
+    for cand in (go_bin / binary, go_bin / f"{binary}.exe",
+                 local_bin / binary, local_bin / f"{binary}.exe"):
         if cand.exists():
-            return {"installed": True, "path": str(cand), "source": "go_bin"}
+            return {"installed": True, "path": str(cand), "source": "user_bin"}
+    # Also check ~/tools/<ToolName>/<binary> for git-cloned tools
+    for subdir in user_tools.iterdir() if user_tools.is_dir() else []:
+        for cand in (subdir / binary, subdir / f"{binary}.exe"):
+            if cand.exists():
+                return {"installed": True, "path": str(cand), "source": "user_tools"}
     try:
         import sysconfig
         scripts_dir = Path(sysconfig.get_path("scripts"))
@@ -126,13 +161,23 @@ def check_tool_availability(name: str) -> dict:
 
     # 5. Vendored / git-only Python scripts
     if binary == "python":
+        # Check both tool_root (D:\projects), project_bin, and user ~/tools/
+        _user_tools = Path(os.path.expanduser("~")) / "tools"
         script_map = {
-            "linkfinder": [tool_root / "LinkFinder" / "linkfinder.py", project_bin / "LinkFinder" / "linkfinder.py"],
-            "secretfinder": [tool_root / "SecretFinder" / "SecretFinder.py", project_bin / "SecretFinder" / "SecretFinder.py"],
-            "dirsearch": [tool_root / "dirsearch" / "dirsearch.py", project_bin / "dirsearch" / "dirsearch.py"],
-            "inql": [tool_root / "inql" / "inql.py", project_bin / "inql" / "inql.py"],
-            "spiderfoot": [tool_root / "spiderfoot" / "sf.py", project_bin / "spiderfoot" / "sf.py"],
-            "paramspider": [tool_root / "ParamSpider" / "paramspider.py", project_bin / "ParamSpider" / "paramspider.py"],
+            "linkfinder": [tool_root / "LinkFinder" / "linkfinder.py", project_bin / "LinkFinder" / "linkfinder.py",
+                           _user_tools / "LinkFinder" / "linkfinder.py"],
+            "secretfinder": [tool_root / "SecretFinder" / "SecretFinder.py", project_bin / "SecretFinder" / "SecretFinder.py",
+                              _user_tools / "SecretFinder" / "SecretFinder.py"],
+            "dirsearch": [tool_root / "dirsearch" / "dirsearch.py", project_bin / "dirsearch" / "dirsearch.py",
+                           _user_tools / "dirsearch" / "dirsearch.py", Path("/usr/local/bin/dirsearch")],
+            "inql": [tool_root / "inql" / "inql.py", project_bin / "inql" / "inql.py",
+                      _user_tools / "inql" / "inql.py"],
+            "spiderfoot": [tool_root / "spiderfoot" / "sf.py", project_bin / "spiderfoot" / "sf.py",
+                            _user_tools / "spiderfoot" / "sf.py", _user_tools / "spiderfoot" / "spiderfoot"],
+            "paramspider": [tool_root / "ParamSpider" / "paramspider.py", project_bin / "ParamSpider" / "paramspider.py",
+                             _user_tools / "ParamSpider" / "paramspider.py"],
+            # NOTE: testssl has binary="testssl.sh" (not python), so it's
+            # resolved by the user_tools.iterdir() loop in step 4 above.
         }
         for script in script_map.get(name, []):
             if script.exists():

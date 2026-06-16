@@ -2,14 +2,14 @@ import json
 import logging
 from typing import Any
 
+logger = logging.getLogger("parsers")
+
 # HIGH-50: Use defusedxml to prevent XXE attacks
 try:
     import defusedxml.ElementTree as ET
 except ImportError:
-    import xml.etree.ElementTree as ET  # Fallback if defusedxml not installed
-    logger.warning("defusedxml not installed — XML parser is vulnerable to XXE. pip install defusedxml")
-
-logger = logging.getLogger("parsers")
+    ET = None  # Disable XML parsing entirely if defusedxml not installed
+    logger.warning("defusedxml not installed — XML parsing DISABLED to prevent XXE. pip install defusedxml")
 
 # MED-43: Maximum input size to prevent OOM on malicious payloads
 _MAX_XML_LEN = 5 * 1024 * 1024  # 5 MB
@@ -17,6 +17,9 @@ _MAX_JSONL_LEN = 5 * 1024 * 1024  # 5 MB
 
 
 def parse_nmap_xml(xml_text: str) -> list[dict[str, Any]]:
+    if ET is None:
+        logger.error("defusedxml not installed — cannot parse XML")
+        return []
     if len(xml_text) > _MAX_XML_LEN:
         logger.warning("XML input exceeds %d byte limit, truncating", _MAX_XML_LEN)
         xml_text = xml_text[:_MAX_XML_LEN]

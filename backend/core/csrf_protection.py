@@ -19,6 +19,9 @@ class CSRFProtection:
     Generates and validates CSRF tokens for state-changing operations.
     """
     
+    # Maximum number of tokens to prevent unbounded memory growth
+    MAX_TOKENS = 10000
+
     def __init__(self, token_expiry_seconds: int = 3600):
         # Structure: {token: (session_id, expiry_time)}
         self._tokens: Dict[str, tuple[str, float]] = {}
@@ -36,6 +39,16 @@ class CSRFProtection:
             CSRF token string
         """
         async with self._lock:
+            # SECURITY: Enforce hard cap to prevent memory exhaustion
+            if len(self._tokens) >= self.MAX_TOKENS:
+                await self.cleanup_expired_tokens()
+                # If still at cap after cleanup, force-evict oldest 20%
+                if len(self._tokens) >= self.MAX_TOKENS:
+                    sorted_tokens = sorted(self._tokens.items(), key=lambda x: x[1][1])
+                    evict_count = len(sorted_tokens) // 5
+                    for token, _ in sorted_tokens[:evict_count]:
+                        del self._tokens[token]
+            
             # Generate cryptographically secure token
             token = secrets.token_urlsafe(32)
             expiry = time.time() + self.token_expiry_seconds

@@ -162,7 +162,7 @@ class ToolExecutor:
                     result_bytes=watched.original_bytes, result_sha256=watched.sha256,
                 )
                 if definition.store_result:
-                    memory_store.remember_semantic({
+                    await memory_store.remember_semantic({
                         "memory_type": "tool_result",
                         "tool_name": tool_name,
                         "scan_id": scan_id,

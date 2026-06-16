@@ -1,9 +1,21 @@
 """Parser for nmap XML output."""
 from __future__ import annotations
 import logging
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from backend.parsers.recon.base import ParsedEntity
+
+# FIX: Use defusedxml to prevent XXE attacks when parsing untrusted nmap XML output.
+# Falls back to stdlib xml.etree if defusedxml is not installed.
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    import warnings
+    warnings.warn(
+        "defusedxml not installed; nmap XML parser is vulnerable to XXE. "
+        "Install with: pip install defusedxml",
+        stacklevel=2,
+    )
+    import xml.etree.ElementTree as ET
 
 logger = logging.getLogger("parsers.nmap")
 
@@ -67,3 +79,10 @@ def parse_nmap_xml(path: Path | str) -> list[ParsedEntity]:
                     confidence=0.8, properties={"script_id": script_id, "output": output[:2000], "host": ip},
                     source_tool="nmap", phase="dns_infrastructure"))
     return entities
+
+class NmapParser:
+    """Parser wrapper for backward compatibility."""
+    @staticmethod
+    def parse_nmap_xml(*args, **kwargs):
+        return parse_nmap_xml(*args, **kwargs)
+

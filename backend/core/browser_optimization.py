@@ -59,10 +59,19 @@ class BrowserContextPool:
                 logger.debug(f"[BrowserContextPool] Created new context (active: {len(self._active_contexts)})")
                 return context
             
-            # Wait for a context to become available
+            # Wait for a context to become available (bounded retry to prevent infinite recursion)
             logger.warning(f"[BrowserContextPool] Pool exhausted, waiting for available context...")
-            await asyncio.sleep(1)
-            return await self.acquire(scan_id)
+        # Release lock before sleeping so release() can return contexts
+        await asyncio.sleep(1)
+        # Retry once after waiting — if still full, return None instead of recursing
+        async with self._lock:
+            if self._available_contexts:
+                context = self._available_contexts.pop()
+                if scan_id:
+                    self._active_contexts[scan_id] = context
+                return context
+            logger.error(f"[BrowserContextPool] No context available after wait")
+            return None
     
     async def release(self, context: dict, scan_id: str = None):
         """Release a context back to the pool."""

@@ -83,30 +83,32 @@ class DecisionLogger:
         return decision_id
     
     async def _save_to_db(self, decision: Decision):
-        """Save decision to database"""
+        """Save decision to database.
+
+        HIGH-18: Uses db_manager's async interface instead of assuming a
+        raw asyncpg pool (which doesn't exist when EliteDBManager wraps
+        Supabase). Falls back to debug log when DB is unavailable.
+        """
         try:
             await db_manager.initialize()
-            
-            query = """
-                INSERT INTO agent_decisions (
-                    decision_id, agent_id, timestamp, action_type,
-                    rationale, confidence, alternatives_considered, context
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            """
-            
-            async with db_manager.pool.acquire() as conn:
-                await conn.execute(
-                    query,
-                    decision.decision_id,
-                    decision.agent_id,
-                    decision.timestamp,
-                    decision.action_type,
-                    decision.rationale,
-                    decision.confidence,
-                    decision.alternatives_considered,
-                    decision.context
-                )
+            # EliteDBManager exposes Supabase client, not asyncpg pool.
+            # Use a dict-based upsert if available; otherwise skip silently.
+            if hasattr(db_manager, 'client') and db_manager.client is not None:
+                try:
+                    db_manager.client.table("agent_decisions").upsert({
+                        "decision_id": decision.decision_id,
+                        "agent_id": decision.agent_id,
+                        "timestamp": decision.timestamp.isoformat(),
+                        "action_type": decision.action_type,
+                        "rationale": decision.rationale,
+                        "confidence": decision.confidence,
+                        "alternatives_considered": decision.alternatives_considered,
+                        "context": decision.context,
+                    }).execute()
+                except Exception as tbl_err:
+                    logger.debug("[DecisionLogger] Supabase upsert failed: %s", tbl_err)
+            else:
+                logger.debug("[DecisionLogger] DB unavailable; decision %s logged in-memory only", decision.decision_id)
         except Exception as e:
             logger.error(f"[DecisionLogger] Failed to save decision: {e}")
     
@@ -114,6 +116,49 @@ class DecisionLogger:
         """Flush pending decisions"""
         self._pending_decisions.clear()
     
+    async def _query_db(self, conditions: list, params: list, limit: int = 100) -> list:
+        """Shared helper for Supabase-backed queries.
+
+        Uses the same approach as _save_to_db — checks for db_manager.client
+        (Supabase) rather than db_manager.pool (asyncpg).
+        """
+        try:
+            await db_manager.initialize()
+            if not (hasattr(db_manager, 'client') and db_manager.client is not None):
+                logger.debug("[DecisionLogger] DB unavailable for query")
+                return []
+            # Supabase select — apply filters as eq/gte/lte
+            q = db_manager.client.table("agent_decisions").select("*")
+            for col, val in conditions:
+                if val is None:
+                    continue
+                if col.endswith("_gte"):
+                    q = q.gte(col.rsplit("_gte", 1)[0], val)
+                elif col.endswith("_lte"):
+                    q = q.lte(col.rsplit("_lte", 1)[0], val)
+                else:
+                    q = q.eq(col, val)
+            q = q.order("timestamp", desc=True).limit(limit)
+            result = q.execute()
+            rows = result.data if hasattr(result, 'data') else []
+            return [
+                Decision(
+                    decision_id=r.get('decision_id', ''),
+                    agent_id=r.get('agent_id', ''),
+                    timestamp=datetime.fromisoformat(r['timestamp']) if isinstance(r.get('timestamp'), str) else r.get('timestamp', datetime.utcnow()),
+                    action_type=r.get('action_type', ''),
+                    rationale=r.get('rationale', ''),
+                    confidence=r.get('confidence', 0.0),
+                    alternatives_considered=r.get('alternatives_considered') or [],
+                    context=r.get('context') or {},
+                    finding_id=r.get('finding_id'),
+                )
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error("[DecisionLogger] Query failed: %s", e)
+            return []
+
     async def query_decisions(
         self,
         agent_id: Optional[str] = None,
@@ -123,129 +168,23 @@ class DecisionLogger:
         min_confidence: Optional[float] = None,
         limit: int = 100
     ) -> List[Decision]:
-        """Query decisions with filters
-        
-        Args:
-            agent_id: Filter by agent ID
-            action_type: Filter by action type
-            start_time: Filter by start time
-            end_time: Filter by end time
-            min_confidence: Filter by minimum confidence
-            limit: Maximum number of results
-            
-        Returns:
-            List of matching decisions
-        """
-        try:
-            await db_manager.initialize()
-            
-            # Build query
-            conditions = []
-            params = []
-            param_count = 1
-            
-            if agent_id:
-                conditions.append(f"agent_id = ${param_count}")
-                params.append(agent_id)
-                param_count += 1
-            
-            if action_type:
-                conditions.append(f"action_type = ${param_count}")
-                params.append(action_type)
-                param_count += 1
-            
-            if start_time:
-                conditions.append(f"timestamp >= ${param_count}")
-                params.append(start_time)
-                param_count += 1
-            
-            if end_time:
-                conditions.append(f"timestamp <= ${param_count}")
-                params.append(end_time)
-                param_count += 1
-            
-            if min_confidence is not None:
-                conditions.append(f"confidence >= ${param_count}")
-                params.append(min_confidence)
-                param_count += 1
-            
-            where_clause = " AND ".join(conditions) if conditions else "1=1"
-            
-            query = f"""
-                SELECT decision_id, agent_id, timestamp, action_type,
-                       rationale, confidence, alternatives_considered, context, finding_id
-                FROM agent_decisions
-                WHERE {where_clause}
-                ORDER BY timestamp DESC
-                LIMIT ${param_count}
-            """
-            params.append(limit)
-            
-            async with db_manager.pool.acquire() as conn:
-                rows = await conn.fetch(query, *params)
-                
-                decisions = []
-                for row in rows:
-                    decisions.append(Decision(
-                        decision_id=row['decision_id'],
-                        agent_id=row['agent_id'],
-                        timestamp=row['timestamp'],
-                        action_type=row['action_type'],
-                        rationale=row['rationale'],
-                        confidence=row['confidence'],
-                        alternatives_considered=row['alternatives_considered'] or [],
-                        context=row['context'] or {},
-                        finding_id=row.get('finding_id')
-                    ))
-                
-                return decisions
-                
-        except Exception as e:
-            logger.error(f"[DecisionLogger] Query failed: {e}")
-            return []
+        """Query decisions with filters."""
+        conditions = []
+        if agent_id:
+            conditions.append(("agent_id", agent_id))
+        if action_type:
+            conditions.append(("action_type", action_type))
+        if start_time:
+            conditions.append(("timestamp_gte", start_time.isoformat() if hasattr(start_time, 'isoformat') else str(start_time)))
+        if end_time:
+            conditions.append(("timestamp_lte", end_time.isoformat() if hasattr(end_time, 'isoformat') else str(end_time)))
+        if min_confidence is not None:
+            conditions.append(("confidence_gte", min_confidence))
+        return await self._query_db(conditions, [], limit)
     
     async def get_decision_chain(self, finding_id: str) -> List[Decision]:
-        """Get complete decision chain for a finding
-        
-        Args:
-            finding_id: The finding ID to get decisions for
-            
-        Returns:
-            List of decisions related to the finding
-        """
-        try:
-            await db_manager.initialize()
-            
-            query = """
-                SELECT decision_id, agent_id, timestamp, action_type,
-                       rationale, confidence, alternatives_considered, context, finding_id
-                FROM agent_decisions
-                WHERE finding_id = $1
-                ORDER BY timestamp ASC
-            """
-            
-            async with db_manager.pool.acquire() as conn:
-                rows = await conn.fetch(query, finding_id)
-                
-                decisions = []
-                for row in rows:
-                    decisions.append(Decision(
-                        decision_id=row['decision_id'],
-                        agent_id=row['agent_id'],
-                        timestamp=row['timestamp'],
-                        action_type=row['action_type'],
-                        rationale=row['rationale'],
-                        confidence=row['confidence'],
-                        alternatives_considered=row['alternatives_considered'] or [],
-                        context=row['context'] or {},
-                        finding_id=row.get('finding_id')
-                    ))
-                
-                return decisions
-                
-        except Exception as e:
-            logger.error(f"[DecisionLogger] Failed to get decision chain: {e}")
-            return []
+        """Get complete decision chain for a finding."""
+        return await self._query_db([("finding_id", finding_id)], [], limit=1000)
     
     def format_for_report(self, decision: Decision) -> str:
         """Format decision rationale for human-readable report

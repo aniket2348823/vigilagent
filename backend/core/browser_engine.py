@@ -43,6 +43,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse, parse_qsl, urljoin
 
 from backend.core.config import settings
+_CHROMIUM_PATH = os.getenv('OPENCLAW_CHROMIUM_PATH', '')
 
 logger = logging.getLogger(__name__)
 
@@ -359,14 +360,12 @@ class ScrapplingPinchTabClient:
         if cls._available is not None and (now - cls._last_check) < cls._recheck_interval:
             return cls._available
 
-            if not self._aiohttp_available:
-                cls = type(self)
-                cls._available = False
-                cls._last_check = asyncio.get_event_loop().time()
-                return False
-                return False
-            import aiohttp
+        if not self._aiohttp_available:
+            cls._available = False
+            cls._last_check = now
+            return False
         try:
+            import aiohttp
             async with aiohttp.ClientSession(timeout=self._probe_timeout) as session:
                 async with session.get(f"{self.base_url}/health") as resp:
                     cls._available = 200 <= resp.status < 500
@@ -813,6 +812,7 @@ class ScrapplingPlaywrightEngine:
             try:
                 self._playwright = await async_playwright().start()
                 self._browser = await self._playwright.chromium.launch(
+            executable_path=_CHROMIUM_PATH,
                     headless=getattr(settings, "OPENCLAW_HEADLESS", True),
                     args=_STEALTH_LAUNCH_ARGS,
                 )
@@ -1306,6 +1306,7 @@ class ScrapplingFuzzer:
                 from playwright.async_api import async_playwright
                 self.playwright = await async_playwright().start()
                 self.browser = await self.playwright.chromium.launch(
+            executable_path=_CHROMIUM_PATH,
                     headless=True,
                     args=[
                         f"--user-data-dir={self.profile_path}",

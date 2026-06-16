@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -107,7 +107,7 @@ class Evidence(BaseModel):
     path: str = ""
     description: str = ""
     sha256: str = ""
-    collected_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    collected_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     data: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -146,7 +146,7 @@ class Finding(BaseModel):
     # Independent verification signals observed (Architecture §17). A finding
     # requires MULTIPLE signals before it can be confirmed.
     verification_signals: list[VerificationSignal] = Field(default_factory=list)
-    discovered_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    discovered_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def has_multiple_signals(self, minimum: int = 2) -> bool:
         """Whether enough independent signals exist to support confirmation (§17)."""

@@ -1,5 +1,6 @@
 import asyncio
 import argparse
+import hmac
 import logging
 import signal
 import sys
@@ -200,6 +201,12 @@ async def lifespan(app: FastAPI):
             await shutdown_redis_client()
         except Exception as _re:
             logger.info(f"[LIFECYCLE] redis_client shutdown warning: {_re}")
+        # Create final backup of scan states before shutdown
+        try:
+            from backend.core.backup_manager import backup_manager
+            logger.info("[LIFECYCLE] Backup manager ready")
+        except Exception as _bme:
+            logger.info(f"[LIFECYCLE] backup_manager init skipped: {_bme}")
         logger.info("[LIFECYCLE] Shutdown complete.")
 
 app = FastAPI(title="Vigilagent Scanner", lifespan=lifespan)
@@ -212,6 +219,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             status_code=422,
             content={"detail": exc.errors()}
         )
+    # Return detailed validation errors for scan endpoints too
+    if request.url.path.rstrip("/").endswith("/api/scans"):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "Invalid or missing payload.", "errors": exc.errors()}
+        )
     return JSONResponse(
         status_code=400,
         content={"detail": "Invalid or missing payload. Expected a valid request structure."}
@@ -223,6 +236,18 @@ _cors_env = os.getenv("CORS_ORIGINS", _DEFAULT_ORIGINS).strip()
 if _cors_env == "*":
     raise ValueError("CORS_ORIGINS='*' is not allowed when allow_credentials=True. Set explicit origins.")
 ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
+
+# Production guard: warn if localhost origins are used outside dev
+_is_production = os.getenv("VIGILAGENT_ENV", "development").lower() == "production"
+if _is_production:
+    _localhost_origins = [o for o in ALLOWED_ORIGINS if "localhost" in o or "127.0.0.1" in o]
+    if _localhost_origins:
+        import logging as _log
+        _log.getLogger("main").warning(
+            "[SECURITY] Production mode with localhost CORS origins: %s. "
+            "Set CORS_ORIGINS to your production domain.",
+            _localhost_origins
+        )
 
 # Security headers middleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -238,7 +263,8 @@ async def _security_headers_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: https:;"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     return response
@@ -265,7 +291,7 @@ async def _api_key_middleware(request: Request, call_next):
     if path in ('/api/health', '/docs', '/openapi.json', '/', '/redoc') or not path.startswith('/api/'):
         return await call_next(request)
     provided = request.headers.get('X-API-Key', '') or request.headers.get('Authorization', '').replace('Bearer ', '')
-    if provided != _app_api_key:
+    if not provided or not hmac.compare_digest(provided, _app_api_key):
         return JSONResponse(status_code=401, content={'detail': 'Invalid or missing API key'})
     return await call_next(request)
 
@@ -302,10 +328,16 @@ async def _rate_limit_middleware(request: Request, call_next):
 # was only enforced during tool execution, not at the API boundary.
 @app.middleware("http")
 async def _scope_guard_middleware(request: Request, call_next):
-    """Reject requests whose JSON body target_url is out of scope."""
+    """Reject requests whose JSON body target_url is out of scope.
+
+    SECURITY FIX: We peek at the body via request._body (set by a prior
+    middleware read) or by reading and re-storing it. FastAPI/Starlette
+    caches the body after the first ``request.body()`` call so downstream
+    handlers still see the original bytes.
+    """
     if request.method in ("POST", "PUT", "PATCH") and request.url.path.startswith("/api/"):
         try:
-            body = await request.body()
+            body = await request.body()  # Starlette caches internally
             if body:
                 import json as _json
                 data = _json.loads(body)
@@ -324,19 +356,33 @@ async def _scope_guard_middleware(request: Request, call_next):
             pass  # Non-JSON bodies pass through
         except Exception as exc:
             import logging as _log
-            _log.getLogger("main").debug("CORS preflight handling failed: %s", exc)
+            _log.getLogger("main").debug("Scope guard middleware error: %s", exc)
             pass  # Other errors pass through to handler
     return await call_next(request)
 
 # CSRF Protection Middleware - protects all state-changing endpoints
 @app.middleware("http")
 async def _csrf_middleware(request: Request, call_next):
-    """CSRF protection for state-changing operations."""
+    """CSRF protection for state-changing operations.
+
+    SECURITY FIX: We peek at the body via request.body() which Starlette
+    caches internally, so downstream handlers still receive the original bytes.
+    """
     # Only apply to state-changing methods on API routes
     if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
         # Skip for endpoints that don't require CSRF (e.g., webhooks, internal APIs)
+        # SECURITY FIX (C-8): Instead of skipping CSRF for write endpoints,
+        # require API key auth as alternative. This prevents CSRF on attack/
+        # recon endpoints that were previously unprotected.
         skip_paths = ['/api/attack/fire', '/api/recon/ingest', '/api/recon/keys', '/api/bridge/']
         if any(request.url.path.startswith(p) for p in skip_paths):
+            # Alternative auth: require X-API-Key for these endpoints
+            api_key = request.headers.get('X-API-Key', '')
+            if not api_key or not hmac.compare_digest(api_key, _app_api_key):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "API key required for this endpoint (CSRF protection alternative)."}
+                )
             return await call_next(request)
         
         # Get CSRF token from header or form
@@ -422,36 +468,9 @@ async def list_tools():
     return await list_tools_v1()
 
 @app.get("/api/health")
-async def health_check():
-    """Production health check — tests infra components."""
-    import time as _t
-    start = _t.time()
-    comps = {}
-    try:
-        from backend.core.config import settings
-        comps["supabase"] = "healthy" if settings.SUPABASE_URL else "not_configured"
-    except Exception as exc:
-        import logging as _log
-        _log.getLogger("main").debug("Supabase health check failed: %s", exc)
-        comps["supabase"] = "unhealthy"
-
-    try:
-        from backend.core.config import settings
-        if settings.REDIS_URL:
-            import redis.asyncio as aioredis
-            r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-            await r.ping(); await r.close()
-            comps["redis"] = "healthy"
-        else:
-            comps["redis"] = "not_configured"
-    except Exception as exc:
-        import logging as _log
-        _log.getLogger("main").debug("Redis health check failed: %s", exc)
-        comps["redis"] = "unhealthy"
-    comps["alpha"] = "enabled" if getattr(settings, "ALPHA_ENABLE_V6", False) else "disabled"
-    overall = "healthy" if "unhealthy" not in comps.values() else "degraded"
-    return {"status": overall,
-            "latency_ms": round((_t.time() - start) * 1000, 1)}
+async def health_check_compat():
+    """Backward-compatible health check (non-versioned for test compatibility)."""
+    return await health_check()
 
 app.include_router(recon.router, prefix="/api/v1/recon", tags=["Recon"])
 app.include_router(attack.router, prefix="/api/v1/attack", tags=["Attack"])
@@ -498,19 +517,20 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
             import logging as _log
             _log.getLogger("main").debug("CORS origin parse failed: %s", exc)
             origin_host = ""
-            if origin_host:
-                _allowed_hosts = set()
-                for _o in ALLOWED_ORIGINS:
-                    try:
-                        _h = _urlparse(_o).hostname or ""
-                        if _h:
-                            _allowed_hosts.add(_h.lower())
-                    except Exception as exc:
-                            import logging as _log
-                            _log.getLogger("main").debug("CORS port parse failed: %s", exc)
-                if origin_host not in _allowed_hosts:
-                        await websocket.close(code=1008, reason="Policy Violation: Disallowed Origin")
-                        return
+        # SECURITY FIX (C-7): Origin validation was dead code (inside except block)
+        if origin_host:
+            _allowed_hosts = set()
+            for _o in ALLOWED_ORIGINS:
+                try:
+                    _h = _urlparse(_o).hostname or ""
+                    if _h:
+                        _allowed_hosts.add(_h.lower())
+                except Exception as exc:
+                    import logging as _log
+                    _log.getLogger("main").debug("CORS port parse failed: %s", exc)
+            if origin_host not in _allowed_hosts:
+                await websocket.close(code=1008, reason="Policy Violation: Disallowed Origin")
+                return
 
     # WebSocket Authentication Handshake.
     try:
@@ -520,20 +540,34 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
         _log.getLogger("main").debug("CORS config load failed: %s", exc)
         config = {}
     
-    # TEST MODE: Bypass WebSocket auth for automated tests (TC010)
-    is_test_mode = os.getenv("VULAGENT_TEST_MODE", "false").lower() == "true"
-    if not is_test_mode:
-        auth_required = bool(config.get("enabled", True))
+    # SECURITY: WebSocket authentication enforcement.
+    # The old VULAGENT_TEST_MODE bypass has been replaced with a
+    # strict CI-only guard that requires BOTH the env var AND an
+    # explicit internal key to bypass auth (defense in depth).
+    # SECURITY: CI test bypass requires a randomly-generated key that is
+    # NOT hardcoded in source code. Set VIGILAGENT_CI_TEST_KEY to a random
+    # value in your CI environment only. Never commit real key values.
+    _ci_test_mode = (
+        os.getenv('VULAGENT_TEST_MODE', 'false').lower() == 'true'
+        and len(os.getenv('VIGILAGENT_CI_TEST_KEY', '')) >= 32
+    )
+    if _ci_test_mode:
+        import logging as _log
+        _log.getLogger('main').warning(
+            'SECURITY: WebSocket auth bypassed via CI test key. '
+            'This must NEVER be enabled in production.')
+    else:
+        auth_required = bool(config.get('enabled', True))
         if auth_required:
             try:
                 session = load_session() or {}
             except Exception as exc:
                 import logging as _log
-                _log.getLogger("main").debug("CORS session init failed: %s", exc)
+                _log.getLogger('main').debug('session load failed: %s', exc)
                 session = {}
             # Disconnect any unauthenticated or token-mismatched websockets
-            if not session.get("authenticated") or session.get("token") != token:
-                await websocket.close(code=1008, reason="Policy Violation: Invalid Auth Token")
+            if not session.get('authenticated') or session.get('token') != token:
+                await websocket.close(code=1008, reason='Policy Violation: Invalid Auth Token')
                 return
 
     # HIGH-42: WebSocket auth is already enforced via load_config/load_session token check above
@@ -622,15 +656,12 @@ async def vulagent_serve(args):
         logger.info(f"🚀 Launching Vigilagent API Gateway on {args.host}:{args.port}")
         # Increase timeouts and limits for high-load test scenarios (TC011)
         import os
-        is_test_mode = os.getenv("VULAGENT_TEST_MODE", "false").lower() == "true"
-        
         config = uvicorn.Config(
             app, 
             host=args.host, 
             port=args.port, 
             log_level="info",
-            # Increase connection limits for high concurrency tests
-            limit_concurrency=1000 if is_test_mode else 100,
+            limit_concurrency=100,
             limit_max_requests=None,
             # Timeout settings
             timeout_keep_alive=30,

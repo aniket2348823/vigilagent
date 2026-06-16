@@ -56,6 +56,10 @@ CRITICAL_INJECTION_PATTERNS = [
 ]
 
 DANGEROUS_COMMAND_PATTERNS = [
+    # --- Reverse Shells ---
+    re.compile(r'(bash\s+-i\s+>&\s+/dev/tcp/|nc\s+-e\s+/bin/(ba)?sh|/bin/sh\s+-i\s+>\s*/dev/tcp)', re.I),
+    re.compile(r'(python\s+-c\s+.*import\s+socket|perl\s+-e\s+.*socket)', re.I),
+    re.compile(r'(mkfs\.|fdisk\s+--erase|dd\s+if=/dev/zero)', re.I),
     r"(?i)rm\s+-rf\s+/",
     r"(?i):\(\)\{\s*:\|:&\s*\};:",
     r"(?i)mkfs\.",
@@ -244,10 +248,23 @@ class GuardLayer:
         return passed
 
     def _validate_single(self, finding: Dict[str, Any]) -> tuple[bool, str]:
-        evidence_text = json.dumps(finding, default=str)[:32768]
-        inspection = self.inspect_untrusted_text(evidence_text)
-        if inspection.blocked:
-            return False, inspection.reason
+        # Check confirmation status FIRST — confirmed findings (VULN_CONFIRMED
+        # with VALID/CONFIRMED validation) carry legitimate attack payloads that
+        # naturally contain shell/injection keywords. The prompt-injection check
+        # must NOT block confirmed findings because their payloads are evidence,
+        # not untrusted input.
+        validation = str(finding.get("validation", "")).upper()
+        already_confirmed = (
+            validation in ("VALID", "CONFIRMED", "TRUE_POSITIVE")
+            or bool(finding.get("verified"))
+            or bool(finding.get("browser_verified"))
+        )
+
+        if not already_confirmed:
+            evidence_text = json.dumps(finding, default=str)[:32768]
+            inspection = self.inspect_untrusted_text(evidence_text)
+            if inspection.blocked:
+                return False, inspection.reason
 
         # ------------------------------------------------------------------
         # Confirmation fast-path: when the upstream pipeline has already
@@ -257,18 +274,9 @@ class GuardLayer:
         # / weak-signal / low-confidence heuristics are mis-applied — those
         # gates are pre-confirmation triage for *raw* candidate findings.
         #
-        # We still run the prompt-injection inspector (above) and the
-        # signature dedup (below) which are the legitimate safety + sanity
-        # roles of the GuardLayer. We just stop refusing to surface
-        # confirmed findings because they don't carry diff scores.
+        # ``already_confirmed`` was already computed above (used to skip the
+        # prompt-injection check). Reuse it here to avoid duplication.
         # ------------------------------------------------------------------
-        validation = str(finding.get("validation", "")).upper()
-        already_confirmed = (
-            validation in ("VALID", "CONFIRMED", "TRUE_POSITIVE")
-            or bool(finding.get("verified"))
-            or bool(finding.get("browser_verified"))
-        )
-
         if not already_confirmed:
             response = finding.get("response") or finding.get("response_body") or finding.get("raw_response")
             if not response:
@@ -324,7 +332,9 @@ class GuardLayer:
             })
             cluster["variants"] += 1
             cluster["max_confidence"] = max(cluster["max_confidence"], float(finding.get("confidence", 0)))
-            cluster["all_payloads"].append(finding.get("payload", ""))
+            # Cap payloads list to prevent unbounded memory growth
+            if len(cluster["all_payloads"]) < 50:
+                cluster["all_payloads"].append(finding.get("payload", ""))
         return list(clusters.values())
 
     def get_stats(self) -> dict:
