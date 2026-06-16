@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -46,3 +46,10 @@ graphify-out/
 .cache/
 .parcel-cache/
 .eslintcache
+
+# Local Runtime Data
+brain/episodes/*.json
+!brain/episodes/test_scan.json
+brain/healing/
+data/scans/
+.browsers/
