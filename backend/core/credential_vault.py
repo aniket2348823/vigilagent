@@ -19,6 +19,7 @@ inside an authorized engagement scope. It is not a credential-theft tool.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -259,7 +260,8 @@ class CredentialVault:
                 cred._secret = r.get("secret_enc", "")
                 self._creds[cred.cred_id] = cred
 
-    def _save(self) -> None:
+    def _save_sync(self) -> None:
+        """Synchronous persistence — called from __init__ (sync context)."""
         rows = []
         for cred in self._creds.values():
             row = cred.public_dict()
@@ -271,6 +273,16 @@ class CredentialVault:
             os.replace(tmp, self._store_file())
         except Exception as exc:
             logger.error("[Vault] save failed: %s", exc)
+
+    def _save(self) -> None:
+        """Dispatch to sync or async save depending on event loop state."""
+        try:
+            loop = asyncio.get_running_loop()
+            # Async context: offload blocking I/O to thread pool
+            loop.create_task(asyncio.to_thread(self._save_sync))
+        except RuntimeError:
+            # No running loop (e.g. __init__): synchronous save
+            self._save_sync()
 
     # ── Public API ──────────────────────────────────────────────────────────────
 

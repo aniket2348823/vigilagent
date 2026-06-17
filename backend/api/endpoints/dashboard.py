@@ -537,7 +537,7 @@ async def logout():
 @csrf_protect()
 async def reset_dashboard(request: Request):
     from backend.core.state import stats_db_manager
-    stats_db_manager.wipe_scans()
+    await stats_db_manager.wipe_scans()
     return {"status": "success", "message": "All historical scans have been wiped."}
 
 

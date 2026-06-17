@@ -20,12 +20,25 @@ class URLValidator:
         # Allowed hosts for scanning - only localhost and explicit test domains
         # SECURITY: 0.0.0.0 and host.docker.internal removed from default allowlist
         # to prevent SSRF bypass. Add explicitly via add_allowed_host() if needed.
+        # CRITICAL FIX (#40): For a pentest scanner, the allowlist must include
+        # common test/lab targets. Real-world target validation is handled by
+        # the scan's scope policy (not this SSRF guard). SSRF protection is
+        # enforced by: (1) blocked cloud metadata IPs, (2) blocked dangerous
+        # schemes, (3) injection character checks.
         self.allowed_hosts: Set[str] = {
             "localhost",
             "127.0.0.1",
             "test-env.local",
             "example.com",
             "www.example.com",
+            # Common pentest lab / CTF / dev targets
+            "juice-shop.herokuapp.com",
+            "demo.testfire.net",
+            "testphp.vulnweb.com",
+            "testasp.vulnweb.com",
+            "testaspnet.vulnweb.com",
+            "hackazon.org",
+            "owasp.org",
         }
         
         # Allowed private IP ranges (for internal testing)

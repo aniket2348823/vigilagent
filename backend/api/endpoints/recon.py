@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, HTTPException
 from backend.schemas.payloads import ReconPayload
 from backend.api.socket_manager import manager, publish_request_event
@@ -75,28 +76,31 @@ async def ingest_recon_data(payload: ReconPayload):
     })
 
     # --- BRAIN INGESTION (Existing Logic) ---
+    # FIX-059: Wrap sync file I/O in asyncio.to_thread to avoid blocking
+    # the event loop (Architecture §29.13).
     headers = packet_data.get("headers", {})
     if headers.get("x-scanner") == "v12-engine":
         try:
             scan_payload = packet_data.get("payload", {})
             if "findings" in scan_payload:
-                # FIX-057: Use relative path instead of hardcoded cross-project path
                 memory_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "brain", "memory.json")
-                brain_data = []
-                if os.path.exists(memory_file):
-                    with open(memory_file, "r") as f:
-                        brain_data = json.load(f)
-                for finding in scan_payload["findings"]:
-                    brain_data.append({
-                        "type": "VULN_CANDIDATE",
-                        "description": finding.get("description"),
-                        "payload": finding,
-                        "source": "ScannerEngine V12",
-                        "timestamp": packet_data.get("timestamp"),
-                        "verified": False
-                    })
-                with open(memory_file, "w") as f:
-                    json.dump(brain_data, f, indent=2)
+                def _ingest_brain():
+                    brain_data = []
+                    if os.path.exists(memory_file):
+                        with open(memory_file, "r") as f:
+                            brain_data = json.load(f)
+                    for finding in scan_payload["findings"]:
+                        brain_data.append({
+                            "type": "VULN_CANDIDATE",
+                            "description": finding.get("description"),
+                            "payload": finding,
+                            "source": "ScannerEngine V12",
+                            "timestamp": packet_data.get("timestamp"),
+                            "verified": False
+                        })
+                    with open(memory_file, "w") as f:
+                        json.dump(brain_data, f, indent=2)
+                await asyncio.to_thread(_ingest_brain)
         except Exception as e:
             logger.debug(f"Brain Ingest Error: {e}")
     # -----------------------------------
@@ -107,8 +111,11 @@ async def get_keyring():
     if not os.path.exists(KEYRING_FILE):
         return []
     try:
-        with open(KEYRING_FILE, "r") as f:
-            return json.load(f)
+        # FIX-059: Wrap sync file I/O in asyncio.to_thread
+        def _read_keyring():
+            with open(KEYRING_FILE, "r") as f:
+                return json.load(f)
+        return await asyncio.to_thread(_read_keyring)
     except Exception as e:
         logger.debug("Keyring load failed: %s", e)
         return []
@@ -122,19 +129,22 @@ async def ingest_keys(payload: KeyringPayload):
         raise HTTPException(status_code=400, detail=f"Invalid URL: {reason}")
     
     data = payload.model_dump()
-    keyring = []
-    if os.path.exists(KEYRING_FILE):
+    # FIX-059: Wrap sync file I/O in asyncio.to_thread
+    def _write_keyring():
+        keyring = []
+        if os.path.exists(KEYRING_FILE):
+            try:
+                with open(KEYRING_FILE, "r") as f:
+                    keyring = json.load(f)
+            except Exception as e:
+                logger.debug(f"Recon error: {e}")
+        keyring.append(data)
+        if len(keyring) > 100: keyring = keyring[-100:]
         try:
-            with open(KEYRING_FILE, "r") as f:
-                keyring = json.load(f)
+            with open(KEYRING_FILE, "w") as f:
+                json.dump(keyring, f, indent=4)
         except Exception as e:
             logger.debug(f"Recon error: {e}")
-    keyring.append(data)
-    if len(keyring) > 100: keyring = keyring[-100:]
-    try:
-        with open(KEYRING_FILE, "w") as f:
-            json.dump(keyring, f, indent=4)
-    except Exception as e:
-        logger.debug(f"Recon error: {e}")
+    await asyncio.to_thread(_write_keyring)
     await manager.broadcast({"type": "KEY_CAPTURE", "payload": data})
     return {"status": "archived"}

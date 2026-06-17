@@ -165,9 +165,10 @@ class ForensicCollector:
                 screenshot_bytes = await context.screenshot(full_page=full_page)
                 
                 # Encrypt if enabled
-                encrypted_data = self._encrypt_data(screenshot_bytes)        # Write in a thread to avoid blocking the event loop (§29.13)
-        await asyncio.to_thread(self._write_bytes, filepath, encrypted_data)
-                    
+                encrypted_data = self._encrypt_data(screenshot_bytes)
+                # Write in a thread to avoid blocking the event loop (§29.13)
+                await asyncio.to_thread(self._write_bytes, filepath, encrypted_data)
+
             elif engine == "pinchtab":
                 # PinchTab screenshot (placeholder - depends on PinchTab API)
                 # screenshot_data = await context.screenshot()
@@ -453,7 +454,9 @@ class ForensicCollector:
             
         except Exception as e:
             logger.error(f"[ForensicCollector] Evidence bundling failed: {e}")
-            return None    def _add_evidence(self, scan_id: str, evidence: Dict[str, Any]):
+            return None
+
+    def _add_evidence(self, scan_id: str, evidence: Dict[str, Any]):
         """
         Add evidence metadata to cache.
 
@@ -510,7 +513,9 @@ class ForensicCollector:
         Returns:
             Number of files cleaned up
         """
-        try:
+        # FIX-060: Wrap sync filesystem I/O in asyncio.to_thread to avoid
+        # blocking the event loop (Architecture §29.13).
+        def _cleanup_sync():
             from datetime import timedelta
             
             cleaned = 0
@@ -531,6 +536,10 @@ class ForensicCollector:
                         evidence_file.unlink()
                         cleaned += 1
             
+            return cleaned
+
+        try:
+            cleaned = await asyncio.to_thread(_cleanup_sync)
             logger.info(f"[ForensicCollector] Cleaned up {cleaned} old evidence files")
             return cleaned
             

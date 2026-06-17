@@ -252,8 +252,11 @@ if _is_production:
 # Security headers middleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
-# TrustedHostMiddleware for additional security
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0"])
+# TrustedHostMiddleware — use env-configurable allowlist instead of hardcoded
+# localhost-only list which breaks production deployments.
+_trusted_hosts_env = os.getenv("TRUSTED_HOSTS", "localhost,127.0.0.1,0.0.0.0").strip()
+ALLOWED_HOSTS = [h.strip() for h in _trusted_hosts_env.split(",") if h.strip()]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 # Security headers middleware
 @app.middleware("http")
@@ -263,7 +266,21 @@ async def _security_headers_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+    # SECURITY: Remove 'unsafe-eval' in production (biggest XSS risk).
+    # 'unsafe-inline' is kept as a pragmatic fallback since the frontend uses
+    # inline scripts and no CSP nonce infrastructure is in place yet.
+    # WARNING: Removing 'unsafe-inline' WITHOUT adding nonce/hash-based CSP
+    # will break all inline scripts. Add per-request nonces or hash-based
+    # allowlisting before removing 'unsafe-inline'.
+    _dev_mode = os.getenv("VIGILAGENT_DEV_MODE", "false").lower() == "true"
+    _script_src = "'self' 'unsafe-inline' 'unsafe-eval'" if _dev_mode else "'self' 'unsafe-inline'"
+    _style_src = "'self' 'unsafe-inline'"
+    response.headers["Content-Security-Policy"] = (
+        f"default-src 'self'; script-src 'self' {_script_src}; "
+        f"style-src 'self' {_style_src}; img-src 'self' data: https:; "
+        f"font-src 'self' data:; connect-src 'self' wss: https:; "
+        f"frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+    )
     response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
@@ -544,11 +561,13 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
     # The old VULAGENT_TEST_MODE bypass has been replaced with a
     # strict CI-only guard that requires BOTH the env var AND an
     # explicit internal key to bypass auth (defense in depth).
-    # SECURITY: CI test bypass requires a randomly-generated key that is
-    # NOT hardcoded in source code. Set VIGILAGENT_CI_TEST_KEY to a random
-    # value in your CI environment only. Never commit real key values.
+    # SECURITY: CI test bypass is gated behind BOTH an env var AND a runtime
+    # production guard. In production builds (VIGILAGENT_ENV=production),
+    # the bypass is completely disabled regardless of CI keys.
+    _is_production = os.getenv('VIGILAGENT_ENV', 'development').lower() == 'production'
     _ci_test_mode = (
-        os.getenv('VULAGENT_TEST_MODE', 'false').lower() == 'true'
+        not _is_production
+        and os.getenv('VULAGENT_TEST_MODE', 'false').lower() == 'true'
         and len(os.getenv('VIGILAGENT_CI_TEST_KEY', '')) >= 32
     )
     if _ci_test_mode:

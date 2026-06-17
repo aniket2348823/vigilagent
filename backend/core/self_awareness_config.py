@@ -358,6 +358,12 @@ def get_self_awareness_config(agent_id: Optional[str] = None) -> SelfAwarenessCo
             logger.error(f"Invalid self-awareness configuration: {e}")
             raise
     
+    # MEDIUM FIX (#42): Apply per-agent overrides even when returning the
+    # cached global config. Without this, the second agent_id is silently
+    # ignored — all agents get the first agent's config.
+    if agent_id:
+        _global_config._apply_agent_overrides(agent_id)
+    
     return _global_config
 
 

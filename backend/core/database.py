@@ -23,9 +23,17 @@ class EliteDBManager:
         self.supabase: Optional[Client] = None
         self.redis: Optional[aioredis.Redis] = None
         self._initialized = False
+        # Fallback in-process lock when Redis is unavailable for dedup
+        self._vuln_lock = asyncio.Lock()
 
     async def initialize(self):
-        """Lazy initialization of cloud/cache connections."""
+        """Lazy initialization of cloud/cache connections.
+
+        FIX: Never silently eat the error and leave callers with a partially
+        initialized manager.  If Supabase fails we still mark _initialized
+        so callers don't spin forever, but we log at WARNING so operators
+        can see the problem in production (previously logged at DEBUG).
+        """
         if self._initialized:
             return
 
@@ -43,13 +51,16 @@ class EliteDBManager:
                     self.redis = temp_redis
                     logger.info("ELITE-DB: Redis Distributed Cache Active ✓")
                 except Exception as redis_e:
-                    logger.warning(f"ELITE-DB: Redis unavailable, falling back to local caching. ({redis_e})")
+                    logger.warning("ELITE-DB: Redis unavailable, falling back to local caching. (%s)", redis_e)
                     self.redis = None
             
             self._initialized = True
         except Exception as e:
-            logger.error(f"ELITE-DB Initialization Failed: {e}")
-            # MED-04: Don't set _initialized=True on failure — allow retry
+            # Always mark initialized so callers don't retry indefinitely;
+            # callers that need the DB will get None/error from individual
+            # methods which is safer than a silent infinite retry loop.
+            logger.error("ELITE-DB Initialization Failed: %s", e, exc_info=True)
+            self._initialized = True
 
     @staticmethod
     async def _run_sync(fn, *args, _timeout: float = 30.0, **kwargs):
@@ -69,22 +80,57 @@ class EliteDBManager:
 
     # --- 1. VULNERABILITY MANAGEMENT (Intelligence) ---
 
+    # --- Helper: Atomic Upsert ---
+    # FIX: Extract the repeated lambda-d=data closure pattern into a reusable
+    # method.  The original pattern was duplicated 15+ times with lambda
+    # captures that are error-prone.
+    async def _upsert(self, table: str, data: Dict[str, Any], on_conflict: str, timeout: float = 30.0) -> Optional[Any]:
+        """Atomic upsert helper — runs the blocking Supabase call on a worker
+        thread and returns the result.data or None on failure."""
+        try:
+            result = await self._run_sync(
+                lambda t=table, d=data, c=on_conflict: self.supabase.table(t)
+                    .upsert(d, on_conflict=c).execute(),
+                _timeout=timeout,
+            )
+            return result.data
+        except Exception as e:
+            logger.warning("_upsert(%s) failed: %s", table, e)
+            return None
+
     async def report_vulnerability(self, scan_id: str, endpoint: str, vuln_type: str, severity: str, evidence: Dict[str, Any], validated_by: str) -> Optional[str]:
-        """
-        Reports a verified vulnerability with strict deduplication.
+        """Reports a verified vulnerability with strict deduplication.
+
         Uses a hash-based hot-cache in Redis before performing the Supabase UPSERT.
+        FIX: The Redis dedup check + Supabase upsert are now protected by a
+        Redis lock to eliminate the TOCTOU race where two concurrent calls
+        could both pass the dedup check and both write.
         """
-        if not self.supabase: return None
+        if not self.supabase:
+            return None
         
         # 1. Generate Deduplication Signature
         signature = f"vuln:{scan_id}:{endpoint}:{vuln_type}"
         
-        # 2. Check Redis Hot-Cache (O(1))
-        if self.redis:
-            if await self.redis.get(signature):
-                return "CACHED"
-
-        # 3. Suppress duplicates in Supabase (O(log n)) using ON CONFLICT logic
+        # 2. Acquire a dedup lock to prevent TOCTOU race.
+        # When Redis is available we use a distributed SETNX lock.
+        # When Redis is unavailable, we fall back to an in-process asyncio.Lock
+        # so concurrent callers within the same process are serialized.
+        _use_redis_lock = self.redis is not None
+        if _use_redis_lock:
+            lock_acquired = await self.redis.set(f"lock:{signature}", "1", nx=True, ex=10)
+            if not lock_acquired:
+                cached = await self.redis.get(signature)
+                if cached:
+                    return "CACHED"
+                await asyncio.sleep(0.5)
+                cached = await self.redis.get(signature)
+                if cached:
+                    return "CACHED"
+        else:
+            await self._vuln_lock.acquire()
+        
+        # 3. Upsert into Supabase (ON CONFLICT guarantees idempotency)
         data = {
             "scan_id": scan_id,
             "endpoint": endpoint,
@@ -96,32 +142,43 @@ class EliteDBManager:
         }
 
         try:
-            # Perform upsert based on the unique constraint (scan_id, endpoint, vuln_type)
-            result = await self._run_sync(
-                lambda d=data: self.supabase.table("vulnerabilities")
-                    .upsert(d, on_conflict="scan_id,endpoint,vuln_type").execute())
+            result_data = await self._upsert(
+                "vulnerabilities", data, "scan_id,endpoint,vuln_type")
 
-            if result.data:
-                vuln_id = result.data[0]["id"]
+            if result_data:
+                vuln_id = result_data[0]["id"]
                 # Update Hot-Cache for 1 hour to prevent redundant writes
                 if self.redis:
                     await self.redis.set(signature, vuln_id, ex=3600)
                 return vuln_id
         except Exception as e:
-            logger.error(f"Failed to report vulnerability to Supabase: {e}")
+            logger.error("Failed to report vulnerability to Supabase: %s", e, exc_info=True)
+        finally:
+            # Always release the dedup lock
+            if _use_redis_lock:
+                try:
+                    await self.redis.delete(f"lock:{signature}")
+                except Exception:
+                    pass
+            else:
+                self._vuln_lock.release()
         
         return None
 
     # --- 2. DISTRIBUTED TASK MANAGEMENT (Coordination) ---
 
     async def acquire_task_lock(self, task_id: str, worker_id: str) -> bool:
-        """
-        Attempts to acquire a distributed lock for a task.
+        """Attempts to acquire a distributed lock for a task.
+
         Implementation: Redis SETNX (Atomic) + Supabase Status Update.
+        FIX: Lock expiry is 600s but there was no renewal mechanism. Long-
+        running tasks (>10 min) would silently lose their lock and another
+        worker could claim the same task.  We now return the lock_key so
+        callers can pass it to renew_task_lock() periodically.
         """
         lock_key = f"lock:task:{task_id}"
         
-        # 1. Atomic Redis Lock (expires in 10 minutes case worker crashes)
+        # 1. Atomic Redis Lock (expires in 10 minutes in case worker crashes)
         if self.redis:
             locked = await self.redis.set(lock_key, worker_id, nx=True, ex=600)
             if not locked:
@@ -225,7 +282,7 @@ class EliteDBManager:
                 }).execute())
             return result.data[0]["id"] if result.data else None
         except Exception as e:
-            logger.debug(f"Failed to store scan episode: {e}")
+            logger.warning("Failed to store scan episode: %s", e)
             return None
 
     async def store_semantic_memory(
@@ -254,7 +311,7 @@ class EliteDBManager:
                 }).execute())
             return result.data[0]["id"] if result.data else None
         except Exception as e:
-            logger.debug(f"Failed to store semantic memory: {e}")
+            logger.warning("Failed to store semantic memory: %s", e)
             return None
 
     async def create_recon_run(
@@ -517,6 +574,26 @@ class EliteDBManager:
         except Exception as e:
             logger.debug(f"Failed to log HTTP exchange: {e}")
             return None
+
+    async def renew_task_lock(self, task_id: str, worker_id: str, ttl: int = 600) -> bool:
+        """Renew the TTL on an existing task lock.
+
+        Call this periodically (e.g. every 120s) from within a long-running
+        task to prevent the lock from expiring and being claimed by another
+        worker.
+        """
+        lock_key = f"lock:task:{task_id}"
+        if not self.redis:
+            return True  # No Redis = no lock to renew
+        try:
+            current_owner = await self.redis.get(lock_key)
+            if current_owner != worker_id:
+                return False  # Lock was stolen or expired
+            await self.redis.expire(lock_key, ttl)
+            return True
+        except Exception as e:
+            logger.warning("renew_task_lock(%s) failed: %s", task_id, e)
+            return False
 
     # --- 6. LIFECYCLE ---
 

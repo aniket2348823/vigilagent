@@ -17,7 +17,7 @@ class StateManager:
         self._dirty = False
         self._task = None
         self._lock = asyncio.Lock()
-        self._sync_lock = threading.Lock()
+        self._sync_lock = threading.RLock()  # RLock: complete_scan() acquires then calls flush_immediate() -> _save_sync() which also acquires
         self._stats = {
             "scans": [],
             "active_scans": 0,
@@ -385,8 +385,12 @@ class StateManager:
                 break
         self.flush_immediate()
                 
-    def wipe_scans(self) -> None:
-        """Wipe all historical scan records from the database and sharded files."""
+    async def wipe_scans(self) -> None:
+        """Wipe all historical scan records from the database and sharded files.
+
+        FIX-060: Made async and wrapped sync filesystem I/O in asyncio.to_thread
+        to avoid blocking the event loop (Architecture §29.13).
+        """
         import shutil
         
         # Clear in-memory stats
@@ -401,54 +405,58 @@ class StateManager:
             "deceptive_ui_blocked": 0,
             "risk_score": 0
         }
-        
-        # Clear sharded scan state files in scan_states/
-        self._ensure_scans_dir()
-        try:
-            if os.path.exists(self.SCANS_DIR):
-                for fname in os.listdir(self.SCANS_DIR):
-                    if fname.startswith("scan_") and fname.endswith(".json"):
-                        file_path = os.path.join(self.SCANS_DIR, fname)
-                        try:
-                            os.remove(file_path)
-                            logger.info(f"[StateManager] Deleted sharded scan file: {fname}")
-                        except Exception as e:
-                            logger.error(f"[StateManager] Error deleting brain episode {fname}: {e}")
-        except Exception as e:                logger.error(f"[StateManager] Error accessing scan_states directory: {e}")
-        
-        # Clear brain episodes
-        episodes_dir = "brain/episodes"
-        if os.path.exists(episodes_dir):
+
+        def _wipe_files_sync():
+            # Clear sharded scan state files in scan_states/
+            self._ensure_scans_dir()
             try:
-                for fname in os.listdir(episodes_dir):
-                    if fname.endswith(".json"):
-                        file_path = os.path.join(episodes_dir, fname)
-                        try:
-                            os.remove(file_path)
-                            logger.info(f"[StateManager] Deleted brain episode: {fname}")
-                        except Exception as e:
-                            logger.error(f"[StateManager] Error deleting brain episode {fname}: {e}")
-            except Exception as e:                    logger.error(f"[StateManager] Error accessing brain/episodes directory: {e}")
-        
-        # Clear scan_states subdirectories (forensics, sandboxes, sessions)
-        subdirs_to_clean = ["forensics", "sandboxes", "sessions"]
-        for subdir in subdirs_to_clean:
-            subdir_path = os.path.join(self.SCANS_DIR, subdir)
-            if os.path.exists(subdir_path):
+                if os.path.exists(self.SCANS_DIR):
+                    for fname in os.listdir(self.SCANS_DIR):
+                        if fname.startswith("scan_") and fname.endswith(".json"):
+                            file_path = os.path.join(self.SCANS_DIR, fname)
+                            try:
+                                os.remove(file_path)
+                                logger.info(f"[StateManager] Deleted sharded scan file: {fname}")
+                            except Exception as e:
+                                logger.error(f"[StateManager] Error deleting sharded scan file {fname}: {e}")
+            except Exception as e:
+                logger.error(f"[StateManager] Error accessing scan_states directory: {e}")
+            
+            # Clear brain episodes
+            episodes_dir = "brain/episodes"
+            if os.path.exists(episodes_dir):
                 try:
-                    # Remove all contents but keep the directory
-                    for item in os.listdir(subdir_path):
-                        item_path = os.path.join(subdir_path, item)
-                        try:
-                            if os.path.isfile(item_path):
-                                os.remove(item_path)
-                            elif os.path.isdir(item_path):
-                                shutil.rmtree(item_path)
-                            logger.info(f"[StateManager] Deleted {subdir}/{item}")
-                        except Exception as e:
-                            logger.error(f"[StateManager] Error deleting {subdir}/{item}: {e}")
+                    for fname in os.listdir(episodes_dir):
+                        if fname.endswith(".json"):
+                            file_path = os.path.join(episodes_dir, fname)
+                            try:
+                                os.remove(file_path)
+                                logger.info(f"[StateManager] Deleted brain episode: {fname}")
+                            except Exception as e:
+                                logger.error(f"[StateManager] Error deleting brain episode {fname}: {e}")
                 except Exception as e:
-                    logger.error(f"[StateManager] Error accessing {subdir_path}: {e}")
+                    logger.error(f"[StateManager] Error accessing brain/episodes directory: {e}")
+            
+            # Clear scan_states subdirectories (forensics, sandboxes, sessions)
+            subdirs_to_clean = ["forensics", "sandboxes", "sessions"]
+            for subdir in subdirs_to_clean:
+                subdir_path = os.path.join(self.SCANS_DIR, subdir)
+                if os.path.exists(subdir_path):
+                    try:
+                        for item in os.listdir(subdir_path):
+                            item_path = os.path.join(subdir_path, item)
+                            try:
+                                if os.path.isfile(item_path):
+                                    os.remove(item_path)
+                                elif os.path.isdir(item_path):
+                                    shutil.rmtree(item_path)
+                                logger.info(f"[StateManager] Deleted {subdir}/{item}")
+                            except Exception as e:
+                                logger.error(f"[StateManager] Error deleting {subdir}/{item}: {e}")
+                    except Exception as e:
+                        logger.error(f"[StateManager] Error accessing {subdir_path}: {e}")
+
+        await asyncio.to_thread(_wipe_files_sync)
         
         # Save to disk
         self._save()

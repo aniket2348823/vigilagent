@@ -198,9 +198,38 @@ class RedisClient:
                     raise LockNotAcquiredError(f"Lock not available: {key}")
             
             logger.debug(f"Lock acquired: {key}")
+            
+            # CRITICAL FIX (#34): Start a background renewal task so the lock
+            # doesn't expire during long-running critical sections.
+            renewal_task = None
+            if lock_acquired and self._client and ttl_seconds > 10:
+                async def _renew_lock():
+                    try:
+                        while True:
+                            await asyncio.sleep(ttl_seconds // 3)
+                            if not self._client:
+                                break
+                            # SECURITY: Only renew if we still own the lock.
+                            current = await self._client.get(key)
+                            if current != lock_value:
+                                break  # Lock was stolen or expired
+                            await self._client.expire(key, ttl_seconds)
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
+                renewal_task = asyncio.ensure_future(_renew_lock())
+            
             yield True
             
         finally:
+            # Cancel renewal task before releasing
+            if renewal_task and not renewal_task.done():
+                renewal_task.cancel()
+                try:
+                    await renewal_task
+                except asyncio.CancelledError:
+                    pass
             # Release lock only if we acquired it
             if lock_acquired and self._client:
                 try:

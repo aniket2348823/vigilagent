@@ -16,6 +16,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import json
 
+try:
+    import psutil as _psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    _psutil = None
+    _PSUTIL_AVAILABLE = False
+
 from backend.core.browser_orchestrator import BrowserOrchestrator
 from backend.core.task_manager import TaskManager
 
@@ -230,20 +237,13 @@ class BrowserResourceMonitor:
     
     async def _get_memory_usage(self) -> int:
         """Get current memory usage in MB."""
-        # Placeholder - would use actual process memory metrics
-        import psutil
+        if not _PSUTIL_AVAILABLE or _psutil is None:
+            return 0
         try:
-            process = psutil.Process()
+            process = _psutil.Process()
             memory_mb = process.memory_info().rss / 1024 / 1024
             return int(memory_mb)
-        except ImportError:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning("psutil not installed, memory monitoring disabled")
-            return 0
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to get memory usage: {e}")
             return 0
 

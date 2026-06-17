@@ -12,7 +12,7 @@ from backend.parsers.recon.base import ParsedEntity, safe_json_file, safe_lines
 def parse_masscan_json(path: Path | str) -> list[ParsedEntity]:
     entities: list[ParsedEntity] = []
     seen: set[str] = set()
-    data = safe_json_file(path)
+    data = _load_masscan_json(Path(path) if isinstance(path, str) else path)
     records = data if isinstance(data, list) else data.get("results", []) if isinstance(data, dict) else []
     for rec in records:
         if not isinstance(rec, dict):

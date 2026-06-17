@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
@@ -87,3 +88,57 @@ async def get_ai_status():
         "agent_capabilities": ["singularity", "recon", "attack", "defense"],
         "fallback": "OpenRouter" if getattr(brain, "_gi5_available", False) else "GI5_only"
     }
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  CORTEX CACHE MANAGEMENT ENDPOINTS
+# ──────────────────────────────────────────────────────────────────────
+
+@router.get("/health")
+async def cortex_health():
+    """Return cortex cache stats, circuit breaker state, and Redis connectivity."""
+    try:
+        from backend.ai.cortex import Cortex, get_cortex_engine
+        import asyncio
+        # Try to get a cached instance or create a minimal one
+        cortex = get_cortex_engine()
+        stats = cortex.get_cache_stats()
+        return {"status": "ok", "cache": stats}
+    except Exception as e:
+        logging.warning(f"CORTEX cache invalidation failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.post("/cache/invalidate")
+async def cortex_cache_invalidate(
+    scan_id: str = None,
+    pattern: str = None,
+):
+    """Invalidate LLM response cache entries by scan_id or pattern."""
+    try:
+        from backend.ai.cortex import Cortex, get_cortex_engine
+        cortex = get_cortex_engine()
+        evicted, redis_flush_error = await cortex.invalidate_cache(scan_id=scan_id, pattern=pattern)
+        result = {
+            "status": "ok",
+            "evicted_in_memory": evicted,
+            "scan_id": scan_id,
+            "pattern": pattern,
+        }
+        if redis_flush_error:
+            result["redis_flush_error"] = redis_flush_error
+        return result
+    except Exception as e:
+        logging.warning(f"CORTEX cache invalidation failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.get("/metrics")
+async def cortex_metrics():
+    """Return Prometheus-compatible metrics for cortex engine."""
+    try:
+        cortex = get_cortex_engine()
+        return cortex.get_metrics()
+    except Exception as e:
+        logging.warning(f"CORTEX metrics failed: {e}")
+        return {"error": str(e)}

@@ -16,6 +16,13 @@ from datetime import datetime, timedelta
 import asyncio
 import logging
 
+
+
+def _read_json_file(path) -> dict:
+    """Read and parse a JSON file (sync helper for use with asyncio.to_thread)."""
+    with open(path, "r") as f:
+        return json.load(f)
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -319,8 +326,9 @@ class HybridSessionManager:
                 "_encrypted": encrypted
             }
             
-            with open(session_file, 'w') as f:
-                json.dump(session_bundle, f, indent=2)
+            def _write_session():
+                with open(session_file, "w") as f:
+                    json.dump(bundle, f, indent=2)
             
             # Cache in memory (always store decrypted)
             self.sessions[f"{session_id}_{engine}"] = {
@@ -365,10 +373,8 @@ class HybridSessionManager:
                 logger.warning("[HybridSessionManager] Session %s not found", session_id)
                 return None
             
-            with open(session_file, 'r') as f:
-                session_bundle = json.load(f)
             
-            # CRIT-02: Decrypt session data if encrypted
+            bundle = await asyncio.to_thread(_read_json_file, session_file)
             data = session_bundle["data"]
             if session_bundle.get("_encrypted"):
                 try:
@@ -584,45 +590,37 @@ class HybridSessionManager:
         }
     
     async def cleanup_expired_sessions(self, max_age_hours: int = 24) -> int:
-        """
-        Remove expired session files.
-        
-        Args:
-            max_age_hours: Maximum age of sessions in hours
-            
-        Returns:
-            Number of sessions cleaned up
-        """
+        """Remove expired session files."""
         try:
             cleaned = 0
             cutoff_time = datetime.utcnow() - timedelta(hours=max_age_hours)
-            
+
+
             for session_file in self.storage_dir.glob("*.json"):
                 try:
-                    with open(session_file, 'r') as f:
-                        session_bundle = json.load(f)
-                    
-                    timestamp = datetime.fromisoformat(session_bundle["timestamp"])
-                    
+                    bundle = await asyncio.to_thread(_read_json_file, session_file)
+                    ts_str = bundle.get("timestamp", "")
+                    if ts_str:
+                        timestamp = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    else:
+                        continue
+
                     if timestamp < cutoff_time:
                         session_file.unlink()
                         cleaned += 1
-                        
-                        # Remove from memory cache
-                        cache_key = f"{session_bundle['session_id']}_{session_bundle['engine']}"
+                        sid = bundle.get("session_id", "")
+                        engine = bundle.get("engine", "")
+                        cache_key = f"{sid}_{engine}"
                         self.sessions.pop(cache_key, None)
-                        
                 except Exception as e:
                     logger.error(f"[HybridSessionManager] Error cleaning {session_file}: {e}")
-                    continue
-            
+
             logger.info(f"[HybridSessionManager] Cleaned up {cleaned} expired sessions")
             return cleaned
-            
         except Exception as e:
             logger.error(f"[HybridSessionManager] Cleanup failed: {e}")
             return 0
-    
+
     def list_sessions(self, engine: Optional[str] = None) -> list:
         """
         List all stored sessions.
@@ -637,12 +635,6 @@ class HybridSessionManager:
         
         for session_file in self.storage_dir.glob("*.json"):
             try:
-                with open(session_file, 'r') as f:
-                    session_bundle = json.load(f)
-                
-                if engine and session_bundle["engine"] != engine:
-                    continue
-                
                 sessions.append({
                     "session_id": session_bundle["session_id"],
                     "engine": session_bundle["engine"],

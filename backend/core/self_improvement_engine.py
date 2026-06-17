@@ -19,6 +19,7 @@ code is never rewritten at runtime — only routing/prompt/skill/budget knobs.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -131,7 +132,8 @@ class SelfImprovementEngine:
             except Exception as e:
                 logger.debug("[SelfImprovement] episode dedup skipped: %s", e)
 
-    def _save(self) -> None:
+    def _save_sync(self) -> None:
+        """Synchronous persistence — called from __init__ (sync context)."""
         try:
             self._profiles_file().write_text(
                 json.dumps({a: p.to_dict() for a, p in self.profiles.items()}, indent=2),
@@ -141,6 +143,16 @@ class SelfImprovementEngine:
                 encoding="utf-8")
         except Exception as exc:
             logger.debug("[SelfImprovement] save failed: %s", exc)
+
+    def _save(self) -> None:
+        """Dispatch to sync or async save depending on event loop state."""
+        try:
+            loop = asyncio.get_running_loop()
+            # Async context: offload blocking I/O to thread pool
+            loop.create_task(asyncio.to_thread(self._save_sync))
+        except RuntimeError:
+            # No running loop (e.g. __init__): synchronous save
+            self._save_sync()
 
     # ── Profiles ────────────────────────────────────────────────────────────────
 

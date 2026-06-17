@@ -1,6 +1,12 @@
+import asyncio
+import logging
 import os
+import random
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Optional
+
+logger = logging.getLogger("LLMRouter")
 
 
 class ModelTier(str, Enum):
@@ -59,8 +65,19 @@ class ModelAssignment:
 
 
 class LLMRouter:
+    """Routes LLM requests to the appropriate model tier with retry/backoff.
+
+    FIX: Added exponential backoff retry logic so transient provider errors
+    (429, 500, timeouts) are retried across the fallback chain before giving
+    up.  Previously a single failure in the primary model would immediately
+    cascade with no retry, causing spurious LLM errors under load.
+    """
+
     def __init__(self, profile: str | None = None):
         self.profile = (profile or os.getenv("VIGILAGENT_MODEL_PROFILE", "eco")).lower()
+        # Per-model error counters for circuit-breaker awareness
+        self._model_errors: dict[str, int] = {}
+        self._model_successes: dict[str, int] = {}
 
     def tier_for(self, agent_name: str) -> ModelTier:
         if self.profile == "max":
@@ -81,6 +98,66 @@ class LLMRouter:
             temperature=AGENT_TEMPERATURES.get(agent_name.lower().replace("agent_", ""), 0.3),
             tier=tier,
         )
+
+    def get_temperature(self, agent_name: str, override: Optional[float] = None) -> float:
+        """Return the temperature for an agent, with optional runtime override.
+
+        FIX: Previously temperature was hardcoded per agent name with no way
+        to adjust at runtime. This method allows callers (e.g. CortexEngine)
+        to override temperature based on current context.
+        """
+        if override is not None:
+            return max(0.0, min(2.0, override))
+        key = agent_name.lower().replace("agent_", "")
+        return AGENT_TEMPERATURES.get(key, 0.3)
+
+    def record_model_error(self, model: str) -> None:
+        """Record a failure for the given model (used by backoff logic)."""
+        self._model_errors[model] = self._model_errors.get(model, 0) + 1
+
+    def record_model_success(self, model: str) -> None:
+        """Record a success, resetting error counter for the model."""
+        self._model_errors[model] = 0
+        self._model_successes[model] = self._model_successes.get(model, 0) + 1
+
+    async def retry_with_backoff(
+        self,
+        coro_factory,
+        model_chain: list[str],
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+        max_delay: float = 30.0,
+    ):
+        """Execute an async coroutine with exponential backoff across a model chain.
+
+        ``coro_factory`` is a callable that accepts a model name and returns
+        an awaitable.  We try each model in ``model_chain`` up to
+        ``max_retries`` times each, with exponential jittered backoff between
+        attempts.
+
+        Returns the first successful result, or raises the last exception
+        after all retries are exhausted.
+        """
+        last_error = None
+        for model in model_chain:
+            for attempt in range(max_retries):
+                try:
+                    result = await coro_factory(model)
+                    self.record_model_success(model)
+                    return result
+                except Exception as exc:
+                    last_error = exc
+                    self.record_model_error(model)
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    # Add jitter to prevent thundering herd
+                    delay *= (0.5 + random.random())
+                    logger.warning(
+                        "LLM call to %s failed (attempt %d/%d): %s — retrying in %.1fs",
+                        model, attempt + 1, max_retries, exc, delay,
+                    )
+                    await asyncio.sleep(delay)
+        # All models and retries exhausted
+        raise last_error
 
 
 llm_router = LLMRouter()

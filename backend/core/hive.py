@@ -225,22 +225,9 @@ class EventBus:
         ctx = self.get_or_create_context(event.scan_id)
 
         # CRITICAL FIX 1: Exact-once deduplication window (FIFO)
-        if not hasattr(ctx, "_recent_events_fifo"):
-            ctx._recent_events_fifo = collections.deque(maxlen=1000)
-
-        if event.id in ctx._recent_events:
+        # Uses ScanContext.add_recent_event() for bounded dedup with O(1) lookup.
+        if not ctx.add_recent_event(event.id):
             return  # Drop duplicate
-            
-        ctx._recent_events.add(event.id)
-        ctx._recent_events_fifo.append(event.id)
-        
-        # Maintain Set Size (Oldest removal)
-        if len(ctx._recent_events) > 1000:
-            try:
-                oldest = ctx._recent_events_fifo.popleft()
-                ctx._recent_events.discard(oldest)
-            except IndexError:
-                pass  # Race: another coroutine evicted between len check and popleft
 
         # OpenClaw-style no-blackboard chronology: every scan-local event becomes
         # a linear transcript block before any agent consumes it.

@@ -32,8 +32,9 @@ from backend.core.task_manager import TaskManager
 from backend.core.broadcast_throttle import BroadcastThrottle
 
 
-# CVSS 4.0 engine is imported per-finding inside the event_listener
-# (see enrichment block below). No module-level cached calculator needed.
+# CVSS 4.0 engine: imported at module level for efficiency (was per-finding
+# inside event_listener, adding ~50ms import overhead per VULN_CONFIRMED event).
+# See _cvss_score, _cvss_evidence, etc. below.
 
 # V6 Lifecycle Management
 from backend.core.phase_gate import PhaseGate, ScanPhase
@@ -70,6 +71,21 @@ from backend.core.reporting import ReportGenerator # The Voice
 from backend.ai.cortex import CortexEngine, get_cortex_engine
 from backend.core.planner import MissionPlanner
 
+# CRITICAL FIX: Move CVSS engine import to module level to avoid per-event
+# import overhead (was inside event_listener closure, adding ~50ms latency
+# on every VULN_CONFIRMED event).
+try:
+    from backend.reporting.cvss_engine import (
+        score_for_vuln_class as _cvss_score,
+        generate_evidence as _cvss_evidence,
+        generate_cwe as _cvss_cwe,
+        severity_band as _cvss_severity_band,
+    )
+    _CVSS_AVAILABLE = True
+except ImportError:
+    _CVSS_AVAILABLE = False
+    _cvss_score = _cvss_evidence = _cvss_cwe = _cvss_severity_band = None
+
 logger = logging.getLogger("HiveOrchestrator")
 ai_cortex = get_cortex_engine()
 
@@ -87,8 +103,24 @@ _MODULE_ALIASES = {
     "jwt": "JWT Token Cracker",
 }
 
+def _log_task_error(task, label="task", scan_id="unknown"):
+    """Callback for asyncio.create_task() to surface silent exceptions.
+
+    MUST be defined at module level (not inside bootstrap_hive) so that
+    callbacks attached to master/worker tasks created early in the method
+    can reference it. Closures capture ``scan_id`` via default argument.
+    """
+    exc = task.exception()
+    if exc is not None:
+        logger.error("[%s] Background %s raised: %s", scan_id, label, exc, exc_info=exc)
+
+
 class HiveOrchestrator:
     # Global Registry for API Access (Nervous System)
+    # NOTE: active_agents and _orphaned_tasks are class-level. Concurrent
+    # scans are NOT fully supported — they share this registry and can
+    # interfere. For concurrent scan support, these must be moved to
+    # per-scan instances (tracked by scan_id).
     active_agents = {}
     _active_agents_lock: Optional[asyncio.Lock] = None  # CRIT-04: lazily created per-loop
 
@@ -221,19 +253,21 @@ class HiveOrchestrator:
             # --- START DISTRIBUTED COMMAND LAYER ---
             # Automatically start Master for this scan
             master = MasterNode(redis_url, settings.SUPABASE_URL, settings.SUPABASE_KEY)
-            HiveOrchestrator._task_manager.create_task(master.start(), name="master_node")
+            _master_task = HiveOrchestrator._task_manager.create_task(master.start(), name="master_node")
+            _master_task.add_done_callback(lambda t: _log_task_error(t, "master_node", scan_id))
             
             # Start Worker for dynamic execution
             worker_id = f"local-hive-{uuid.uuid4().hex[:4]}"
             worker = WorkerNode(worker_id, "hybrid", redis_url, settings.SUPABASE_URL, settings.SUPABASE_KEY)
-            HiveOrchestrator._task_manager.create_task(worker.start(), name="worker_node")
+            _worker_task = HiveOrchestrator._task_manager.create_task(worker.start(), name="worker_node")
+            _worker_task.add_done_callback(lambda t: _log_task_error(t, "worker_node", scan_id))
             
             # The Unified Agents (Prism/Chi) handle individual guardian duties
             # they are already in the core_agents list and started below.
             logger.info("🛡️ Xytherion Command Matrix Activated (Master + Local Worker). Safety Guardians Unified.")
             
             # V6-HARDENED: Start Cluster Telemetry Loop
-            HiveOrchestrator._task_manager.create_task(
+            _telemetry_task = HiveOrchestrator._task_manager.create_task(
                 HiveOrchestrator._cluster_telemetry_loop(redis_url, scan_id),
                 name="cluster_telemetry"
             )
@@ -349,15 +383,8 @@ class HiveOrchestrator:
                             HiveOrchestrator._orphaned_tasks.discard)
 
                         # Generate CVSS 4.0 score, evidence, and remediation for this finding
-                        try:
-                            from backend.reporting.cvss_engine import (
-                                score_for_vuln_class, generate_evidence,
-                                generate_cwe, severity_band,
-                            )
-                            _import_ok = True
-                        except Exception as _import_err:
-                            logger.warning("CVSS engine import failed: %s", _import_err)
-                            _import_ok = False
+                        # Uses module-level imports (_cvss_score, etc.) for efficiency.
+                        _import_ok = _CVSS_AVAILABLE
 
                         # Default CVSS values — overridden below if enrichment succeeds
                         cvss_score_val = 0.0
@@ -367,11 +394,11 @@ class HiveOrchestrator:
                             try:
                                 vuln_type_key = sig_data["type"]
                                 _data_str = str(real_payload.get("data", "")).lower()
-                                cvss_score_val, cvss_vector_val = score_for_vuln_class(
+                                cvss_score_val, cvss_vector_val = _cvss_score(
                                     vuln_type_key,
                                     data_leak="leak" in _data_str or "sensitive" in _data_str,
                                 )
-                                evidence_record = generate_evidence(
+                                evidence_record = _cvss_evidence(
                                     vuln_type_key, url=sig_data["url"]
                                 )
                                 enriched_finding = {
@@ -382,8 +409,8 @@ class HiveOrchestrator:
                                     "cvss_score": round(cvss_score_val, 1),
                                     "cvss_vector": cvss_vector_val,
                                     "cvss_version": "4.0",
-                                    "cvss_severity": severity_band(cvss_score_val),
-                                    "cwe": generate_cwe(vuln_type_key),
+                                    "cvss_severity": _cvss_severity_band(cvss_score_val),
+                                    "cwe": _cvss_cwe(vuln_type_key),
                                     "evidence": evidence_record,
                                     "remediation": evidence_record.get("remediation", ""),
                                     "agent": event.source,
@@ -404,7 +431,7 @@ class HiveOrchestrator:
                             try:
                                 real_payload["cvss_score"] = cvss_score_val
                                 real_payload["cvss_vector"] = cvss_vector_val
-                                real_payload["cvss_severity"] = severity_band(cvss_score_val)
+                                real_payload["cvss_severity"] = _cvss_severity_band(cvss_score_val)
 
                                 # Bayesian Fusion: Combine CVSS with existing signals
                                 gamma_score = real_payload.get("gamma_score", 0.5)
@@ -743,6 +770,7 @@ class HiveOrchestrator:
         healing_task = asyncio.create_task(healing_engine.monitor_and_heal())
         HiveOrchestrator._orphaned_tasks.add(healing_task)
         healing_task.add_done_callback(HiveOrchestrator._orphaned_tasks.discard)
+        healing_task.add_done_callback(lambda t: _log_task_error(t, "healing", scan_id))
         logger.info("[Orchestrator] Self-healing engine activated")
 
         # --- CognitiveRouter (requires active_agents populated) ---
@@ -1350,6 +1378,7 @@ class HiveOrchestrator:
                 task = asyncio.create_task(generate_and_mark_ready())
                 HiveOrchestrator._orphaned_tasks.add(task)
                 task.add_done_callback(HiveOrchestrator._orphaned_tasks.discard)
+                task.add_done_callback(lambda t: _log_task_error(t, "report_gen", scan_id))
                 
                 await manager.broadcast({"type": "GI5_LOG", "payload": f"FORENSIC REPORT GENERATION INITIATED FOR {scan_id}"})
             except Exception as e:
@@ -1367,6 +1396,7 @@ class HiveOrchestrator:
         """
         import redis.asyncio as aioredis
         import json
+        r = None
         try:
             r = aioredis.from_url(redis_url)
             while True:
@@ -1391,8 +1421,13 @@ class HiveOrchestrator:
                 
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
-
             pass
         except Exception as e:
             logger.debug(f"Cluster Telemetry loop failure: {e}")
+        finally:
+            if r is not None:
+                try:
+                    await r.close()
+                except Exception:
+                    pass
 

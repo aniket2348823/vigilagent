@@ -304,7 +304,11 @@ class SelfAwarenessModule:
         
         # Check agent-specific feature flag
         agent_flag = f"self_awareness_{self.agent_id.lower()}"
-        return feature_flags.is_enabled(agent_flag)
+        # CRITICAL FIX (#32/#38): Use is_feature_enabled() not is_enabled().
+        # FeatureFlags only has is_feature_enabled(); is_enabled() would
+        # raise AttributeError at runtime, silently breaking all self-awareness.
+        _check = getattr(feature_flags, 'is_feature_enabled', None) or getattr(feature_flags, 'is_enabled', None)
+        return _check(agent_flag) if _check else False
     
     def _start_introspection_timer(self):
         """Start timing introspection overhead"""
@@ -722,13 +726,16 @@ class SelfAwareAgentMixin:
     
     def _should_enable_self_awareness(self) -> bool:
         """Check if self-awareness should be enabled for this agent"""
-        # Check global feature flag
-        if not feature_flags.is_enabled("self_awareness_enabled"):
+        # CRITICAL FIX (#38): Use is_feature_enabled() not is_enabled().
+        # FeatureFlags only has is_feature_enabled(); is_enabled() would
+        # raise AttributeError at runtime, silently breaking self-awareness.
+        _check = getattr(feature_flags, 'is_feature_enabled', None) or getattr(feature_flags, 'is_enabled', None)
+        if not (_check and _check("self_awareness_enabled")):
             return False
         
         # Check agent-specific feature flag
         agent_flag = f"self_awareness_{self.name.lower()}"
-        return feature_flags.is_enabled(agent_flag)
+        return _check(agent_flag)
     
     def _init_self_awareness(self):
         """Initialize self-awareness module"""

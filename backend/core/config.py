@@ -110,7 +110,10 @@ def load_workers_config() -> Dict[str, Any]:
             if data.get("default_specialty"):
                 defaults["default_specialty"] = str(data["default_specialty"])
     except Exception as exc:  # pragma: no cover - fail safe to defaults (yaml.YAMLError, OSError, etc.)
-        logger.warning("Could not parse workers.yaml (%s); using defaults.", exc)
+        logger.warning(
+            "Could not parse workers.yaml (%s); using defaults. "
+            "Check the file for syntax errors or missing required keys.",
+            exc, exc_info=True)
     return defaults
 
 # Product identity (Architecture §1, §13). User-facing only.
@@ -234,7 +237,16 @@ class MasterConfig:
 import threading
 
 class ConfigManager:
-    """Central configuration management using the Singleton pattern with validation."""
+    """Central configuration management using the Singleton pattern with validation.
+
+    FIX: The original used a threading.Lock for the singleton, but the app
+    runs in asyncio.  While Python's GIL prevents true races on __new__,
+    the thread lock doesn't protect against async concurrency within a
+    single thread (two coroutines interleaving at await points). We keep
+    the threading.Lock for the singleton instantiation (safe under GIL) but
+    document that runtime config access should be treated as immutable
+    after boot.
+    """
     _instance = None
     _lock = threading.Lock()
     

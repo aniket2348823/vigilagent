@@ -134,8 +134,10 @@ class SelfHealingEngine:
                     if metrics["error_rate"] > 0.3:
                         await self.adapt_strategy(agent_name, "high_error_rate")
                 await self.balance_load()
-                if int(time.time()) % 300 == 0:
+                now_ts = time.time()
+                if not hasattr(self, '_last_state_save') or (now_ts - getattr(self, '_last_state_save', 0)) >= 300:
                     await self.save_healing_state()
+                    self._last_state_save = time.time()
             except Exception as e:
                 logger.error(f"[SelfHealing] Monitoring loop error: {e}")
 
@@ -837,10 +839,15 @@ def classify_error(error: Any = None, *, error_class: str = "", status_code: Opt
             return _build(ErrorClass.SERVER_ERROR, f"HTTP {status_code} server error")
 
     # 2. Message / raw-class pattern matching (order matters: most specific first)
-    if any(p in text for p in _SCOPE_PATTERNS):
-        return _build(ErrorClass.SCOPE_BLOCK, "scope / approval signal")
+    # CRITICAL FIX: Check AUTH before SCOPE because "scope denied" contains
+    # "denied" which could match auth patterns, but more importantly
+    # "403 Forbidden" should match AUTH (more specific) before SCOPE catches
+    # it generically. AUTH patterns are more actionable (vault-backed re-auth)
+    # than SCOPE_BLOCK (pause for human approval).
     if any(p in text for p in _AUTH_PATTERNS):
         return _build(ErrorClass.AUTH, "authentication / authorization failure")
+    if any(p in text for p in _SCOPE_PATTERNS):
+        return _build(ErrorClass.SCOPE_BLOCK, "scope / approval signal")
     if any(p in text for p in _RATE_LIMIT_PATTERNS):
         return _build(ErrorClass.RATE_LIMIT, "rate-limit / throttling signal")
     if any(p in text for p in _TOOL_MISSING_PATTERNS):
@@ -873,6 +880,7 @@ class RecoveryEngine:
         self.browser = browser_healing
         self.errors = unified_error_handling
         self._attempts: Dict[tuple, int] = {}
+        self._attempts_last_used: Dict[tuple, float] = {}  # H-23: track last access time
         self._max_attempts = 4
         # ── Real recovery state consulted by the rest of the system ──
         self.disabled_tools: Dict[str, set] = defaultdict(set)        # scan_id -> {tool}
@@ -935,6 +943,13 @@ class RecoveryEngine:
     async def recover(self, *, agent: str, error_class: str, context: str = "http",
                       target: str = "", consecutive_failures: int = 1,
                       detail: Dict[str, Any] | None = None) -> RecoveryOutcome:
+        # H-23: Clean up stale _attempts entries (>1 hour old) to prevent
+        # unbounded memory growth.
+        now = time.time()
+        stale_keys = [k for k, v in self._attempts.items()
+                      if (now - v) > 3600 if isinstance(v, float)]
+        for k in stale_keys:
+            self._attempts.pop(k, None)
         detail = dict(detail or {})
         if target:
             detail.setdefault("target", target)
@@ -942,6 +957,14 @@ class RecoveryEngine:
         scope = str(detail.get("scope") or target or scan_id)
         key = (agent, error_class.lower())
         self._attempts[key] = self._attempts.get(key, 0) + 1
+        self._attempts_last_used[key] = time.time()
+        # H-23: Evict stale entries (>1 hour) when dict grows large
+        if len(self._attempts) > 100:
+            stale_cutoff = time.time() - 3600
+            stale = [k for k, t in self._attempts_last_used.items() if t < stale_cutoff]
+            for k in stale:
+                self._attempts.pop(k, None)
+                self._attempts_last_used.pop(k, None)
         attempt = self._attempts[key]
         classified = classify_error(error_class=error_class,
                                     status_code=detail.get("status_code"),

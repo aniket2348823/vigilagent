@@ -75,4 +75,14 @@ async def logout(request: Request):
 @router.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "timestamp": time.time()}
+    try:
+        from backend.ai.cortex import get_cortex_engine
+        cortex = get_cortex_engine()
+        cache_stats = cortex.get_cache_stats()
+    except Exception:
+        cache_stats = {}
+    return {
+        "status": "healthy",
+        "timestamp": time.time(),
+        "cache": cache_stats,
+    }

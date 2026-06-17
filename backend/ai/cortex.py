@@ -31,12 +31,14 @@ import time as _time
 # route onto `_call_gemini`. No on-device / Ollama / NVIDIA endpoint exists.
 # ------------------------------------------------------------
 
-import aiohttp
+# Removed unused sync aiohttp import
 import json
 import logging
 import math
-import re
 import os
+import random
+import re
+import threading
 from typing import List, Dict, Any, Optional
 from backend.core.content_boundary import content_boundary
 from backend.core.queue import LanePriority, command_lane
@@ -68,13 +70,22 @@ class BayesianWeightMatrix:
             except Exception as e:
                 logger.error(f"Failed to load Bayesian weights: {e}")
 
-    def save(self):
+    def save_sync(self):
+        """Synchronous save — safe to call from sync contexts (e.g. __init__)."""
         try:
             os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
             with open(self.save_path, "w") as f:
                 json.dump(self.weights, f, indent=2)
         except Exception as e:
             logger.error(f"Failed to save Bayesian weights: {e}")
+
+    def save(self):
+        """Async-aware save — offloads to thread when event loop is running."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(asyncio.to_thread(self.save_sync))
+        except RuntimeError:
+            self.save_sync()
 
     def get_weights(self, vuln_class: str) -> tuple:
         if vuln_class not in self.weights:
@@ -97,15 +108,6 @@ class BayesianWeightMatrix:
 
 
 # TOKEN_BUDGETS: Reserved for future token budgeting implementation.
-TOKEN_BUDGETS = {
-    "sqli": 100,
-    "fuzz": 100,
-    "forensic": 150,
-    "cvss": 100,
-    "audit": 150,
-    "executive": 200,
-    "default": 200,
-}
 
 #  OPTIMIZATION: Cache TTL 
 CACHE_TTL = 300  # 5 minutes
@@ -168,6 +170,8 @@ class CortexEngine:
         self._cache_misses = 0
 
         # --- Circuit Breaker ---
+        self._stats_lock = threading.Lock()
+        self._health_check_task = None
         self._consecutive_failures = 0
         self._circuit_open = False
         self._circuit_open_until = 0.0
@@ -175,7 +179,8 @@ class CortexEngine:
         self._CIRCUIT_THRESHOLD = 5
         self._CIRCUIT_COOLDOWN = 60.0
 
-        # --- TELEMETRY ---
+        # --- TELEMETRY (thread-safe via lock) ---
+        self._telemetry_lock = threading.Lock()
         self._telemetry = {
             "llm_calls": 0,
             "llm_successes": 0,
@@ -230,6 +235,23 @@ class CortexEngine:
             self._gemini = None
             logger.warning(f"CORTEX CORE-2 [GEMINI] unavailable: {e}")
 
+        # Periodic Redis health check (every 60s)
+        async def _periodic_redis_health():
+            while True:
+                try:
+                    await asyncio.sleep(60)
+                    result = await self.redis_health_check()
+                    if not result.get("connected"):
+                        logger.debug(f"CORTEX periodic Redis health: {result}")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.debug(f"CORTEX periodic Redis health failed: {e}")
+        try:
+            loop.create_task(self._warm_cache())
+            self._health_check_task = loop.create_task(_periodic_redis_health())
+        except RuntimeError:
+            pass
         logger.info("CORTEX HYBRID ENGINE: ACTIVE (GI5 + Gemini + OpenRouter)")
 
     # =========================================================================
@@ -246,32 +268,54 @@ class CortexEngine:
         return text
 
     def _cache_key(self, prompt: str, scan_ctx=None) -> str:
-        scan_id = getattr(scan_ctx, 'scan_id', 'default') if scan_ctx else 'default'
-        raw = f"{scan_id}:{prompt}"
-        return hashlib.sha256(raw.encode('utf-8', errors='ignore')).hexdigest()
+        """Generate cache key with scan_id prefix for scoped invalidation."""
+        scan_id = getattr(scan_ctx, "scan_id", "default") if scan_ctx else "default"
+        prompt_hash = hashlib.sha256(prompt.encode("utf-8", errors="ignore")).hexdigest()
+        return f"{scan_id}:{prompt_hash}"
 
-    def _get_cached(self, prompt: str, scan_ctx=None):
-        import time
+    async def _get_cached_async(self, prompt: str, scan_ctx=None):
+        """Check Redis cache, then in-memory cache. Returns result or None."""
         key = self._cache_key(prompt, scan_ctx)
+        # 1. Check in-memory LRU first (fastest)
         entry = self._response_cache.get(key)
-        if entry and (time.time() - entry["ts"]) < CACHE_TTL:
+        if entry and (_time.time() - entry["ts"]) < CACHE_TTL:
             self._cache_hits += 1
             self._response_cache.move_to_end(key)
             return entry["result"]
         if entry:
             del self._response_cache[key]
+        # 2. Check Redis cache
+        r = self._get_redis()
+        if r:
+            try:
+                cached = await r.get(f'cortex:cache:{key}')
+                if cached:
+                    self._cache_hits += 1
+                    # Promote to in-memory cache
+                    self._response_cache[key] = {"result": cached, "ts": _time.time()}
+                    while len(self._response_cache) > self._cache_max_size:
+                        self._response_cache.popitem(last=False)
+                    return cached
+            except Exception as e:
+                logger.debug(f'CORTEX Redis cache read failed: {e}')
         self._cache_misses += 1
         return None
-
-    def _set_cached(self, prompt: str, result: str, scan_ctx=None):
-        import time
+    async def _set_cached_async(self, prompt: str, result: str, scan_ctx=None):
+        """Write to both in-memory and Redis cache."""
         key = self._cache_key(prompt, scan_ctx)
+        # Write to in-memory LRU
         if key in self._response_cache:
             self._response_cache.move_to_end(key)
-        self._response_cache[key] = {"result": result, "ts": time.time()}
+        self._response_cache[key] = {"result": result, "ts": _time.time()}
         while len(self._response_cache) > self._cache_max_size:
             self._response_cache.popitem(last=False)
-
+        # Write to Redis with TTL
+        r = self._get_redis()
+        if r:
+            try:
+                await r.set(f'cortex:cache:{key}', result, ex=CACHE_TTL)
+            except Exception as e:
+                logger.debug(f'CORTEX Redis cache write failed: {e}')
     async def warm_up(self):
         logger.info("CORTEX: Warming up Gemini API...")
         try:
@@ -303,7 +347,7 @@ class CortexEngine:
                 logger.info("CORTEX: Circuit breaker reset - attempting Gemini recovery")
         prompt = self._prompt_with_transcript(prompt, scan_ctx)
         if not _skip_cache:
-            cached = self._get_cached(prompt, scan_ctx)
+            cached = await self._get_cached_async(prompt, scan_ctx)
             if cached is not None:
                 self._telemetry["cache_hits"] += 1
                 return cached
@@ -334,7 +378,7 @@ class CortexEngine:
             self._telemetry["llm_successes"] += 1
             self._telemetry["llm_total_latency"] += latency
             self._consecutive_failures = 0
-            self._set_cached(prompt, result, scan_ctx)
+            await self._set_cached_async(prompt, result, scan_ctx)
             return result
         except asyncio.TimeoutError:
             self._consecutive_failures += 1
@@ -452,6 +496,70 @@ class CortexEngine:
                 f"Trip #{self._circuit_breaker_trips}"
             )
 
+
+    def _log_task_error(self, task):
+        """Log exceptions from fire-and-forget tasks."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.debug(f'CORTEX: Background task failed: {exc}')
+    # --- Circuit Breaker Redis Persistence ---
+    def _get_redis(self):
+        """Get a shared async Redis client (lazy-init with retry)."""
+        if getattr(self, '_redis_client', None) is not None:
+            return self._redis_client
+        # Retry only once every 60 seconds
+        last_fail = getattr(self, '_redis_last_fail', 0)
+        if _time.time() - last_fail < 60:
+            return None
+        try:
+            import os as _os
+            redis_url = _os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+            import redis.asyncio as aioredis
+            self._redis_client = aioredis.from_url(redis_url, decode_responses=True, max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "20")), socket_timeout=int(os.getenv("REDIS_SOCKET_TIMEOUT", "10")), retry_on_timeout=True)
+            self._redis_last_fail = 0
+            return self._redis_client
+        except Exception:
+            self._redis_last_fail = _time.time()
+            self._redis_client = None
+            return None
+    async def _save_circuit_breaker(self):
+        """Persist circuit breaker state to Redis so it survives restarts."""
+        r = self._get_redis()
+        if not r:
+            return
+        try:
+            state = json.dumps({
+                'open': self._circuit_open,
+                'open_until': self._circuit_open_until,
+                'consecutive_failures': self._consecutive_failures,
+                'trips': self._circuit_breaker_trips,
+            })
+            await r.set('cortex:circuit_breaker', state, ex=int(self._CIRCUIT_COOLDOWN) + 300)
+        except Exception as e:
+            logger.debug(f'CORTEX: Failed to save circuit breaker to Redis: {e}')
+    async def _load_circuit_breaker(self):
+        """Restore circuit breaker state from Redis on startup."""
+        r = self._get_redis()
+        if not r:
+            return
+        try:
+            raw = await r.get('cortex:circuit_breaker')
+            if raw:
+                state = json.loads(raw)
+                self._circuit_open = state.get('open', False)
+                self._circuit_open_until = state.get('open_until', 0.0)
+                self._consecutive_failures = state.get('consecutive_failures', 0)
+                self._circuit_breaker_trips = state.get('trips', 0)
+                # Validate: if cooldown expired, reset
+                if self._circuit_open and _time.time() >= self._circuit_open_until:
+                    self._circuit_open = False
+                    self._consecutive_failures = 0
+                elif self._circuit_open:
+                    logger.info(f'CORTEX: Restored circuit breaker from Redis (open until {self._circuit_open_until:.0f})')
+        except Exception as e:
+            logger.debug(f'CORTEX: Failed to load circuit breaker from Redis: {e}')
     def get_telemetry(self) -> dict:
         """Return current telemetry counters for external monitoring."""
         t = dict(self._telemetry)
@@ -471,10 +579,195 @@ class CortexEngine:
     async def shutdown(self):
         """Cleanly close all underlying sessions."""
         if self._session and not self._session.closed:
+            # Cancel periodic health check task
+            if getattr(self, "_health_check_task", None):
+                self._health_check_task.cancel()
             await self._session.close()
             logger.info("CORTEX: Base AIOHTTP session safely closed.")
         if self._gemini:
             await self._gemini.shutdown()
+        # Close shared Redis client
+        if getattr(self, "_redis_client", None):
+            try:
+                await self._redis_client.aclose()
+            except Exception:
+                pass
+
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  CACHE STATS / INVALIDATION / REDIS HEALTH CHECK
+    # ──────────────────────────────────────────────────────────────────────
+
+    def get_cache_stats(self) -> dict:
+        """Return cache performance metrics and circuit breaker state."""
+        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0.0
+        return {
+            "cache_self._cache_hits": self._cache_hits,
+            "cache_self._cache_misses": self._cache_misses,
+            "cache_hit_rate_pct": round(hit_rate, 2),
+            "in_memory_entries": len(self._response_cache),
+            "in_memory_max": self._cache_max_size,
+            "circuit_breaker": {
+                "open": self._circuit_open,
+                "open_until": self._circuit_open_until,
+                "consecutive_failures": self._consecutive_failures,
+                "total_trips": self._circuit_breaker_trips,
+            },
+            "redis_connected": getattr(self, "_redis_client", None) is not None,
+        }
+
+    async def invalidate_cache(self, scan_id: str = None, pattern: str = None) -> int:
+        """Invalidate cached LLM responses.
+       
+        Args:
+            scan_id: If provided, evict all entries whose key starts with this scan_id prefix.
+            pattern: If provided, evict all in-memory entries whose key contains this substring.
+        
+        Returns:
+            Number of in-memory entries evicted.
+        """
+        evicted = 0
+
+        # 1. Invalidate in-memory LRU
+        keys_to_remove = []
+        for key in self._response_cache:
+            if scan_id and key.startswith(scan_id):
+                keys_to_remove.append(key)
+            elif pattern and pattern in key:
+                keys_to_remove.append(key)
+        for key in keys_to_remove:
+            del self._response_cache[key]
+            evicted += 1
+
+        # 2. If scan_id provided, also flush from Redis using SCAN
+        if scan_id:
+            r = self._get_redis()
+            if r:
+                try:
+                    cursor = 0
+                    for _scan_iter in range(100):  # safety limit
+                        cursor, keys = await r.scan(cursor, match=f"cortex:cache:{scan_id}*", count=100)
+                        for k in keys:
+                            await r.delete(k)
+                        if cursor == 0:
+                            break
+                except Exception as e:
+                    redis_flush_error = str(e)
+        logger.debug(f'CORTEX Redis cache invalidation failed: {e}')
+
+        logger.info(f'CORTEX: Cache invalidated — {evicted} in-memory entries removed (scan_id={scan_id}, pattern={pattern})')
+        return evicted, getattr(self, "_redis_flush_error", None)
+
+    async def redis_health_check(self, force: bool = False) -> dict:
+        """Ping Redis and reset retry timer if connection recovers.
+       
+        Args:
+            force: If True, bypass retry throttle and create a fresh client.
+        """
+        r = self._get_redis() if not force else None
+        owned_client = False  # track if we created a client we must close
+
+        if r is None and not force:
+            return {"connected": False, "error": "Redis client unavailable (retry throttled)"}
+
+        if force and r is None:
+            # Create a fresh client for explicit health check
+            try:
+                import os as _os
+                import redis.asyncio as aioredis
+                r = aioredis.from_url(_os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
+                owned_client = True
+            except Exception as e:
+                return {"connected": False, "error": f"Failed to create Redis client: {e}"}
+
+        try:
+            t0 = _time.time()
+            pong = await r.ping()
+            latency_ms = round((_time.time() - t0) * 1000, 2)
+
+            # Reset retry timer and adopt the fresh client on success
+            was_throttled = getattr(self, "_redis_last_fail", 0) > 0
+            self._redis_last_fail = 0
+            if owned_client:
+                # Close old client if any, adopt the new one
+                old = getattr(self, "_redis_client", None)
+                if old:
+                    try:
+                        await old.aclose()
+                    except Exception:
+                        pass
+                self._redis_client = r
+                owned_client = False  # no longer our responsibility
+
+            return {
+                "connected": True,
+                "pong": pong,
+                "latency_ms": latency_ms,
+                "retry_timer_reset": was_throttled,
+            }
+        except Exception as e:
+            self._redis_last_fail = _time.time()
+            self._redis_client = None
+            return {
+                "connected": False,
+                "error": str(e),
+            }
+        finally:
+            if owned_client:
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
+
+    async def _warm_cache(self) -> None:
+        """Preload frequently-used cache entries from Redis into memory on startup."""
+        r = self._get_redis()
+        if not r:
+            return
+        try:
+            cursor = 0
+            warmed = 0
+            try:
+                max_warm = int(os.getenv("CACHE_WARM_MAX", "100"))
+            except (ValueError, TypeError):
+                max_warm = 100
+            while warmed < max_warm:  # limit to prevent OOM
+                cursor, keys = await r.scan(cursor, match="cortex:cache:*", count=50)
+                for k in keys:
+                    val = await r.get(k)
+                    if val:
+                        cache_key = k.replace("cortex:cache:", "")
+                        self._response_cache[cache_key] = {"result": val, "ts": _time.time()}
+                        warmed += 1
+                if cursor == 0:
+                    break
+            logger.info(f"CORTEX: Cache warmed — {warmed} entries loaded from Redis")
+        except Exception as e:
+            logger.debug(f"CORTEX: Cache warming failed: {e}")
+
+
+    def get_metrics(self) -> dict:
+        """Return Prometheus-compatible metrics for monitoring."""
+        hits = self._cache_hits
+        misses = self._cache_misses
+        total = hits + misses
+        return {
+            # Cache metrics
+            "cortex_cache_hits_total": hits,
+            "cortex_cache_misses_total": misses,
+            "cortex_cache_hit_ratio": round(hits / total, 4) if total > 0 else 0.0,
+            "cortex_cache_entries": len(self._response_cache),
+            # Circuit breaker metrics
+            "cortex_circuit_breaker_trips_total": self._circuit_breaker_trips,
+            "cortex_circuit_breaker_consecutive_failures": self._consecutive_failures,
+            "cortex_circuit_breaker_open": 1 if self._circuit_open else 0,
+            # Redis metrics
+            "cortex_redis_connected": 1 if getattr(self, "_redis_client", None) else 0,
+            "cortex_redis_last_fail_timestamp": getattr(self, "_redis_last_fail", 0),
+            # Telemetry
+            "cortex_llm_calls_total": self._telemetry.get("llm_calls", 0),
+            "cortex_llm_errors_total": self._telemetry.get("llm_errors", 0),
+        }
 
     def _is_error(self, result: str) -> bool:
         """Check if an LLM response is an error."""
@@ -595,7 +888,7 @@ No markdown. No headers. Just the analysis."""
         if not text: return None
         try:
             # 1. Try to find JSON block in markdown
-            match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+            match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text)
             json_str = match.group(1) if match else text
             
             # 2. If no markdown, find first { and last }
@@ -611,13 +904,45 @@ No markdown. No headers. Just the analysis."""
                 return json.loads(json_str)
             except json.JSONDecodeError:
                 pass
-            json_str = re.sub(r'(?<!")\s*,\s*([\}\]])', r'\1', json_str)
+            # Fix trailing commas: split on unquoted braces/brackets, remove commas before them.
+            # Use a char-by-char approach to avoid stripping commas inside string values.
+            json_str = self._remove_trailing_commas(json_str)
             
             return json.loads(json_str)
         except Exception as e:
             logger.warning(f"CORTEX JSON Extraction Failed: {e}")
             return None
 
+    @staticmethod
+    def _remove_trailing_commas(s: str) -> str:
+        """Remove trailing commas before } or ] that are NOT inside quoted strings."""
+        result = []
+        in_string = False
+        escape_next = False
+        for ch in s:
+            if escape_next:
+                result.append(ch)
+                escape_next = False
+                continue
+            if ch == chr(92) and in_string:
+                result.append(ch)
+                escape_next = True
+                continue
+            if ch == chr(34):
+                in_string = not in_string
+                result.append(ch)
+                continue
+            if in_string:
+                result.append(ch)
+                continue
+            # Outside string: strip comma before } or ]
+            if ch == chr(44) and result and result[-1] in (chr(32), chr(10), chr(9), chr(13)):
+                continue
+            result.append(ch)
+        # Second pass: remove ',}' and ',]' patterns (comma immediately before closing)
+        out = ''.join(result)
+        out = re.sub(r',\s*([}\]])', r'', out)
+        return out
     def _extract_payload_list(self, text: str) -> List[str]:
         """Extract a payload list from JSON, markdown JSON, or newline output."""
         if not text or self._is_error(text):
@@ -1085,65 +1410,215 @@ Output ONLY the mutated payload. Nothing else. No explanation."""
     #  P3: KAPPA  Vulnerability Candidate Audit (HYBRID) 
 
 
-    async def audit_candidate(self, candidate_data: Dict[str, Any], scan_ctx=None) -> Dict[str, Any]:
-        """
-        HYBRID: Audit vulnerability candidate.
-        """
-        if self.test_mode:
-            return {
-                "is_real": True,
-                "confidence": 0.95,
-                "reasoning": "TEST_MODE bypass: Automated verification active.",
-                "engine": "TEST_MODE",
-                "type": "SQLI"
-            }
-        # Structured Evidence Extraction (Gamma 2.0)
-        evidence_obj = self._extract_evidence(candidate_data)
-        
-        # CORE 1: GI5 deterministic analysis
+
+    # =========================================================================
+    # AUDIT CANDIDATE — Decomposed Helper Methods
+    # =========================================================================
+
+    def _assess_risk_and_triage(self, candidate_data, evidence_obj):
+        """Layer 1-2: Extract evidence, run GI5 analysis, compute risk score.
+        Returns (gi5_result, gi5_risk, gi5_is_threat, risk_score, mode, beta_evidence, has_critical_evidence).
+        May return an early-exit dict for heuristic matches or risk gate rejections."""
         gi5_result = self._gi5_analyze({
-            "text": str(candidate_data.get("description", "")),
-            "url": str(candidate_data.get("url", ""))
+            'text': str(candidate_data.get('description', '')),
+            'url': str(candidate_data.get('url', ''))
         })
-        gi5_risk = gi5_result.get("risk_score", 0) if gi5_result else 0
+        gi5_risk = gi5_result.get('risk_score', 0) if gi5_result else 0
         gi5_is_threat = gi5_risk > 60
 
-        # LAYER 3 - Risk Score Gate
-        structural_anomaly = candidate_data.get("structural_anomaly", 0)
-        privilege_delta = candidate_data.get("privilege_delta", 0)
-        response_entropy = candidate_data.get("response_entropy", gi5_risk)
-
+        structural_anomaly = candidate_data.get('structural_anomaly', 0)
+        privilege_delta = candidate_data.get('privilege_delta', 0)
+        response_entropy = candidate_data.get('response_entropy', gi5_risk)
         risk_score = (gi5_risk * 0.5) + (structural_anomaly * 0.2) + (privilege_delta * 0.2) + (response_entropy * 0.1)
-        
-        # Explicitly extract the actual anomaly evidence from Beta
-        beta_evidence = str(candidate_data.get("evidence", "")).lower()
-        has_critical_evidence = "syntax error" in beta_evidence or "data leak" in beta_evidence or "injection" in beta_evidence
 
-        # Deterministic Heuristics Layer
-        if evidence_obj["data_exposed"] or has_critical_evidence:
-            # Force high confidence for clear evidence from execution layer
+        beta_evidence = str(candidate_data.get('evidence', '')).lower()
+        has_critical_evidence = 'syntax error' in beta_evidence or 'data leak' in beta_evidence or 'injection' in beta_evidence
+
+        # Deterministic Heuristics Layer — early exit for clear evidence
+        if evidence_obj['data_exposed'] or has_critical_evidence:
             return {
-                "is_real": True,
-                "confidence": 0.95,
-                "reasoning": f"Deterministic HEURISTIC: Critical anomaly confirmed ({beta_evidence[:50]}).",
-                "engine": "HEURISTIC_MATCH",
-                "type": "INJECTION" if "syntax" in beta_evidence or "injection" in beta_evidence else "IDOR"
+                'early_return': True,
+                'verdict': {
+                    'is_real': True,
+                    'confidence': 0.95,
+                    'reasoning': f"Deterministic HEURISTIC: Critical anomaly confirmed ({beta_evidence[:50]}).",
+                    'engine': 'HEURISTIC_MATCH',
+                    'type': 'INJECTION' if 'syntax' in beta_evidence or 'injection' in beta_evidence else 'IDOR'
+                }
             }
 
-        if candidate_data.get("force_mode"):
-            mode = candidate_data["force_mode"]
-        elif str(candidate_data.get("tag", "")).startswith("Regression_"):
-            mode = "FAST_MODE"
-        elif risk_score < 35 and not beta_evidence: 
+        # Mode selection
+        if candidate_data.get('force_mode'):
+            mode = candidate_data['force_mode']
+        elif str(candidate_data.get('tag', '')).startswith('Regression_'):
+            mode = 'FAST_MODE'
+        elif risk_score < 35 and not beta_evidence:
             return {
-                 "is_real": False,
-                 "confidence": 0.0,
-                 "reasoning": f"Rejected by Risk Gate (Score: {risk_score:.1f})",
-                 "engine": "RISK_GATE_REJECT"
+                'early_return': True,
+                'verdict': {
+                    'is_real': False,
+                    'confidence': 0.0,
+                    'reasoning': f'Rejected by Risk Gate (Score: {risk_score:.1f})',
+                    'engine': 'RISK_GATE_REJECT'
+                }
             }
         else:
-            mode = "DEEP_MODE"
+            mode = 'DEEP_MODE'
 
+        return {
+            'early_return': False,
+            'gi5_result': gi5_result,
+            'gi5_risk': gi5_risk,
+            'gi5_is_threat': gi5_is_threat,
+            'risk_score': risk_score,
+            'mode': mode,
+            'beta_evidence': beta_evidence,
+            'has_critical_evidence': has_critical_evidence
+        }
+
+    async def _llm_classify_candidate(self, prompt, scan_ctx=None):
+        """Layer 3: Dual-pass Gemini validation with self-consistency check.
+        Returns (result_text, is_consistent)."""
+        nonce = random.randint(10000, 99999)
+        result_pass_1 = await self._call_nvidia_validation_model(prompt, max_tokens=4096, scan_ctx=scan_ctx)
+        result_pass_2 = await self._call_nvidia_validation_model(
+            prompt + f'\n\n[VERIFICATION PASS nonce={nonce}]',
+            max_tokens=4096, scan_ctx=scan_ctx,
+        )
+        if self._is_error(result_pass_1) or self._is_error(result_pass_2):
+            logger.warning('Gemini validation unavailable; falling back to GI5 validation.')
+            result_pass_1 = await self._call_ollama(prompt, temperature=0.1, max_tokens=300, scan_ctx=scan_ctx)
+            nonce2 = random.randint(10000, 99999)
+            result_pass_2 = await self._call_ollama(
+            prompt + f'\n\n[VERIFICATION nonce={nonce2}]',
+                temperature=0.1, max_tokens=300, scan_ctx=scan_ctx,
+            )
+
+        result = result_pass_1
+        is_consistent = True
+        try:
+            d1 = self._extract_json(result_pass_1) or {}
+            d2 = self._extract_json(result_pass_2) or {}
+            v1 = bool(d1.get('vulnerable', False))
+            v2 = bool(d2.get('vulnerable', False))
+            if v1 != v2:
+                is_consistent = False
+                d1['vulnerable'] = False
+                d1['confidence'] = 0.0
+                d1['evidence'] = d1.get('evidence', '') + ' | Self-consistency failure: dual-pass mismatch.'
+                result = json.dumps(d1)
+        except Exception as e:
+            logger.debug(f'CORTEX self-consistency check failed: {e}')
+
+        return result
+
+    def _bayesian_fusion(self, vuln_class, llm_confidence, gi5_risk, gi5_is_threat):
+        """Layer 5: Formal Bayesian log-odds fusion of GI5 + LLM confidence.
+        Returns (posterior_prob, raw_llm_conf, fusion_str). Pure function — no side effects."""
+        w_G, w_L = self.bayesian.get_weights(vuln_class)
+
+        P_0 = 0.40  # Prior base rate
+        raw_llm_conf = llm_confidence * 0.85
+        P_L = raw_llm_conf if raw_llm_conf > 0.0 else 0.05
+
+        if gi5_is_threat:
+            P_G = max(0.75, gi5_risk / 100.0)
+        elif gi5_risk > 30:
+            P_G = 0.55
+        else:
+            P_G = 0.10
+
+        log_posterior = _logit(P_0) + (w_G * _logit(P_G)) + (w_L * _logit(P_L))
+        posterior_prob = _sigmoid(log_posterior)
+
+        fusion_str = f" | BayesFusion(wG={w_G:.2f}, wL={w_L:.2f}): P_G={P_G:.2f}, P_L={P_L:.2f} -> Post={posterior_prob:.2f}"
+
+        return posterior_prob, raw_llm_conf, fusion_str
+
+    async def _openrouter_arbitrate(self, candidate_data, verdict, raw_llm_conf, gi5_risk, evidence_obj, posterior_prob, scan_ctx=None):
+        """Layer 6: GPT-OSS-20B final arbitration via OpenRouter.
+        Updates verdict in-place if arbiter is called."""
+        conf_pct = raw_llm_conf * 100
+        is_ambiguous = (45 <= conf_pct <= 55)
+
+        call_arbiter = False
+        if (conf_pct < 65 and conf_pct > 30) or (gi5_risk > 75 and conf_pct < 80) or is_ambiguous:
+            call_arbiter = True
+
+        if not (call_arbiter and self._openrouter and self._openrouter.is_available):
+            # Fast track Decision Rules
+            if posterior_prob >= 0.75:
+                verdict['is_real'] = True
+            elif 0.45 <= posterior_prob < 0.75:
+                verdict['is_real'] = False
+                verdict['reasoning'] += ' | Fast Track: Ambiguous -> Defaulted FALSE.'
+            else:
+                verdict['is_real'] = False
+            return
+
+        short_desc = self._compress_context(candidate_data.get('description', ''), 600)
+        arbiter_input = {
+            'endpoint': candidate_data.get('url', 'Unknown'),
+            'method': candidate_data.get('method', 'GET'),
+            'payload': self._compress_context(candidate_data.get('payload', 'None'), 200),
+            'response_context': short_desc,
+            'preliminary_type': verdict['type'],
+            'preliminary_confidence': round(raw_llm_conf * 100, 1),
+            'signals': evidence_obj,
+            'gi5_risk': gi5_risk,
+        }
+
+        try:
+            arbiter_result = await self._openrouter.arbitrate(arbiter_input, scan_ctx=scan_ctx)
+            arbiter_data = self._extract_json(arbiter_result) or {}
+        except Exception as e:
+            logger.warning(f'CORTEX: OpenRouter arbitration failed: {e}')
+            arbiter_data = {}
+
+        if arbiter_data and 'vulnerable' in arbiter_data:
+            is_vuln = str(arbiter_data.get('vulnerable', '')).lower() in ['true', 'yes']
+            try:
+                final_conf = float(arbiter_data.get('confidence', 0))
+            except Exception:
+                final_conf = 0.0
+
+            verdict['is_real'] = is_vuln
+            gamma_conf_float = raw_llm_conf
+            gi5_risk_float = gi5_risk / 100.0
+            gpt_conf_float = final_conf / 100.0
+            fused_conf = (gpt_conf_float * 0.6) + (gamma_conf_float * 0.2) + (gi5_risk_float * 0.2)
+
+            verdict['confidence'] = min(1.0, fused_conf)
+            verdict['type'] = arbiter_data.get('type', verdict['type'])
+            verdict['reasoning'] += f" | GPT-OSS-20B ARBITER: {arbiter_data.get('reason', 'None')} ({arbiter_data.get('evidence', '')}) | Fusion={fused_conf:.2f}"
+            verdict['engine'] = 'HYBRID_GPT_OSS_FUSED'
+        else:
+            verdict['is_real'] = posterior_prob >= 0.75
+            verdict['reasoning'] += ' | GPT-OSS-20B parse error, fallback to Bayes.'
+
+    async def audit_candidate(self, candidate_data: Dict[str, Any], scan_ctx=None) -> Dict[str, Any]:
+        """HYBRID: Audit vulnerability candidate (decomposed)."""
+        if self.test_mode:
+            return {
+                'is_real': True, 'confidence': 0.95,
+                'reasoning': 'TEST_MODE bypass: Automated verification active.',
+                'engine': 'TEST_MODE', 'type': 'SQLI'
+            }
+
+        evidence_obj = self._extract_evidence(candidate_data)
+
+        # Layer 1-2: Risk assessment and triage (may return early)
+        triage = self._assess_risk_and_triage(candidate_data, evidence_obj)
+        if triage.get('early_return'):
+            return triage['verdict']
+
+        gi5_result = triage['gi5_result']
+        gi5_risk = triage['gi5_risk']
+        gi5_is_threat = triage['gi5_is_threat']
+        mode = triage['mode']
+        beta_evidence = triage['beta_evidence']
+
+        # Build the classification prompt
         prompt = f"""You are Gamma, a vulnerability classifier.
 
 INPUT EVIDENCE:
@@ -1157,210 +1632,88 @@ URL: {candidate_data.get('url')}
 Payload: {candidate_data.get('payload')}
 
 RULES:
-If data_exposed=true and auth_level_changed=false → IDOR (Insecure Direct Object Reference).
-If status_changed=true after auth bypass attempt → Auth Bypass.
+If data_exposed=true and auth_level_changed=false -> IDOR.
+If status_changed=true after auth bypass attempt -> Auth Bypass.
 
 OUTPUT FORMAT: Return ONLY strict JSON.
-EXAMPLE:
-{{
-  "vulnerable": true,
-  "type": "IDOR",
-  "confidence": 95,
-  "evidence": "Sensitive fields leaked."
-}}
+{{"vulnerable": true, "type": "IDOR", "confidence": 95, "evidence": "Sensitive fields leaked."}}
 
 RULES:
-• No preamble.
-• Output valid JSON only."""
+- No preamble.
+- Output valid JSON only."""
 
-        # SELF-CONSISTENCY VALIDATION (Gemini)
-        # HIGH-65: Both passes use the same prompt (no nonce suffix) so the
-        # LLM is not biased.  The two calls produce independent stochastic
-        # responses because validate_candidate uses temperature > 0 internally.
-        result_pass_1 = await self._call_nvidia_validation_model(prompt, max_tokens=4096, scan_ctx=scan_ctx)
-        result_pass_2 = await self._call_nvidia_validation_model(prompt, max_tokens=4096, scan_ctx=scan_ctx)
-        if self._is_error(result_pass_1) or self._is_error(result_pass_2):
-            logger.warning("Gemini validation unavailable; falling back to GI5 validation.")
-            result_pass_1 = await self._call_ollama(prompt, temperature=0.1, max_tokens=300, scan_ctx=scan_ctx)
-            result_pass_2 = await self._call_ollama(prompt, temperature=0.1, max_tokens=300, scan_ctx=scan_ctx)
-        
-        result = result_pass_1
-        try:
-            d1 = self._extract_json(result_pass_1) or {}
-            d2 = self._extract_json(result_pass_2) or {}
-            v1 = bool(d1.get("vulnerable", False))
-            v2 = bool(d2.get("vulnerable", False))
-            if v1 != v2:
-                # If mismatch -> mark uncertain
-                d1["vulnerable"] = False
-                d1["confidence"] = 0.0
-                d1["evidence"] = d1.get("evidence", "") + " | Self-consistency failure: dual-pass mismatch."
-                result = json.dumps(d1)
-        except Exception as e: logger.debug(f"CORTEX self-consistency check failed: {e}")
+        # Layer 3: Dual-pass LLM validation with self-consistency check
+        result = await self._llm_classify_candidate(prompt, scan_ctx)
 
         if self._is_error(result):
             return {
-                "is_real": gi5_is_threat,
-                "confidence": gi5_risk / 100.0,
-                "reasoning": f"GI5 deterministic analysis: risk={gi5_risk}/100",
-                "engine": "GI5_ONLY"
+                'is_real': gi5_is_threat, 'confidence': gi5_risk / 100.0,
+                'reasoning': f'GI5 deterministic analysis: risk={gi5_risk}/100',
+                'engine': 'GI5_ONLY'
             }
 
         verdict = {
-            "is_real": False,
-            "confidence": 0.0,
-            "reasoning": "Hybrid analysis.",
-            "engine": f"HYBRID_{mode}",
-            "type": "NONE"
+            'is_real': False, 'confidence': 0.0, 'reasoning': 'Hybrid analysis.',
+            'engine': f'HYBRID_{mode}', 'type': 'NONE'
         }
-        
+
         try:
             data = self._extract_json(result)
             if not data or not isinstance(data, dict):
-                # Fallback for small models that fail JSON but provide text
                 lower_res = result.lower()
-                if '"vulnerable": true' in lower_res or '"vulnerable\": true' in lower_res or "vulnerability detected" in lower_res or "access confirmed" in lower_res:
-                    data = {"vulnerable": True, "confidence": 70, "type": "DETECTED", "evidence": "Keyword fallback detection."}
+                if '"vulnerable": true' in lower_res or 'vulnerability detected' in lower_res or 'access confirmed' in lower_res:
+                    data = {'vulnerable': True, 'confidence': 70, 'type': 'DETECTED', 'evidence': 'Keyword fallback detection.'}
                 else:
-                    raise ValueError("JSON is not a dict or extraction failed")
-                
-            verdict["is_real"] = bool(data.get("vulnerable", False))
-            
-            raw_conf = data.get("confidence", 0)
+                    raise ValueError('JSON is not a dict or extraction failed')
+
+            verdict['is_real'] = bool(data.get('vulnerable', False))
+            raw_conf = data.get('confidence', 0)
             if isinstance(raw_conf, str):
                 raw_conf = float(raw_conf.replace('%', ''))
-            verdict["confidence"] = min(1.0, max(0.0, float(raw_conf) / 100.0))
-            verdict["type"] = data.get("type", "NONE")
-            
-            if mode == "DEEP_MODE":
-                verdict["impact"] = data.get("impact", "LOW")
-                verdict["cvss_adjustment"] = data.get("cvss_adjustment", 0.0)
-                
-            # LAYER 4 - LLM Self-Consistency Check (DEEP MODE ONLY)
-            if mode == "DEEP_MODE" and verdict["is_real"]:
+            verdict['confidence'] = min(1.0, max(0.0, float(raw_conf) / 100.0))
+            verdict['type'] = data.get('type', 'NONE')
+
+            if mode == 'DEEP_MODE':
+                verdict['impact'] = data.get('impact', 'LOW')
+                verdict['cvss_adjustment'] = data.get('cvss_adjustment', 0.0)
+
+            # Layer 4: LLM Self-Consistency Check (DEEP MODE ONLY)
+            if mode == 'DEEP_MODE' and verdict['is_real']:
                 verify_prompt = f"""Is there clear evidence of an authorization or logic boundary violation in the following description?
 DESCRIPTION: {self._compress_context(candidate_data.get('description', ''), 500)}
 Answer strictly "yes" or "no"."""
                 verify_result = await self._call_nvidia_validation_model(verify_prompt, max_tokens=10, scan_ctx=scan_ctx)
                 if self._is_error(verify_result):
                     verify_result = await self._call_ollama(verify_prompt, temperature=0.0, max_tokens=10, scan_ctx=scan_ctx)
-                if "no" in verify_result.lower():
-                    # Confidence downgraded by 30%
-                    verdict["confidence"] = max(0.0, verdict["confidence"] - 0.3)
-                    verdict["reasoning"] += " | DEEP_MODE consistency check failed. Confidence downgraded."
-            
-            # -------------------------------------------------------------------
-            # LAYER 5 - FORMAL BAYESIAN LOG-ODDS FUSION
-            # -------------------------------------------------------------------
-            vuln_class = verdict["type"]
-            w_G, w_L = self.bayesian.get_weights(vuln_class)
+                if 'no' in verify_result.lower():
+                    verdict['confidence'] = max(0.0, verdict['confidence'] - 0.3)
+                    verdict['reasoning'] += ' | DEEP_MODE consistency check failed. Confidence downgraded.'
 
-            # Prior base rate (e.g. 40% of endpoints are vulnerable in regression)
-            P_0 = 0.40
-            
-            # P_LLM is the raw confidence from Gemini after calibration (crush by 15%)
-            raw_llm_conf = verdict["confidence"] * 0.85
-            P_L = raw_llm_conf if raw_llm_conf > 0.0 else 0.05
-            
-            # P_GI5: map deterministic engine output to probability
-            if gi5_is_threat:
-                P_G = max(0.75, gi5_risk / 100.0)
-            elif gi5_risk > 30:
-                P_G = 0.55
-            else:
-                P_G = 0.10
-
-            # Bayesian Update in Log-Odds space
-            log_posterior = _logit(P_0) + (w_G * _logit(P_G)) + (w_L * _logit(P_L))
-            posterior_prob = _sigmoid(log_posterior)
-            
-            # Save the new posterior and the math details for traceability
+            # Layer 5: Bayesian Log-Odds Fusion
+            posterior_prob, raw_llm_conf, fusion_str = self._bayesian_fusion(
+                verdict["type"], verdict["confidence"], gi5_risk, gi5_is_threat
+            )
             verdict["confidence"] = round(posterior_prob, 3)
-            verdict["reasoning"] += f" | BayesFusion(wG={w_G:.2f}, wL={w_L:.2f}): P_G={P_G:.2f}, P_L={P_L:.2f} -> Post={posterior_prob:.2f}"
+            verdict["reasoning"] += fusion_str
 
-            # -------------------------------------------------------------------
-            # LAYER 6 - GPT-OSS-20B FINAL ARBITRATION (via OpenRouter)
-            # -------------------------------------------------------------------
-            # STEP 3 - FINAL CONTROL LOGIC (Elite Triggering)
-            conf_pct = raw_llm_conf * 100
-            is_ambiguous = (45 <= conf_pct <= 55)
-            
-            call_arbiter = False
-            if (conf_pct < 65 and conf_pct > 30) or (gi5_risk > 75 and conf_pct < 80) or is_ambiguous:
-                call_arbiter = True
+            # Layer 6: OpenRouter Arbitration
+            await self._openrouter_arbitrate(
+                candidate_data, verdict, raw_llm_conf, gi5_risk, evidence_obj, posterior_prob, scan_ctx
+            )
 
-            if call_arbiter and self._openrouter and self._openrouter.is_available:
-                # Input Compression: only relevant diff requested
-                short_desc = self._compress_context(candidate_data.get('description', ''), 600)
-                arbiter_input = {
-                    "endpoint": candidate_data.get('url', 'Unknown'),
-                    "method": candidate_data.get('method', 'GET'),
-                    "payload": self._compress_context(candidate_data.get('payload', 'None'), 200),
-                    "response_context": short_desc,
-                    "preliminary_type": verdict['type'],
-                    "preliminary_confidence": round(raw_llm_conf * 100, 1),
-                    "signals": evidence_obj,
-                    "gi5_risk": gi5_risk,
-                }
-
-                try:
-                    arbiter_result = await self._openrouter.arbitrate(arbiter_input, scan_ctx=scan_ctx)
-                    arbiter_data = self._extract_json(arbiter_result) or {}
-                except Exception as e:
-                    logger.warning(f"CORTEX: OpenRouter arbitration failed: {e}")
-                    arbiter_data = {}
-                
-                if arbiter_data and "vulnerable" in arbiter_data:
-                    is_vuln = str(arbiter_data.get("vulnerable", "")).lower() in ["true", "yes"]
-                    try:
-                        final_conf = float(arbiter_data.get("confidence", 0))
-                    except Exception as conf_exc:
-                        logger.debug("CORTEX arbiter confidence parse failed: %s", conf_exc)
-                        final_conf = 0.0
-
-                    verdict["is_real"] = is_vuln
-                    
-                    # Mathematical Confidence Fusion (GPT-OSS-20B + Gamma + GI5)
-                    # W_gpt_oss = 0.6, W_gamma = 0.2, W_gi5 = 0.2
-                    gamma_conf_float = raw_llm_conf
-                    gi5_risk_float = gi5_risk / 100.0
-                    gpt_conf_float = final_conf / 100.0
-                    fused_conf = (gpt_conf_float * 0.6) + (gamma_conf_float * 0.2) + (gi5_risk_float * 0.2)
-                    
-                    verdict["confidence"] = min(1.0, fused_conf)
-                    verdict["type"] = arbiter_data.get("type", verdict["type"])
-                    verdict["reasoning"] += f" | GPT-OSS-20B ARBITER: {arbiter_data.get('reason', 'None')} ({arbiter_data.get('evidence', '')}) | Fusion={fused_conf:.2f}"
-                    verdict["engine"] = "HYBRID_GPT_OSS_FUSED"
-                else:
-                    verdict["is_real"] = posterior_prob >= 0.75
-                    verdict["reasoning"] += " | GPT-OSS-20B parse error, fallback to Bayes."
-            else:
-                # Fast track Decision Rules
-                if posterior_prob >= 0.75:
-                    verdict["is_real"] = True
-                elif 0.45 <= posterior_prob < 0.75:
-                    verdict["is_real"] = False  # Ambiguity Preservation 
-                    verdict["reasoning"] += " | Fast Track: Ambiguous -> Defaulted FALSE."
-                else:
-                    verdict["is_real"] = False
-                
-            # LAYER 1 - Absolute Deterministic Dominance (Last check)
-            if gi5_is_threat and not verdict["is_real"]:
-                verdict["is_real"] = True
-                verdict["confidence"] = max(0.8, gi5_risk / 100.0)
-                verdict["reasoning"] += " | GI5 Deterministic Override Enacted."
+            # Layer 1 (final): GI5 Deterministic Override
+            if gi5_is_threat and not verdict['is_real']:
+                verdict['is_real'] = True
+                verdict['confidence'] = max(0.8, gi5_risk / 100.0)
+                verdict['reasoning'] += ' | GI5 Deterministic Override Enacted.'
 
         except Exception as e:
-            logger.warning(f"CORTEX JSON PARSE ERROR in audit_candidate: {e} - Raw: {result}")
-            # Safe Failure Default
-            verdict["is_real"] = False
-            verdict["confidence"] = 0.0
-            verdict["reasoning"] = f"Parse Error: Safe failure default. ({e})"
+            logger.warning(f'CORTEX JSON PARSE ERROR in audit_candidate: {e} - Raw: {result}')
+            verdict['is_real'] = False
+            verdict['confidence'] = 0.0
+            verdict['reasoning'] = f'Parse Error: Safe failure default. ({e})'
 
         return verdict
-
-    #  P4: OMEGA  Attack Strategy Selection (HYBRID) 
-
     async def select_attack_strategy(self, target_url: str, recon_data: Dict[str, Any] = None) -> str:
         """
         HYBRID: Select attack strategy.
@@ -1373,9 +1726,9 @@ Answer strictly "yes" or "no"."""
             try:
                 from urllib.parse import urlparse
                 domain = urlparse(target_url).hostname or ""
-                typo = self.gi5._detect_typosquatting(domain)
-                if typo:
-                    gi5_context = f"\nGI5 ALERT: Domain appears to be typosquatting: {typo}"
+                is_typo, typo_name, typo_dist = self.gi5._detect_typosquatting(domain)
+                if is_typo:
+                    gi5_context = f"\nGI5 ALERT: Domain appears to be typosquatting: {typo_name} (distance={typo_dist})"
             except Exception as e: logger.debug(f"GI5 typosquatting detection failed: {e}")
 
         # CORE 2: Gemini AI strategy
@@ -1643,10 +1996,10 @@ Respond with ONLY a single number (0-100)."""
                 from urllib.parse import urlparse
                 domain = urlparse(action_url).hostname or ""
                 if domain:
-                    typo = self.gi5._detect_typosquatting(domain)
-                    if typo:
+                    is_typo, typo_name, typo_dist = self.gi5._detect_typosquatting(domain)
+                    if is_typo:
                         gi5_suspicious = True
-                        gi5_reason = f"GI5: Domain typosquatting detected ({typo})"
+                        gi5_reason = f"GI5: Domain typosquatting detected ({typo_name}, distance={typo_dist})"
                 # Also check button text for hidden threats
                 threat = self._gi5_analyze({"text": button_text})
                 if threat.get("risk_score", 0) > 70:
@@ -1711,9 +2064,9 @@ RISK: 0 to 100"""
             try:
                 from urllib.parse import urlparse
                 domain = urlparse(url).hostname or ""
-                typo = self.gi5._detect_typosquatting(domain)
-                if typo:
-                    result["tags"].append("TYPOSQUATTING")
+                is_typo, typo_name, typo_dist = self.gi5._detect_typosquatting(domain)
+                if is_typo:
+                    result["tags"].append(f"TYPOSQUATTING({typo_name})")
                     result["is_sensitive"] = True
             except Exception as e: logger.debug(f"CORTEX workflow parse failed: {e}")
 
@@ -2129,8 +2482,8 @@ Respond with ONLY the category name."""
             try:
                 from urllib.parse import urlparse
                 domain = urlparse(target_url).hostname or ""
-                typo = self.gi5._detect_typosquatting(domain)
-                if typo:
+                is_typo, typo_name, typo_dist = self.gi5._detect_typosquatting(domain)
+                if is_typo:
                     modifier += 1.0  # Typosquatting = higher risk
             except Exception as e: logger.debug(f"CVSS adjustment parse failed: {e}")
 

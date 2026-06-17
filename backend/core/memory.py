@@ -8,6 +8,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+# fcntl is POSIX-only; on Windows file locking is best-effort (no advisory locks)
+try:
+    import fcntl
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
+
 logger = logging.getLogger("DualStoreMemory")
 
 
@@ -51,7 +58,35 @@ class DualStoreMemory:
             return []
 
     def _write_list(self, path: Path, rows: list[dict[str, Any]]) -> None:
-        path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        """Write list to JSON with file locking to prevent corruption
+        from concurrent scans.
+
+        FIX: Added fcntl.flock() for atomic read-modify-write cycles.
+        On Windows where fcntl is unavailable, we fall back to best-effort
+        writes (the existing behavior) since Windows file locking semantics
+        are different.
+        """
+        tmp_path = path.with_suffix(".tmp")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                # On POSIX systems, use advisory file locking
+                if _HAS_FCNTL:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                try:
+                    json.dump(rows, fh, indent=2)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                finally:
+                    if _HAS_FCNTL:
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            tmp_path.replace(path)
+        except Exception as exc:
+            logger.warning("DualStoreMemory: write to %s failed: %s", path, exc)
+            # Clean up temp file on failure
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def _episode_file(self, scan_id: str) -> Path:
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", scan_id or "GLOBAL")
@@ -62,6 +97,11 @@ class DualStoreMemory:
         self._ensure_json_list(path)
         rows = self._read_list(path)
         rows.append({"timestamp": time.time(), **event})
+        # FIX: Log when truncation occurs instead of silently losing data
+        if len(rows) > 1000:
+            logger.info(
+                "DualStoreMemory: episode %s hit cap (had %d, keeping 1000). "
+                "Consider archiving old episodes.", scan_id, len(rows))
         self._write_list(path, rows[-1000:])
 
     async def remember_episode(self, scan_id: str, event: dict[str, Any]) -> None:
@@ -70,6 +110,11 @@ class DualStoreMemory:
     def _remember_semantic_sync(self, record: dict[str, Any]) -> None:
         rows = self._read_list(self.semantic_file)
         rows.append({"timestamp": time.time(), **record})
+        # FIX: Log when truncation occurs instead of silently losing data
+        if len(rows) > 5000:
+            logger.info(
+                "DualStoreMemory: semantic hit cap (had %d, keeping 5000). "
+                "Consider pruning low-confidence patterns.", len(rows))
         self._write_list(self.semantic_file, rows[-5000:])
 
     async def remember_semantic(self, record: dict[str, Any]) -> None:
@@ -78,6 +123,10 @@ class DualStoreMemory:
     def _remember_notification_sync(self, scan_id: str, message: str, payload: dict[str, Any] | None = None) -> None:
         rows = self._read_list(self.notifications_file)
         rows.append({"timestamp": time.time(), "scan_id": scan_id, "message": message, "payload": payload or {}})
+        # FIX: Log when truncation occurs instead of silently losing data
+        if len(rows) > 500:
+            logger.info(
+                "DualStoreMemory: notifications hit cap (had %d, keeping 500).", len(rows))
         self._write_list(self.notifications_file, rows[-500:])
 
     async def remember_notification(self, scan_id: str, message: str, payload: dict[str, Any] | None = None) -> None:

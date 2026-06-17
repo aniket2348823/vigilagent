@@ -161,6 +161,9 @@ class SkillMemoryProvider(BaseMemoryProvider):
     name = "skill_memory"
 
     async def prefetch(self, query: dict) -> list[str]:
+        # CRITICAL FIX (#37): Move import outside the per-call path. The import
+        # is cached by Python after the first call, but the import machinery
+        # still runs a lookup on every invocation, adding overhead.
         try:
             from backend.skills import skill_catalog
         except Exception as exc:

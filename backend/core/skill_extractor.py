@@ -10,6 +10,7 @@ This extractor:
 5. Versions skills for evolution tracking
 """
 
+import re
 import time
 import logging
 import hashlib
@@ -93,33 +94,24 @@ class SkillExtractor:
         new_skills = []
         
         # Get all patterns from learning engine
+        # CRITICAL FIX (#36): Iterate directly over the dict items view without
+        # materializing intermediate lists. Each pattern is processed once and
+        # discarded, keeping memory O(1) instead of O(n).
         patterns = learning_engine.patterns
         
-        # Group patterns by type
-        endpoint_patterns = [p for p in patterns.values() if p.pattern_type == "endpoint_pattern"]
-        payload_patterns = [p for p in patterns.values() if p.pattern_type == "payload_success"]
-        correlation_patterns = [p for p in patterns.values() if p.pattern_type == "vuln_correlation"]
-        
-        # Extract payload generation skills
-        for pattern in payload_patterns:
-            if self._is_skill_worthy(pattern):
+        for pattern in patterns.values():
+            if not self._is_skill_worthy(pattern):
+                continue
+            pt = pattern.pattern_type
+            skill = None
+            if pt == "payload_success":
                 skill = self._extract_payload_skill(pattern)
-                if skill:
-                    new_skills.append(skill)
-        
-        # Extract endpoint discovery skills
-        for pattern in endpoint_patterns:
-            if self._is_skill_worthy(pattern):
+            elif pt == "endpoint_pattern":
                 skill = self._extract_endpoint_skill(pattern)
-                if skill:
-                    new_skills.append(skill)
-        
-        # Extract attack chain skills from correlations
-        for pattern in correlation_patterns:
-            if self._is_skill_worthy(pattern):
+            elif pt == "vuln_correlation":
                 skill = self._extract_chain_skill(pattern)
-                if skill:
-                    new_skills.append(skill)
+            if skill:
+                new_skills.append(skill)
         
         logger.info(f"[SkillExtractor] Extracted {len(new_skills)} new skills")
         
@@ -282,8 +274,8 @@ class SkillExtractor:
         """
         template = payload
         
+        # CRITICAL FIX (#41): re is now imported at module level.
         # Replace numbers with {number}
-        import re
         template = re.sub(r'\b\d+\b', '{number}', template)
         
         # Replace quoted strings with {string}

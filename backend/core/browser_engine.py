@@ -465,17 +465,18 @@ class ScrapplingPinchTabClient:
     async def screenshot(self, tab_id: str, output_path: str | Path) -> str:
         result = await self._request("GET", f"/tabs/{tab_id}/screenshot?format=png")
         path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
         if isinstance(result, dict):
             data = result.get("data") or result.get("base64") or result.get("content")
             if data:
-                path.write_bytes(base64.b64decode(str(data).split(",", 1)[-1]))
+                decoded = base64.b64decode(str(data).split(",", 1)[-1])
+                await asyncio.to_thread(path.write_bytes, decoded)
             else:
-                path.write_text(str(result), encoding="utf-8")
+                await asyncio.to_thread(path.write_text, str(result), "utf-8")
         elif isinstance(result, bytes):
-            path.write_bytes(result)
+            await asyncio.to_thread(path.write_bytes, result)
         else:
-            path.write_text(str(result), encoding="utf-8")
+            await asyncio.to_thread(path.write_text, str(result), "utf-8")
         return str(path)
 
     async def close_tab(self, tab_id: str) -> JSONDict:
@@ -1192,7 +1193,7 @@ class ScrapplingPlaywrightEngine:
         if not self.current_page:
             return None
         screenshot_dir = Path("reports/forensics")
-        screenshot_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(screenshot_dir.mkdir, parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{scan_id}_{label}_{timestamp}.png"
         filepath = screenshot_dir / filename
@@ -1208,13 +1209,14 @@ class ScrapplingPlaywrightEngine:
         if not self.current_page:
             return None
         dom_dir = Path("reports/forensics")
-        dom_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(dom_dir.mkdir, parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{scan_id}_{label}_{timestamp}.html"
         filepath = dom_dir / filename
         try:
             content = await self.current_page.content()
-            filepath.write_text(content, encoding="utf-8")
+            # CRITICAL FIX: Use async write to avoid blocking the event loop.
+            await asyncio.to_thread(filepath.write_text, content, "utf-8")
             return filepath
         except Exception as exc:
             logger.debug("[ScrapplingPlaywrightEngine] capture_dom failed: %s", exc)

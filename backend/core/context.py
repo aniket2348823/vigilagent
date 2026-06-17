@@ -11,6 +11,10 @@ from typing import Dict, Any, Set
 # events for an active scan and bounds memory at ~tens of MB worst-case.
 _TRANSCRIPT_MAXLEN = 5000
 
+# Maximum number of recent event signatures to keep for deduplication.
+# Beyond this, oldest signatures are evicted (FIFO).
+_RECENT_EVENTS_MAXLEN = 2000
+
 
 class ScanContext:
     def __init__(self, scan_id: str = None):
@@ -25,13 +29,15 @@ class ScanContext:
         # of the oldest entry once the cap is reached. Consumers either iterate
         # or slice via ``transcript_text(tail=...)`` so the deque is drop-in.
         self.transcript: deque[str] = deque(maxlen=_TRANSCRIPT_MAXLEN)
-        self.workflow_state: Dict[str, Any] = {} # Deprecated: kept only for backwards compatibility
         
         # 2. Causal Ordering (Fixes Invariant 21)
         self.event_queue = asyncio.Queue()
         
         # 3. Deduplication Window (Fixes Invariant 7)
-        self._recent_events: Set[str] = set()
+        # FIX: Use a bounded deque instead of an unbounded set to prevent
+        # memory leaks on long-running scans.  The deque gives FIFO eviction.
+        self._recent_events: deque[str] = deque(maxlen=_RECENT_EVENTS_MAXLEN)
+        self._recent_events_set: Set[str] = set()  # O(1) membership check companion
         
         # 4. Cancellation Propagation (Fixes Invariant 24)
         self.is_cancelled: bool = False
@@ -65,6 +71,23 @@ class ScanContext:
         )
         self.transcript.append(block)
         return block
+
+    def add_recent_event(self, event_id: str) -> bool:
+        """Add an event ID to the deduplication window.
+
+        Returns True if the event is new (not a duplicate).
+        FIX: Uses bounded deque + companion set for O(1) add/check
+        with automatic eviction of old entries.
+        """
+        if event_id in self._recent_events_set:
+            return False
+        # Evict oldest entry if at capacity
+        if len(self._recent_events) == self._recent_events.maxlen:
+            evicted = self._recent_events.popleft()
+            self._recent_events_set.discard(evicted)
+        self._recent_events.append(event_id)
+        self._recent_events_set.add(event_id)
+        return True
 
     def transcript_text(self, *, tail: int | None = None) -> str:
         # ``deque`` doesn't support negative-index slicing, so materialise once.

@@ -11,6 +11,13 @@ import base64
 import logging
 from enum import Enum
 
+
+
+def _read_json_file(path: str) -> dict:
+    """Read and parse a JSON file (sync helper for use with asyncio.to_thread)."""
+    with open(path, "r") as f:
+        return json.load(f)
+
 logger = logging.getLogger("KeyringIntelligence")
 
 
@@ -72,7 +79,7 @@ class KeyringIntelligence:
         """Generate a short unique fingerprint for deduplication."""
         return hashlib.sha256(token.encode()).hexdigest()[:16]
 
-    def process_and_store(self, token: str, url: str, context: str = "") -> dict:
+    async def process_and_store(self, token: str, url: str, context: str = "") -> dict:
         """Classify, deduplicate, and store a captured token."""
         fp = self.fingerprint(token)
         token_type = self.classify(token)
@@ -106,37 +113,27 @@ class KeyringIntelligence:
             keyring.setdefault("tokens", []).append(entry)
             keyring["stats"] = keyring.get("stats", {})
             keyring["stats"]["total"] = len(keyring["tokens"])
-            with open(self.KEYRING_FILE, "w") as f:
-                json.dump(keyring, f, indent=2)
+            def _write_sync():
+                with open(self.KEYRING_FILE, "w") as f:
+                    json.dump(keyring, f, indent=2)
+
+            await asyncio.to_thread(_write_sync)
+
         else:
             keyring["stats"]["deduplicated"] = keyring["stats"].get("deduplicated", 0) + 1
 
         return entry
 
-    def get_active_tokens(self) -> list:
+    async def get_active_tokens(self) -> list:
         """Return only non-expired, classified tokens."""
-        try:
-            with open(self.KEYRING_FILE, "r") as f:
-                keyring = json.load(f)
-        except Exception as exc:
-            logger.debug("KeyringIntelligence: active tokens load failed: %s", exc)
-            return []
-
         active = []
         for t in keyring.get("tokens", []):
             if not t.get("expired", False):
                 active.append(t)
         return active
 
-    def get_stats(self) -> dict:
+    async def get_stats(self) -> dict:
         """Return keyring statistics."""
-        try:
-            with open(self.KEYRING_FILE, "r") as f:
-                keyring = json.load(f)
-        except Exception as exc:
-            logger.debug("KeyringIntelligence: stats load failed: %s", exc)
-            return {"total": 0, "by_type": {}, "expired": 0}
-
         tokens = keyring.get("tokens", [])
         by_type = {}
         expired_count = 0
