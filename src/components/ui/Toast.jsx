@@ -1,12 +1,11 @@
 import React, {
-    createContext,
     useCallback,
-    useContext,
     useEffect,
     useMemo,
     useRef,
     useState,
 } from 'react';
+import ToastContext from './ToastContext';
 
 /**
  * Toast — accessible, stacking notification system.
@@ -29,16 +28,7 @@ import React, {
 const MAX_VISIBLE = 3;
 const DEFAULT_DURATION = 4000;
 
-const ToastContext = createContext(/** @type {ToastApi|null} */ (null));
 
-/** Public hook. Throws if used outside <ToastProvider>. */
-export function useToast() {
-    const ctx = useContext(ToastContext);
-    if (!ctx) {
-        throw new Error('useToast must be used within a <ToastProvider>');
-    }
-    return ctx;
-}
 
 const TYPE_STYLES = {
     info:    { bar: 'bg-[#9b61ff]', icon: 'info',           iconColor: 'text-[#9b61ff]' },

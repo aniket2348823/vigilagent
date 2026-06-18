@@ -15,7 +15,7 @@ const Login = ({ onLoginSuccess }) => {
                 return { count: 0, lockedUntil: 0 };
             }
             return data;
-        } catch { return { count: 0, lockedUntil: 0 }; }
+        } catch { /* init fresh state */ return { count: 0, lockedUntil: 0 }; }
     });
     const MAX_ATTEMPTS = 5;
     const LOCKOUT_MS = 300000; // 5 minutes
@@ -44,7 +44,7 @@ const Login = ({ onLoginSuccess }) => {
             if (data.status === 'success') {
                 if (data.token) localStorage.setItem('vulagent_ws_token', data.token);
                 // Reset attempt counter on successful login
-                try { localStorage.removeItem('vigilagent_login_attempts'); } catch {}
+                try { localStorage.removeItem('vigilagent_login_attempts'); } catch { /* ignore */ }
                 onLoginSuccess();
             } else {
                 setError(data.message || 'Verification Failed');
@@ -54,11 +54,11 @@ const Login = ({ onLoginSuccess }) => {
             const newLockedUntil = newCount >= MAX_ATTEMPTS ? Date.now() + LOCKOUT_MS : 0;
             const newAttempt = { count: newCount >= MAX_ATTEMPTS ? 0 : newCount, lockedUntil: newLockedUntil };
             setAttemptCount(newAttempt);
-            try { localStorage.setItem('vigilagent_login_attempts', JSON.stringify(newAttempt)); } catch {}
+            try { localStorage.setItem('vigilagent_login_attempts', JSON.stringify(newAttempt)); } catch { /* ignore */ }
             if (newLockedUntil) {
-                setError();
+                setError('Too many attempts. Please wait before trying again.');
             } else {
-                setError();
+                setError('Invalid code. Please try again.');
             }
         } finally {
             setIsLoading(false);

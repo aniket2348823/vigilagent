@@ -507,10 +507,28 @@ def generate_evidence(vuln_type: str, url: str = "", host: str = "") -> dict[str
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def cvss31_base(av: str = "N") -> tuple[float, str]:
+    """Backward-compatible alias. Computes a base score for the given AV metric.
+
+    Uses CVSS 4.0 internally but returns (score, vector) matching the old CVSS 3.1 API.
+    """
+    # Map AV values to a standard CVSS 4.0 vector with the requested AV
+    av = (av or "N").upper()
+    vector = f"CVSS:4.0/AV:{av}/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N"
+    score, clean_vector = _cvss4_calculate(vector)
+    return score, clean_vector
+
+
+def _roundup(value: float) -> float:
+    """Round up to nearest 0.1 (legacy CVSS 3.1 compatibility)."""
+    import math
+    return math.ceil(value * 10) / 10
+
+
 class CVSSCalculator:
     """CVSS 4.0 calculator with backward-compatible API."""
 
-    def __init__(self, success_count: int, body_content: str = "",
+    def __init__(self, success_count: int = 0, body_content: str = "",
                  target_url: str = "", vuln_type: str = ""):
         self.success_count = success_count
         self.body_content = body_content.lower()

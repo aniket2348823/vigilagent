@@ -277,8 +277,8 @@ const Scans = ({ navigate }) => {
                                             </motion.tr>
                                         ) : (
                                             visibleScans.map((scan, index) => (
+                                                <React.Fragment key={scan.id}>
                                                 <motion.tr
-                                                    key={scan.id}
                                                     initial={{ opacity: 0, y: 10 }}
                                                     animate={{ opacity: 1, y: 0 }}
                                                     transition={{
@@ -379,7 +379,6 @@ const Scans = ({ navigate }) => {
                                                 </motion.tr>
                                                 {expandedScan === scan.id && (scan.findings || []).length > 0 && (
                                                     <motion.tr
-                                                        key={`${scan.id}-findings`}
                                                         initial={{ opacity: 0 }}
                                                         animate={{ opacity: 1 }}
                                                         exit={{ opacity: 0 }}
@@ -412,6 +411,7 @@ const Scans = ({ navigate }) => {
                                                         </td>
                                                     </motion.tr>
                                                 )}
+                                                </React.Fragment>
                                             ))
                                         )}
                                     </AnimatePresence>

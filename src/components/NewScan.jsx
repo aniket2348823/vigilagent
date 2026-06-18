@@ -117,6 +117,7 @@ const NewScan = ({ navigate }) => {
                     }
                 }
             } else if (data.type === 'ATTACK_HIT') {
+                // Attack hit received
             } else if (data.type === 'SPY_STATUS') {
                 if (isExtensionEnabledRef.current) {
                     if (data.payload.connected) {

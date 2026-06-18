@@ -28,7 +28,6 @@ class ErrorBoundary extends React.Component {
     }
 
     componentDidCatch(error, errorInfo) {
-        // eslint-disable-next-line no-console
         console.error('[ErrorBoundary] Caught render error:', error, errorInfo);
         if (typeof this.props.onError === 'function') {
             try {

@@ -248,7 +248,8 @@ class CortexEngine:
                 except Exception as e:
                     logger.debug(f"CORTEX periodic Redis health failed: {e}")
         try:
-            loop.create_task(self._warm_cache())
+            loop = asyncio.get_event_loop()
+            self._warm_task = loop.create_task(self._warm_cache())
             self._health_check_task = loop.create_task(_periodic_redis_health())
         except RuntimeError:
             pass
@@ -579,9 +580,11 @@ class CortexEngine:
     async def shutdown(self):
         """Cleanly close all underlying sessions."""
         if self._session and not self._session.closed:
-            # Cancel periodic health check task
+            # Cancel background tasks
             if getattr(self, "_health_check_task", None):
                 self._health_check_task.cancel()
+            if getattr(self, "_warm_task", None):
+                self._warm_task.cancel()
             await self._session.close()
             logger.info("CORTEX: Base AIOHTTP session safely closed.")
         if self._gemini:
