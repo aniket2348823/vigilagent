@@ -118,5 +118,45 @@
     "payload": {
       "endpoints": 3
     }
+  },
+  {
+    "timestamp": 1782048875.8852894,
+    "event_type": "RECON_COMPLETE",
+    "source": "agent_alpha",
+    "payload": {
+      "endpoints": 3
+    }
+  },
+  {
+    "timestamp": 1782048969.2820516,
+    "event_type": "RECON_COMPLETE",
+    "source": "agent_alpha",
+    "payload": {
+      "endpoints": 3
+    }
+  },
+  {
+    "timestamp": 1782049826.8392568,
+    "event_type": "RECON_COMPLETE",
+    "source": "agent_alpha",
+    "payload": {
+      "endpoints": 3
+    }
+  },
+  {
+    "timestamp": 1782050980.4336233,
+    "event_type": "RECON_COMPLETE",
+    "source": "agent_alpha",
+    "payload": {
+      "endpoints": 3
+    }
+  },
+  {
+    "timestamp": 1782051569.2010047,
+    "event_type": "RECON_COMPLETE",
+    "source": "agent_alpha",
+    "payload": {
+      "endpoints": 3
+    }
   }
 ]

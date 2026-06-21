@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Dashboard from './components/Dashboard';
 import Scans from './components/Scans';
 import NewScan from './components/NewScan';
@@ -54,6 +54,20 @@ export default function App() {
         });
     }, []);
 
+    // -- Stable setter ref to avoid setState-during-render warning --
+    // Dashboard calls setPersistentState from effects; wrapping in a ref
+    // ensures the setter identity never changes and avoids the React warning
+    // "Cannot update a component (Dashboard) while rendering a different component (App)".
+    const dashboardStateRef = useRef(dashboardState);
+    dashboardStateRef.current = dashboardState;
+
+    const setDashboardStateStable = useCallback((valueOrFn) => {
+        setDashboardState(prev => {
+            const next = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn;
+            return next;
+        });
+    }, []);
+
     // -- Auth Check --
     useEffect(() => {
         checkAuth();
@@ -79,10 +93,10 @@ export default function App() {
     };
 
     // -- Navigation Helper --
-    const navigate = (page) => {
+    const navigate = useCallback((page) => {
         setCurrentPage(page);
         window.scrollTo(0, 0);
-    };
+    }, []);
 
     if (checkingAuth) {
         return <div className="min-h-screen bg-[#06070B]"></div>;
@@ -111,7 +125,7 @@ export default function App() {
                                 key="dashboard"
                                 navigate={navigate}
                                 persistentState={dashboardState}
-                                setPersistentState={setDashboardState}
+                                setPersistentState={setDashboardStateStable}
                             />
                         )}
                         {currentPage === 'scans' && <Scans key="scans" navigate={navigate} />}

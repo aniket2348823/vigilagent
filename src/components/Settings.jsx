@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Navigation from './Navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LIQUID_SPRING } from '../lib/constants';
-import { apiUrl } from '../lib/api';
+import { apiUrl, csrfFetch } from '../lib/api';
 
 const Settings = ({ navigate }) => {
     const [toggles, setToggles] = useState({
@@ -38,7 +38,7 @@ const Settings = ({ navigate }) => {
             } else {
                 // Disable 2FA — call backend to persist
                 try {
-                    const res = await fetch(apiUrl('/api/dashboard/settings/2fa/disable'), { method: 'POST' });
+                    const res = await csrfFetch(apiUrl('/api/dashboard/settings/2fa/disable'), { method: 'POST' });
                     if (res.ok) {
                         setToggles(prev => ({ ...prev, '2fa': false }));
                     } else {
@@ -60,7 +60,7 @@ const Settings = ({ navigate }) => {
     const handleGenerate2FA = async () => {
         setIsLoading(true);
         try {
-            const res = await fetch(apiUrl('/api/dashboard/settings/2fa/generate'), { method: 'POST' });
+            const res = await csrfFetch(apiUrl('/api/dashboard/settings/2fa/generate'), { method: 'POST' });
             const data = await res.json();
             setQrCode(data.qr_code);
             setShow2FAModal(true);
@@ -75,7 +75,7 @@ const Settings = ({ navigate }) => {
         if (!verifyCode) return;
         setIsLoading(true);
         try {
-            const res = await fetch(apiUrl('/api/dashboard/settings/2fa/verify'), {
+            const res = await csrfFetch(apiUrl('/api/dashboard/settings/2fa/verify'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ totp_code: verifyCode })
@@ -101,7 +101,7 @@ const Settings = ({ navigate }) => {
     const saveSettings = async () => {
         setIsLoading(true);
         try {
-            const res = await fetch(apiUrl('/api/dashboard/settings'), {
+            const res = await csrfFetch(apiUrl('/api/dashboard/settings'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(toggles)

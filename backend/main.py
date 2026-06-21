@@ -46,7 +46,7 @@ root_logger.handlers = [log_handler]
 
 logger = logging.getLogger(__name__)
 
-# Vigilagent Core Imports
+# Antigravity Core Imports
 from backend.core.config import settings, ConfigManager
 from backend.core.default_tools import register_default_tools
 from backend.core.orchestrator import HiveOrchestrator, MasterNode, WorkerNode
@@ -79,7 +79,7 @@ if sys.platform == 'win32':
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("\n" + "="*50)
-    logger.info("VIGILAGENT: UNIFIED LIFECYCLE START")
+    logger.info("ANTIGRAVITY: UNIFIED LIFECYCLE START")
     logger.info("="*50)
     
     # Clean up zombie scans from ungraceful shutdowns
@@ -209,21 +209,25 @@ async def lifespan(app: FastAPI):
             logger.info(f"[LIFECYCLE] backup_manager init skipped: {_bme}")
         logger.info("[LIFECYCLE] Shutdown complete.")
 
-app = FastAPI(title="Vigilagent Scanner", lifespan=lifespan)
+app = FastAPI(title="Antigravity Scanner", lifespan=lifespan)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """TC004 Compliance: Map missing fields / Pydantic 422s to explicit REST 400 Bad Requests."""
+    # Pydantic errors may contain non-JSON-serializable types (ValueError, etc).
+    # Safely convert each error to a plain string dict.
+    _safe_errors = [{"msg": str(e)} for e in exc.errors()]
+
     if request.url.path.endswith("/api/attack/fire"):
         return JSONResponse(
             status_code=422,
-            content={"detail": exc.errors()}
+            content={"detail": _safe_errors}
         )
     # Return detailed validation errors for scan endpoints too
     if request.url.path.rstrip("/").endswith("/api/scans"):
         return JSONResponse(
             status_code=400,
-            content={"detail": "Invalid or missing payload.", "errors": exc.errors()}
+            content={"detail": "Invalid or missing payload.", "errors": _safe_errors}
         )
     return JSONResponse(
         status_code=400,
@@ -576,7 +580,9 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
             'SECURITY: WebSocket auth bypassed via CI test key. '
             'This must NEVER be enabled in production.')
     else:
-        auth_required = bool(config.get('enabled', True))
+        # FIX: Also verify a TOTP secret exists — enabled=true without a
+        # secret is a misconfiguration that should not block WebSocket access.
+        auth_required = bool(config.get('enabled', True)) and bool(config.get('secret'))
         if auth_required:
             try:
                 session = load_session() or {}
@@ -627,7 +633,7 @@ class DistributedAttackCluster:
                 self.config.supabase.key
             )
             self.running = True
-            logger.info("📡 VIGILAGENT: Master Node Activated.")
+            logger.info("📡 ANTIGRAVITY: Master Node Activated.")
             await self.master_node.start()
         except Exception as e:
             logger.info(f"❌ Master start error: {e}")
@@ -644,7 +650,7 @@ class DistributedAttackCluster:
                 self.config.supabase.key
             )
             self.running = True
-            logger.info(f"🦾 VIGILAGENT: Worker Node Activated ({worker_id})")
+            logger.info(f"🦾 ANTIGRAVITY: Worker Node Activated ({worker_id})")
             await self.worker_node.start()
         except Exception as e:
             logger.info(f"❌ Worker start error: {e}")
@@ -672,7 +678,7 @@ class DistributedAttackCluster:
 
 async def vulagent_serve(args):
     if args.mode == "serve":
-        logger.info(f"🚀 Launching Vigilagent API Gateway on {args.host}:{args.port}")
+        logger.info(f"🚀 Launching Antigravity API Gateway on {args.host}:{args.port}")
         # Increase timeouts and limits for high-load test scenarios (TC011)
         import os
         config = uvicorn.Config(
@@ -702,7 +708,7 @@ async def vulagent_serve(args):
             sys.exit(1)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Vigilagent: Unified Entry Point")
+    parser = argparse.ArgumentParser(description="Antigravity: Unified Entry Point")
     parser.add_argument("--mode", choices=["serve", "master", "worker", "cluster"], default="serve", help="Execution mode.")
     parser.add_argument("--host", default="127.0.0.1", help="API Host.")
     parser.add_argument("--port", type=int, default=8000, help="API Port.")
@@ -721,4 +727,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(vulagent_serve(args))
     except KeyboardInterrupt:
-        print("\n[VIGILAGENT] Service shutdown by user.")
+        print("\n[ANTIGRAVITY] Service shutdown by user.")

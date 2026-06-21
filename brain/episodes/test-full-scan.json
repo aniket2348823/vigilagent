@@ -126,5 +126,45 @@
     "payload": {
       "endpoints_found": 5
     }
+  },
+  {
+    "timestamp": 1782048872.8217592,
+    "event_type": "RECON_COMPLETE",
+    "source": "agent_alpha",
+    "payload": {
+      "endpoints_found": 5
+    }
+  },
+  {
+    "timestamp": 1782048968.2037327,
+    "event_type": "RECON_COMPLETE",
+    "source": "agent_alpha",
+    "payload": {
+      "endpoints_found": 5
+    }
+  },
+  {
+    "timestamp": 1782049825.4631681,
+    "event_type": "RECON_COMPLETE",
+    "source": "agent_alpha",
+    "payload": {
+      "endpoints_found": 5
+    }
+  },
+  {
+    "timestamp": 1782050978.8238738,
+    "event_type": "RECON_COMPLETE",
+    "source": "agent_alpha",
+    "payload": {
+      "endpoints_found": 5
+    }
+  },
+  {
+    "timestamp": 1782051567.9280105,
+    "event_type": "RECON_COMPLETE",
+    "source": "agent_alpha",
+    "payload": {
+      "endpoints_found": 5
+    }
   }
 ]

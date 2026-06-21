@@ -167,3 +167,21 @@ export function useWebSocket() {
 
     return { subscribe, isConnected: connectedRef.current };
 }
+
+/**
+ * Reset all module-level singleton state.
+ * Only for use in tests — ensures each test starts with a clean slate.
+ */
+export function _resetForTesting() {
+    if (_ws) {
+        try { _ws.close(); } catch (_) { /* ignore */ }
+    }
+    _ws = null;
+    _listeners = new Set();
+    clearTimeout(_reconnectTimer);
+    _reconnectTimer = null;
+    _reconnectAttempts = 0;
+    _gaveUp = false;
+    _connected = false;
+    _connectListeners = new Set();
+}

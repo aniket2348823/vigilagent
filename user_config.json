@@ -1,5 +1,5 @@
 {
-  "enabled": true,
-  "secret_source": "env:VIGILAGENT_USER_SECRET",
-  "note": "Secret must be provided via VIGILAGENT_USER_SECRET environment variable"
+  "enabled": false,
+  "secret": null,
+  "note": "Set enabled=true and configure secret via VIGILAGENT_USER_SECRET to enable 2FA"
 }

@@ -53,3 +53,5 @@ brain/episodes/*.json
 brain/healing/
 data/scans/
 .browsers/
+.session
+vite.config.js.timestamp-*

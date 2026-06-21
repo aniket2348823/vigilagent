@@ -321,22 +321,27 @@ async def get_dashboard_stats(request: Request, authorization: str = Header(None
     scans = stats.get("scans", [])
     
     for s in scans:
+        scan_name = s.get('name') or s.get('scope') or 'Untitled Scan'
+        scan_status = s.get('status', 'Unknown')
+        scan_timestamp = s.get('timestamp', s.get('created_at', ''))
         # Logic for 'recent' summaries
         recent.append({
-            "text": f"Scan {s['status']}: {s['name']}",
-            "time": s["timestamp"],
-            "type": "info" if s["status"] == "Completed" else "critical"
+            "text": f"Scan {scan_status}: {scan_name}",
+            "time": scan_timestamp,
+            "type": "info" if scan_status in ("Completed", "Finalizing") else "critical"
         })
         # Logic for pre-populating threat_feed
         for r in s.get("results", []):
             payload = r.get("payload", {})
+            if not isinstance(payload, dict):
+                payload = {}
             historical_threats.append({
                 "timestamp": str(r.get("timestamp", "")).split()[-1][:8] if " " in str(r.get("timestamp", "")) else "History",
                 "agent": r.get("source", "agent_prism"),
                 "threat_type": payload.get("type", "VULNERABILITY"),
-                "url": payload.get("url", s.get("name", "Unknown")),
+                "url": payload.get("url", scan_name),
                 "severity": payload.get("severity", "MEDIUM").upper(),
-                "risk_score": payload.get("data", {}).get("risk_score", 50)
+                "risk_score": payload.get("data", {}).get("risk_score", 50) if isinstance(payload.get("data"), dict) else 50
             })
 
     # Add self-awareness metrics
@@ -347,7 +352,7 @@ async def get_dashboard_stats(request: Request, authorization: str = Header(None
     _stats_cache = {
         "metrics": {
             "total_scans": len(scans),
-            "active_scans": sum(1 for s in scans if s["status"] == "Running"),
+            "active_scans": sum(1 for s in scans if s.get("status") == "Running"),
             "vulnerabilities": stats.get("vulnerabilities", 0),
             "critical": stats.get("critical", 0)
         },

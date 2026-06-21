@@ -58,9 +58,11 @@ const Scans = ({ navigate }) => {
 
     const fetchScans = useCallback(async () => {
         try {
-            const res = await fetch(apiUrl('/api/dashboard/scans'));
+            const res = await fetch(apiUrl('/api/scans'));
             const data = await res.json();
-            setScans(Array.isArray(data) ? data : []);
+            // Backend returns { scans: [...], count: N } — extract the array
+            const scanList = data?.scans || (Array.isArray(data) ? data : []);
+            setScans(scanList);
         } catch (err) {
             // console.error("Failed to fetch scans:", err);
         }
@@ -429,7 +431,7 @@ const Scans = ({ navigate }) => {
                 />
 
                 <footer className="mt-8 pb-8 text-center text-xs text-gray-500 font-light">
-                    <p>Vulagent Scanner Intelligence Backbone © 2024</p>
+                    <p>Vigilagent Scanner Intelligence Backbone © 2024</p>
                 </footer>
             </div>
         </div>

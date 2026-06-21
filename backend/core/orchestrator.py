@@ -63,6 +63,7 @@ from backend.agents.kappa import KappaAgent
 from backend.agents.prism import AgentPrism # Agent Theta (The Sentinel)
 from backend.agents.chi import AgentChi # Agent Iota (The Inspector)
 from backend.agents.delta import AgentDelta # Agent Delta (Hybrid DOM Controller)
+from backend.agents.lambda_agent import LambdaAgent # Lambda (Pre-code Scanner)
 
 
 # recorder removed - unused import cleanup V6
@@ -182,15 +183,18 @@ class HiveOrchestrator:
             loop_start = time.time()
             while time.time() - loop_start < scan_duration:
                 await manager.broadcast_immediate({"type": "SCAN_UPDATE", "payload": {"id": scan_id, "status": "Running", "target_url": target_config['url']}})
+                _test_agents = ["planner", "alpha", "beta", "sigma", "gamma", "omega", "kappa", "zeta", "prism", "chi", "delta", "lambda", "network"]
+                _test_idx = int((time.time() - loop_start) / 0.3) % len(_test_agents)
+                _cur_agent = _test_agents[_test_idx]
                 await manager.broadcast_immediate({
                     "type": "LIVE_ATTACK_FEED",
                     "scan_id": scan_id,
                     "payload": {
                         "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        "agent": "Orchestrator",
+                        "agent": _cur_agent,
                         "threat_type": "MONITORING",
                         "url": target_config['url'],
-                        "result": "Scan in progress (Test Mode)...",
+                        "result": f"Scan in progress (Test Mode) - {_cur_agent.upper()} active...",
                         "severity": "INFO",
                         "risk_score": 0
                     }
@@ -227,11 +231,10 @@ class HiveOrchestrator:
                 "type": "LIVE_ATTACK_FEED",
                 "scan_id": scan_id,
                 "payload": {
-                    "timestamp": datetime.now().strftime("%H:%M:%S"),
-                    "agent": "Orchestrator",
-                    "threat_type": "TERMINATION",
-                    "url": target_config['url'],
-                    "result": "Scan Lifecycle Completed (Test Mode)",
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),                        "agent": "alpha",
+                        "threat_type": "TERMINATION",
+                        "url": target_config['url'],
+                        "result": "Scan Lifecycle Completed (Test Mode)",
                     "severity": "INFO",
                     "risk_score": 0
                 }
@@ -559,7 +562,7 @@ class HiveOrchestrator:
 
             elif event.type == EventType.RECON_PACKET:
                 _rp_url = event.payload.get("url", "Unknown")
-                # Throttle: alpha_recon emits one RECON_PACKET per discovered
+                # Throttle: alpha emits one RECON_PACKET per discovered
                 # endpoint; re-discoveries within 500ms are noise.
                 if broadcast_throttle.should_emit(("RECON_PACKET", _rp_url, event.source)):
                     await manager.broadcast({
@@ -670,7 +673,7 @@ class HiveOrchestrator:
             "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
             "payload": {
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "agent": "Planner",
+                "agent": "planner",
                 "threat_type": "PLANNING",
                 "url": target_config['url'],
                 "result": "📋 Mission Planning — Analyzing target scope & selecting attack vectors",
@@ -698,6 +701,9 @@ class HiveOrchestrator:
         # AWAKENING: The Hybrid Controller (Browser DOM Wrapper)
         delta = AgentDelta(bus)
         
+        # AWAKENING: The Pre-code Scanner (SAST + IaC + SBOM)
+        lambda_sast = LambdaAgent(bus)
+        
         # AWAKENING: The Mission Planner (V6 Strategic Heart)
         planner = MissionPlanner(bus)
 
@@ -709,6 +715,39 @@ class HiveOrchestrator:
         except Exception as _ne:
             logger.warning(f"NetworkServiceCommander unavailable: {_ne}")
             net_commander = None
+
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # AGENT AWAKENING BROADCASTS: Show all agents coming online in live monitor
+        # ═══════════════════════════════════════════════════════════════════════
+        awakening_agents = [
+            ("planner", "MISSION PLANNER", "Strategic campaign planning"),
+            ("alpha", "ALPHA", "Reconnaissance & endpoint discovery"),
+            ("beta", "BETA", "Direct assault & polyglot attacks"),
+            ("sigma", "SIGMA", "Exploitation engine & generative blasts"),
+            ("gamma", "GAMMA", "Forensic audit & vulnerability validation"),
+            ("omega", "OMEGA", "Campaign strategy & attack coordination"),
+            ("zeta", "ZETA", "Governance & resource throttling"),
+            ("kappa", "KAPPA", "Memory & contextual intelligence"),
+            ("prism", "PRISM", "Safety sentinel & ethical guardrails"),
+            ("chi", "CHI", "Inspector & defense validation"),
+            ("delta", "DELTA", "DOM controller & browser-level attacks"),
+            ("lambda", "LAMBDA", "Pre-code scanner (SAST/IaC)"),
+        ]
+        if net_commander is not None:
+            awakening_agents.append(("network", "NETWORK", "Network service discovery"))
+        for ag_id, ag_name, ag_role in awakening_agents:
+            await manager.broadcast({
+                "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
+                "payload": {
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "agent": ag_id,
+                    "threat_type": "AGENT_ONLINE",
+                    "url": target_config['url'],
+                    "result": f"⚡ {ag_name} online — {ag_role}",
+                    "severity": "INFO", "risk_score": 0
+                }
+            })
 
         # 4. Wake Up the Hive
         # DATA WIRING: Pass Mission Profile
@@ -722,7 +761,7 @@ class HiveOrchestrator:
         # Core agents always run — these provide essential cross-cutting services
         # Alpha: Recon, Kappa: Memory, Planner: Strategy, Prism: Defense, Chi: Defense
         # Gamma: Forensic Audit, Omega: Campaign Strategy, Zeta: Governance/Throttle, Delta: DOM Interceptor
-        core_agents = [planner, scout, kappa, sentinel, inspector, analyst, strategist, governor, delta]
+        core_agents = [planner, scout, kappa, sentinel, inspector, analyst, strategist, governor, delta, lambda_sast]
         if net_commander is not None:
             core_agents.append(net_commander)
         
@@ -801,6 +840,7 @@ class HiveOrchestrator:
             HiveOrchestrator.active_agents[AgentID.KAPPA] = kappa
             HiveOrchestrator.active_agents[AgentID.DELTA] = delta
             HiveOrchestrator.active_agents["PLANNER"] = planner
+            HiveOrchestrator.active_agents["LAMBDA"] = lambda_sast
             if net_commander is not None:
                 HiveOrchestrator.active_agents["agent_network_commander"] = net_commander
         
@@ -815,7 +855,7 @@ class HiveOrchestrator:
         # 5. Seed the Mission — PUBLISH WITH SCAN_ID FOR CONTEXT ISOLATION
         await bus.publish(HiveEvent(
             type=EventType.TARGET_ACQUIRED,
-            source="Orchestrator",
+            source="VIGILAGENT",
             scan_id=scan_id,
             payload={
                 "url": target_config['url'],
@@ -835,7 +875,7 @@ class HiveOrchestrator:
             "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
             "payload": {
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "agent": "Orchestrator",
+                "agent": "alpha",
                 "threat_type": "PHASE_TRANSITION",
                 "url": target_config['url'],
                 "result": "⏳ Alpha reconnaissance phase started. All attack agents on standby (NO TIME LIMIT).",
@@ -894,7 +934,7 @@ class HiveOrchestrator:
                 "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
                 "payload": {
                     "timestamp": datetime.now().strftime("%H:%M:%S"),
-                    "agent": "Orchestrator",
+                    "agent": "alpha",
                     "threat_type": "AUTH" if seeded_surface.authenticated else "TARGETING",
                     "url": target_config["url"],
                     "result": (f"🔑 Authenticated as {seeded_surface.principal} & seeded "
@@ -927,7 +967,7 @@ class HiveOrchestrator:
             "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
             "payload": {
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "agent": "Orchestrator",
+                "agent": "sigma",
                 "threat_type": "PHASE_TRANSITION",
                 "url": target_config['url'],
                 "result": f"✅ Alpha reconnaissance COMPLETE ({len(endpoint_tracker.discovered)} endpoints). Releasing Sigma and Beta execution.",
@@ -978,7 +1018,7 @@ class HiveOrchestrator:
                 )
                 await bus.publish(HiveEvent(
                     type=EventType.JOB_ASSIGNED,
-                    source="Orchestrator",
+                    source="VIGILAGENT",
                     scan_id=scan_id,
                     payload=packet.model_dump()
                 ))
@@ -999,7 +1039,7 @@ class HiveOrchestrator:
 
         await bus.publish(HiveEvent(
             type=EventType.JOB_ASSIGNED,
-            source="Orchestrator",
+            source="VIGILAGENT",
             scan_id=scan_id,
             payload=ai_packet.model_dump()
         ))
@@ -1019,7 +1059,7 @@ class HiveOrchestrator:
             )
             await bus.publish(HiveEvent(
                 type=EventType.JOB_ASSIGNED,
-                source="Orchestrator",
+                source="VIGILAGENT",
                 scan_id=scan_id,
                 payload=beta_assault_packet.model_dump()
             ))
@@ -1048,7 +1088,7 @@ class HiveOrchestrator:
             "type": "LIVE_ATTACK_FEED", "scan_id": scan_id,
             "payload": {
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "agent": "Orchestrator",
+                "agent": "sigma",
                 "threat_type": "PHASE_TRANSITION",
                 "url": target_config['url'],
                 "result": "🚀 All agents active — Entering Attack Execution Phase",
@@ -1068,7 +1108,10 @@ class HiveOrchestrator:
             is_test_mode = getattr(ai_cortex, 'test_mode', False)
             broadcast_interval = 0.5 if is_test_mode else 2.0
             
+            _monitor_agents = ["planner", "alpha", "beta", "sigma", "gamma", "omega", "kappa", "zeta", "prism", "chi", "delta", "lambda", "network"]
             while time.time() - loop_start < scan_duration:
+                _mon_idx = int((time.time() - loop_start) / broadcast_interval) % len(_monitor_agents)
+                _cur_mon = _monitor_agents[_mon_idx]
                 # [TC010 FIX] Use broadcast_immediate to ensure events hit the listener
                 await manager.broadcast_immediate({"type": "SCAN_UPDATE", "payload": {"id": scan_id, "status": "Running", "target_url": target_config['url']}})
                 await manager.broadcast_immediate({
@@ -1076,10 +1119,10 @@ class HiveOrchestrator:
                     "scan_id": scan_id,
                     "payload": {
                         "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        "agent": "Orchestrator",
+                        "agent": _cur_mon,
                         "threat_type": "MONITORING",
                         "url": target_config['url'],
-                        "result": "Scan in progress...",
+                        "result": f"Scan in progress - {_cur_mon.upper()} active...",
                         "severity": "INFO",
                         "risk_score": 0
                     }
@@ -1137,7 +1180,7 @@ class HiveOrchestrator:
                     "scan_id": scan_id,
                     "payload": {
                         "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        "agent": "Orchestrator",
+                        "agent": "zeta",
                         "threat_type": "WARNING",
                         "url": target_config['url'],
                         "result": f"⚠️ Coverage: {coverage_metrics['coverage_percent']}% ({coverage_metrics['untested_count']} endpoints untested)",
@@ -1152,7 +1195,7 @@ class HiveOrchestrator:
                     "scan_id": scan_id,
                     "payload": {
                         "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        "agent": "Orchestrator",
+                        "agent": "gamma",
                         "threat_type": "SUCCESS",
                         "url": target_config['url'],
                         "result": f"✅ Complete coverage: {coverage_metrics['coverage_percent']}%",
@@ -1333,9 +1376,9 @@ class HiveOrchestrator:
                             "scan_id": scan_id,
                             "payload": {
                                 "timestamp": datetime.now().strftime("%H:%M:%S"),
-                                "agent": "Orchestrator",
-                                "threat_type": "TERMINATION",
-                                "url": "LOCAL_HIVE",
+                            "agent": "sigma",
+                            "threat_type": "TERMINATION",
+                            "url": "LOCAL_HIVE",
                                 "result": "Scan Lifecycle Completed",
                                 "severity": "INFO",
                                 "risk_score": 0
@@ -1355,7 +1398,7 @@ class HiveOrchestrator:
                         await manager.broadcast({
                             "type": "LIVE_ATTACK_FEED",
                             "scan_id": scan_id,
-                            "payload": {"agent": "Orchestrator", "threat_type": "TERMINATION", "result": "Timeout"}
+                            "payload": {"agent": "sigma", "threat_type": "TERMINATION", "result": "Timeout"}
                         })
                         await manager.broadcast({"type": "REPORT_READY", "payload": {"id": scan_id}})
                         await manager.broadcast({"type": "SCAN_UPDATE", "payload": {"id": scan_id, "status": "Completed"}})

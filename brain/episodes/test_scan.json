@@ -206,5 +206,31 @@
       "timestamp": "2026-06-15 11:36:05",
       "vector": []
     }
+  },
+  {
+    "timestamp": 1782049187.0225506,
+    "type": "vulnerability",
+    "payload": {
+      "type": "SQL_INJECTION",
+      "url": "https://example.com/api/users",
+      "payload": "' OR 1=1--",
+      "confidence": 0.95,
+      "audit_reasoning": "Successful SQL injection",
+      "timestamp": "2026-06-21 13:39:46",
+      "vector": []
+    }
+  },
+  {
+    "timestamp": 1782049187.1463842,
+    "type": "vulnerability",
+    "payload": {
+      "type": "XSS",
+      "url": "https://example.com/search?q=test",
+      "payload": "<script>alert(1)</script>",
+      "confidence": 0.85,
+      "audit_reasoning": "",
+      "timestamp": "2026-06-21 13:39:47",
+      "vector": []
+    }
   }
 ]

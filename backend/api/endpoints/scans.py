@@ -18,6 +18,7 @@ Endpoints (Architecture §22):
 """
 from __future__ import annotations
 
+import os
 import time
 import uuid
 
@@ -38,7 +39,9 @@ router = APIRouter()
 _SCAN_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$", re.ASCII)
 _TARGET_URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
 # FIX-009: Reject dangerous target URLs
-forbidden_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"}
+# In dev mode, allow localhost scanning (scope.yaml governs real access control).
+_dev_mode = os.getenv("VIGILAGENT_DEV_MODE", "false").lower() == "true"
+forbidden_hosts = {"0.0.0.0", "::1", "169.254.169.254"} if _dev_mode else {"localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"}
 
 
 class CreateScanRequest(BaseModel):
@@ -146,12 +149,67 @@ async def list_scans():
 
     rows = []
     for s in scans:
+        # Compute duration from start/end timestamps if available
+        duration = s.get("duration") or ""
+        if not duration and s.get("status") == "Running":
+            try:
+                _start = s.get("created_at") or s.get("timestamp") or ""
+                if _start:
+                    from datetime import datetime as _dt
+                    _fmts = ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]
+                    _parsed = None
+                    for _f in _fmts:
+                        try:
+                            _parsed = _dt.strptime(str(_start).strip(), _f)
+                            break
+                        except Exception:
+                            continue
+                    if _parsed:
+                        _elapsed = (_dt.now() - _parsed).total_seconds()
+                        duration = f"{int(_elapsed // 60)}m {int(_elapsed % 60)}s"
+            except Exception:
+                pass
+        if not duration and s.get("completed_at") and s.get("created_at"):
+            try:
+                from datetime import datetime as _dt
+                _fmts = ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]
+                _start_dt = _end_dt = None
+                for _f in _fmts:
+                    try:
+                        _start_dt = _dt.strptime(str(s["created_at"]).strip(), _f)
+                        break
+                    except Exception:
+                        continue
+                for _f in _fmts:
+                    try:
+                        _end_dt = _dt.strptime(str(s["completed_at"]).strip(), _f)
+                        break
+                    except Exception:
+                        continue
+                if _start_dt and _end_dt:
+                    _total = (_end_dt - _start_dt).total_seconds()
+                    duration = f"{int(_total // 60)}m {int(_total % 60)}s"
+            except Exception:
+                pass
+        # Extract findings from scan results/events
+        findings_list = []
+        try:
+            findings_list = _findings_from_scan(s)
+            findings_list = [_enrich_finding_for_api(f, s.get("id", "")) for f in findings_list[:20]]  # Cap at 20 for list view
+        except Exception:
+            findings_list = []
         rows.append({
             "id": s.get("id"),
+            "name": s.get("name") or f"Scan {str(s.get('id', ''))[-8:]}",
             "target": s.get("target_url") or s.get("scope"),
             "target_url": s.get("target_url") or s.get("scope") or "",
+            "scope": s.get("scope") or s.get("target_url") or "",
             "status": s.get("status"),
+            "modules": s.get("modules", []),
+            "duration": duration,
+            "findings": findings_list,
             "report_ready": bool(s.get("report_ready", False)),
+            "timestamp": s.get("timestamp") or _created_at(s),
             "created_at": _created_at(s),
         })
     # Newest-first. Empty ``created_at`` strings sort last so freshly-created

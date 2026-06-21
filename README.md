@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/>
 </p>
 
-# Vigilagent — Autonomous AI-Powered Penetration Testing Platform
+# Antigravity — Autonomous AI-Powered Penetration Testing Platform
 
 > A multi-agent swarm intelligence system for automated security reconnaissance, vulnerability assessment, and attack simulation — driven by LLM-powered decision making, 35+ parsers, 25+ tool integrations, and a real-time React dashboard.
 
@@ -36,7 +36,7 @@
 
 ## Overview
 
-Vigilagent (codename **Vigilagent**) is a full-stack autonomous penetration testing platform that coordinates a swarm of specialized AI agents to perform end-to-end security assessments. Each agent operates with a distinct role — from reconnaissance and exploitation to forensic analysis and governance — orchestrated by a central Hive system with event-driven communication, phase-gated scan pipelines, and self-healing capabilities.
+Antigravity (codename **Antigravity**) is a full-stack autonomous penetration testing platform that coordinates a swarm of specialized AI agents to perform end-to-end security assessments. Each agent operates with a distinct role — from reconnaissance and exploitation to forensic analysis and governance — orchestrated by a central Hive system with event-driven communication, phase-gated scan pipelines, and self-healing capabilities.
 
 The platform combines:
 - **Multi-agent AI orchestration** with 11 specialized agents
@@ -178,7 +178,7 @@ All tools run inside **Docker containers** via the `DockerToolRuntime` (`backend
 
 ## Browser Automation Stack
 
-Vigilagent includes a sophisticated **dual-engine browser automation** system:
+Antigravity includes a sophisticated **dual-engine browser automation** system:
 
 | Engine | Use Case | Features |
 |--------|----------|----------|
@@ -297,8 +297,8 @@ Built with **React 18 + Vite**, the dashboard provides:
 
 ```bash
 # Clone the repository
-git clone https://github.com/aniket2348823/Vigilagent.git
-cd Vigilagent
+git clone https://github.com/aniket2348823/Antigravity.git
+cd Antigravity
 
 # Create environment configuration
 cp .env.example .env
@@ -435,7 +435,7 @@ python -m pytest tests/phase7_reports.py -v          # Report generation tests
 ## Project Structure
 
 ```
-Vigilagent/
+Antigravity/
 ├── backend/
 │   ├── agents/                    # 11 AI agents
 │   │   ├── alpha.py               # Recon Scout
@@ -537,7 +537,7 @@ Vigilagent/
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
-Copyright © 2026 Vigilagent
+Copyright © 2026 Antigravity
 
 ---
 

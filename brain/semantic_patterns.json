@@ -250478,5 +250478,1553 @@
       0.030320263,
       -0.008361073
     ]
+  },
+  {
+    "timestamp": 1781974324.8858976,
+    "id": "961768d55feb1291d4b1639c6b9bfc20a7d3001f8eef77c54e94b1c520d32ac6",
+    "scan_id": "HIVE-V5-5002972364",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781974336.0609365,
+    "id": "7215d8b0cf7f927b9726e80202d3b2e3541733333e299a96db492ca2a12e2252",
+    "scan_id": "HIVE-V5-5002972364",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"/home/dell/go/bin/subfinder\", \"source\": \"PATH\"}, \"amass\": {\"installed\": true, \"path\": \"/home/dell/go/bin/amass\", \"source\": \"PATH\"}, \"assetfinder\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"/home/dell/go/bin/gau\", \"source\": \"PATH\"}, \"waybackurls\": {\"installed\": true, \"path\": \"/home/dell/go/bin/waybackurls\", \"source\": \"PATH\"}, \"cloudlist\": {\"installed\": true, \"path\": \"/home/dell/go/bin/cloudlist\", \"source\": \"PATH\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/dnsx\", \"source\": \"PATH\"}, \"shuffledns\": {\"installed\": true, \"path\": \"/home/dell/go/bin/shuffledns\", \"source\": \"PATH\"}, \"puredns\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"/home/dell/go/bin/naabu\", \"source\": \"PATH\"}, \"masscan\": {\"installed\": true, \"path\": \"/usr/bin/masscan\", \"source\": \"PATH\"}, \"nmap\": {\"installed\": true, \"path\": \"/usr/bin/nmap\", \"source\": \"PATH\"}, \"tlsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/tlsx\", \"source\": \"PATH\"}, \"testssl\": {\"installed\": true, \"path\": \"/home/dell/tools/testssl/testssl.sh\", \"source\": \"user_tools\"}, \"httprobe\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration ",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "/home/dell/go/bin/subfinder",
+        "source": "PATH"
+      },
+      "amass": {
+        "installed": true,
+        "path": "/home/dell/go/bin/amass",
+        "source": "PATH"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gau",
+        "source": "PATH"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "/home/dell/go/bin/waybackurls",
+        "source": "PATH"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "/home/dell/go/bin/cloudlist",
+        "source": "PATH"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/dnsx",
+        "source": "PATH"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "/home/dell/go/bin/shuffledns",
+        "source": "PATH"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "/home/dell/go/bin/naabu",
+        "source": "PATH"
+      },
+      "masscan": {
+        "installed": true,
+        "path": "/usr/bin/masscan",
+        "source": "PATH"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "/usr/bin/nmap",
+        "source": "PATH"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/tlsx",
+        "source": "PATH"
+      },
+      "testssl": {
+        "installed": true,
+        "path": "/home/dell/tools/testssl/testssl.sh",
+        "source": "user_tools"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "/home/dell/go/bin/katana",
+        "source": "PATH"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "/home/dell/go/bin/hakrawler",
+        "source": "PATH"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "/home/dell/.local/bin/arjun",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "/usr/local/bin/feroxbuster",
+        "source": "PATH"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "/home/dell/go/bin/ffuf",
+        "source": "PATH"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gobuster",
+        "source": "PATH"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gowitness",
+        "source": "PATH"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "/home/dell/go/bin/aquatone",
+        "source": "PATH"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781975374.8528492,
+    "id": "1642fcb4de7aa2b7bf7e62afd26a41aa8d17829816d750deb4fb3e243ddc6dd9",
+    "scan_id": "HIVE-V5-3da3a67ab8",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781975384.1663117,
+    "id": "408340282374d428aa1c2f56d8fe7d8f90e315c5eaacea152b81b754434bb4cf",
+    "scan_id": "HIVE-V5-3da3a67ab8",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"/home/dell/go/bin/subfinder\", \"source\": \"PATH\"}, \"amass\": {\"installed\": true, \"path\": \"/home/dell/go/bin/amass\", \"source\": \"PATH\"}, \"assetfinder\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"/home/dell/go/bin/gau\", \"source\": \"PATH\"}, \"waybackurls\": {\"installed\": true, \"path\": \"/home/dell/go/bin/waybackurls\", \"source\": \"PATH\"}, \"cloudlist\": {\"installed\": true, \"path\": \"/home/dell/go/bin/cloudlist\", \"source\": \"PATH\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/dnsx\", \"source\": \"PATH\"}, \"shuffledns\": {\"installed\": true, \"path\": \"/home/dell/go/bin/shuffledns\", \"source\": \"PATH\"}, \"puredns\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"/home/dell/go/bin/naabu\", \"source\": \"PATH\"}, \"masscan\": {\"installed\": true, \"path\": \"/usr/bin/masscan\", \"source\": \"PATH\"}, \"nmap\": {\"installed\": true, \"path\": \"/usr/bin/nmap\", \"source\": \"PATH\"}, \"tlsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/tlsx\", \"source\": \"PATH\"}, \"testssl\": {\"installed\": true, \"path\": \"/home/dell/tools/testssl/testssl.sh\", \"source\": \"user_tools\"}, \"httprobe\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration ",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "/home/dell/go/bin/subfinder",
+        "source": "PATH"
+      },
+      "amass": {
+        "installed": true,
+        "path": "/home/dell/go/bin/amass",
+        "source": "PATH"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gau",
+        "source": "PATH"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "/home/dell/go/bin/waybackurls",
+        "source": "PATH"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "/home/dell/go/bin/cloudlist",
+        "source": "PATH"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/dnsx",
+        "source": "PATH"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "/home/dell/go/bin/shuffledns",
+        "source": "PATH"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "/home/dell/go/bin/naabu",
+        "source": "PATH"
+      },
+      "masscan": {
+        "installed": true,
+        "path": "/usr/bin/masscan",
+        "source": "PATH"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "/usr/bin/nmap",
+        "source": "PATH"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/tlsx",
+        "source": "PATH"
+      },
+      "testssl": {
+        "installed": true,
+        "path": "/home/dell/tools/testssl/testssl.sh",
+        "source": "user_tools"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "/home/dell/go/bin/katana",
+        "source": "PATH"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "/home/dell/go/bin/hakrawler",
+        "source": "PATH"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "/home/dell/.local/bin/arjun",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "/usr/local/bin/feroxbuster",
+        "source": "PATH"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "/home/dell/go/bin/ffuf",
+        "source": "PATH"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gobuster",
+        "source": "PATH"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gowitness",
+        "source": "PATH"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "/home/dell/go/bin/aquatone",
+        "source": "PATH"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781976367.650929,
+    "id": "dcb8e30aef24f49e6e1d7d7f5a8309c6a7a4eb6552e6059a69c39348aaaa790a",
+    "scan_id": "HIVE-V5-8619beb1fb",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781976372.458502,
+    "id": "0257d40044a8c601610611b27f08ea37741e624d9491318b151e297331f28d64",
+    "scan_id": "HIVE-V5-8619beb1fb",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"/home/dell/go/bin/subfinder\", \"source\": \"PATH\"}, \"amass\": {\"installed\": true, \"path\": \"/home/dell/go/bin/amass\", \"source\": \"PATH\"}, \"assetfinder\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"/home/dell/go/bin/gau\", \"source\": \"PATH\"}, \"waybackurls\": {\"installed\": true, \"path\": \"/home/dell/go/bin/waybackurls\", \"source\": \"PATH\"}, \"cloudlist\": {\"installed\": true, \"path\": \"/home/dell/go/bin/cloudlist\", \"source\": \"PATH\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/dnsx\", \"source\": \"PATH\"}, \"shuffledns\": {\"installed\": true, \"path\": \"/home/dell/go/bin/shuffledns\", \"source\": \"PATH\"}, \"puredns\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"/home/dell/go/bin/naabu\", \"source\": \"PATH\"}, \"masscan\": {\"installed\": true, \"path\": \"/usr/bin/masscan\", \"source\": \"PATH\"}, \"nmap\": {\"installed\": true, \"path\": \"/usr/bin/nmap\", \"source\": \"PATH\"}, \"tlsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/tlsx\", \"source\": \"PATH\"}, \"testssl\": {\"installed\": true, \"path\": \"/home/dell/tools/testssl/testssl.sh\", \"source\": \"user_tools\"}, \"httprobe\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration ",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "/home/dell/go/bin/subfinder",
+        "source": "PATH"
+      },
+      "amass": {
+        "installed": true,
+        "path": "/home/dell/go/bin/amass",
+        "source": "PATH"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gau",
+        "source": "PATH"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "/home/dell/go/bin/waybackurls",
+        "source": "PATH"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "/home/dell/go/bin/cloudlist",
+        "source": "PATH"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/dnsx",
+        "source": "PATH"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "/home/dell/go/bin/shuffledns",
+        "source": "PATH"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "/home/dell/go/bin/naabu",
+        "source": "PATH"
+      },
+      "masscan": {
+        "installed": true,
+        "path": "/usr/bin/masscan",
+        "source": "PATH"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "/usr/bin/nmap",
+        "source": "PATH"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/tlsx",
+        "source": "PATH"
+      },
+      "testssl": {
+        "installed": true,
+        "path": "/home/dell/tools/testssl/testssl.sh",
+        "source": "user_tools"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "/home/dell/go/bin/katana",
+        "source": "PATH"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "/home/dell/go/bin/hakrawler",
+        "source": "PATH"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "/home/dell/.local/bin/arjun",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "/usr/local/bin/feroxbuster",
+        "source": "PATH"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "/home/dell/go/bin/ffuf",
+        "source": "PATH"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gobuster",
+        "source": "PATH"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gowitness",
+        "source": "PATH"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "/home/dell/go/bin/aquatone",
+        "source": "PATH"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781976870.628964,
+    "id": "3401815ceaec998833255e071f04651d1ac34c2ef9082d7f9f7ddf72261abdf4",
+    "scan_id": "HIVE-V5-a67028e34e",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781976879.240629,
+    "id": "4b11916f244efb86b2af7fc60b5b4d370a29d6d1b2eab10fc2a2eae4ae372ef7",
+    "scan_id": "HIVE-V5-a67028e34e",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"/home/dell/go/bin/subfinder\", \"source\": \"PATH\"}, \"amass\": {\"installed\": true, \"path\": \"/home/dell/go/bin/amass\", \"source\": \"PATH\"}, \"assetfinder\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"/home/dell/go/bin/gau\", \"source\": \"PATH\"}, \"waybackurls\": {\"installed\": true, \"path\": \"/home/dell/go/bin/waybackurls\", \"source\": \"PATH\"}, \"cloudlist\": {\"installed\": true, \"path\": \"/home/dell/go/bin/cloudlist\", \"source\": \"PATH\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/dnsx\", \"source\": \"PATH\"}, \"shuffledns\": {\"installed\": true, \"path\": \"/home/dell/go/bin/shuffledns\", \"source\": \"PATH\"}, \"puredns\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"/home/dell/go/bin/naabu\", \"source\": \"PATH\"}, \"masscan\": {\"installed\": true, \"path\": \"/usr/bin/masscan\", \"source\": \"PATH\"}, \"nmap\": {\"installed\": true, \"path\": \"/usr/bin/nmap\", \"source\": \"PATH\"}, \"tlsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/tlsx\", \"source\": \"PATH\"}, \"testssl\": {\"installed\": true, \"path\": \"/home/dell/tools/testssl/testssl.sh\", \"source\": \"user_tools\"}, \"httprobe\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration ",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "/home/dell/go/bin/subfinder",
+        "source": "PATH"
+      },
+      "amass": {
+        "installed": true,
+        "path": "/home/dell/go/bin/amass",
+        "source": "PATH"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gau",
+        "source": "PATH"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "/home/dell/go/bin/waybackurls",
+        "source": "PATH"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "/home/dell/go/bin/cloudlist",
+        "source": "PATH"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/dnsx",
+        "source": "PATH"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "/home/dell/go/bin/shuffledns",
+        "source": "PATH"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "/home/dell/go/bin/naabu",
+        "source": "PATH"
+      },
+      "masscan": {
+        "installed": true,
+        "path": "/usr/bin/masscan",
+        "source": "PATH"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "/usr/bin/nmap",
+        "source": "PATH"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/tlsx",
+        "source": "PATH"
+      },
+      "testssl": {
+        "installed": true,
+        "path": "/home/dell/tools/testssl/testssl.sh",
+        "source": "user_tools"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "/home/dell/go/bin/katana",
+        "source": "PATH"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "/home/dell/go/bin/hakrawler",
+        "source": "PATH"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "/home/dell/.local/bin/arjun",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "/usr/local/bin/feroxbuster",
+        "source": "PATH"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "/home/dell/go/bin/ffuf",
+        "source": "PATH"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gobuster",
+        "source": "PATH"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gowitness",
+        "source": "PATH"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "/home/dell/go/bin/aquatone",
+        "source": "PATH"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781977514.7311652,
+    "id": "e6604be7eb8148991848c0a83425d4326461fceb40ca4a87cd00243cffddf839",
+    "scan_id": "HIVE-V5-78d334345b",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781977529.4311044,
+    "id": "2d1af01554e9d242119ad9d8dc5301b8d926c79fd2e4e5dd04159e1e48a85510",
+    "scan_id": "HIVE-V5-78d334345b",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"/home/dell/go/bin/subfinder\", \"source\": \"PATH\"}, \"amass\": {\"installed\": true, \"path\": \"/home/dell/go/bin/amass\", \"source\": \"PATH\"}, \"assetfinder\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"/home/dell/go/bin/gau\", \"source\": \"PATH\"}, \"waybackurls\": {\"installed\": true, \"path\": \"/home/dell/go/bin/waybackurls\", \"source\": \"PATH\"}, \"cloudlist\": {\"installed\": true, \"path\": \"/home/dell/go/bin/cloudlist\", \"source\": \"PATH\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/dnsx\", \"source\": \"PATH\"}, \"shuffledns\": {\"installed\": true, \"path\": \"/home/dell/go/bin/shuffledns\", \"source\": \"PATH\"}, \"puredns\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"/home/dell/go/bin/naabu\", \"source\": \"PATH\"}, \"masscan\": {\"installed\": true, \"path\": \"/usr/bin/masscan\", \"source\": \"PATH\"}, \"nmap\": {\"installed\": true, \"path\": \"/usr/bin/nmap\", \"source\": \"PATH\"}, \"tlsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/tlsx\", \"source\": \"PATH\"}, \"testssl\": {\"installed\": true, \"path\": \"/home/dell/tools/testssl/testssl.sh\", \"source\": \"user_tools\"}, \"httprobe\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration ",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "/home/dell/go/bin/subfinder",
+        "source": "PATH"
+      },
+      "amass": {
+        "installed": true,
+        "path": "/home/dell/go/bin/amass",
+        "source": "PATH"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gau",
+        "source": "PATH"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "/home/dell/go/bin/waybackurls",
+        "source": "PATH"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "/home/dell/go/bin/cloudlist",
+        "source": "PATH"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/dnsx",
+        "source": "PATH"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "/home/dell/go/bin/shuffledns",
+        "source": "PATH"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "/home/dell/go/bin/naabu",
+        "source": "PATH"
+      },
+      "masscan": {
+        "installed": true,
+        "path": "/usr/bin/masscan",
+        "source": "PATH"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "/usr/bin/nmap",
+        "source": "PATH"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/tlsx",
+        "source": "PATH"
+      },
+      "testssl": {
+        "installed": true,
+        "path": "/home/dell/tools/testssl/testssl.sh",
+        "source": "user_tools"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "/home/dell/go/bin/katana",
+        "source": "PATH"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "/home/dell/go/bin/hakrawler",
+        "source": "PATH"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "/home/dell/.local/bin/arjun",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "/usr/local/bin/feroxbuster",
+        "source": "PATH"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "/home/dell/go/bin/ffuf",
+        "source": "PATH"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gobuster",
+        "source": "PATH"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gowitness",
+        "source": "PATH"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "/home/dell/go/bin/aquatone",
+        "source": "PATH"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781979178.1833491,
+    "id": "4dcf0b7a5dfecc4b8cdd900202bad1bd8d8f1341d87c49ec7d0a17907d86247e",
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1781979202.0719984,
+    "id": "e1166c2b72856d30c874909e0619dcb2eafda9231363691d8812a736ffbac129",
+    "scan_id": "HIVE-V5-d474d1d4e3",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"/home/dell/go/bin/subfinder\", \"source\": \"PATH\"}, \"amass\": {\"installed\": true, \"path\": \"/home/dell/go/bin/amass\", \"source\": \"PATH\"}, \"assetfinder\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"/home/dell/go/bin/gau\", \"source\": \"PATH\"}, \"waybackurls\": {\"installed\": true, \"path\": \"/home/dell/go/bin/waybackurls\", \"source\": \"PATH\"}, \"cloudlist\": {\"installed\": true, \"path\": \"/home/dell/go/bin/cloudlist\", \"source\": \"PATH\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/dnsx\", \"source\": \"PATH\"}, \"shuffledns\": {\"installed\": true, \"path\": \"/home/dell/go/bin/shuffledns\", \"source\": \"PATH\"}, \"puredns\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"/home/dell/go/bin/naabu\", \"source\": \"PATH\"}, \"masscan\": {\"installed\": true, \"path\": \"/usr/bin/masscan\", \"source\": \"PATH\"}, \"nmap\": {\"installed\": true, \"path\": \"/usr/bin/nmap\", \"source\": \"PATH\"}, \"tlsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/tlsx\", \"source\": \"PATH\"}, \"testssl\": {\"installed\": true, \"path\": \"/home/dell/tools/testssl/testssl.sh\", \"source\": \"user_tools\"}, \"httprobe\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration ",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "/home/dell/go/bin/subfinder",
+        "source": "PATH"
+      },
+      "amass": {
+        "installed": true,
+        "path": "/home/dell/go/bin/amass",
+        "source": "PATH"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gau",
+        "source": "PATH"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "/home/dell/go/bin/waybackurls",
+        "source": "PATH"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "/home/dell/go/bin/cloudlist",
+        "source": "PATH"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/dnsx",
+        "source": "PATH"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "/home/dell/go/bin/shuffledns",
+        "source": "PATH"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "/home/dell/go/bin/naabu",
+        "source": "PATH"
+      },
+      "masscan": {
+        "installed": true,
+        "path": "/usr/bin/masscan",
+        "source": "PATH"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "/usr/bin/nmap",
+        "source": "PATH"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/tlsx",
+        "source": "PATH"
+      },
+      "testssl": {
+        "installed": true,
+        "path": "/home/dell/tools/testssl/testssl.sh",
+        "source": "user_tools"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "/home/dell/go/bin/katana",
+        "source": "PATH"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "/home/dell/go/bin/hakrawler",
+        "source": "PATH"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "/home/dell/.local/bin/arjun",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "/usr/local/bin/feroxbuster",
+        "source": "PATH"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "/home/dell/go/bin/ffuf",
+        "source": "PATH"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gobuster",
+        "source": "PATH"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/.venv/bin/python",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gowitness",
+        "source": "PATH"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "/home/dell/go/bin/aquatone",
+        "source": "PATH"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782049062.856245,
+    "id": "7cad5815aabfd348b1e7e45a41433bdcde8e1f2b048700a528956d93832dc926",
+    "scan_id": "test_scan",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"https://api.example.com/users\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "https://api.example.com/users",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782049071.3629527,
+    "id": "8b1e79bd7d1cf4348f64a2cfb3a5be2d103ff4046fe8c02dbf5b0added65fda4",
+    "scan_id": "test_scan",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"/home/dell/go/bin/subfinder\", \"source\": \"user_bin\"}, \"amass\": {\"installed\": true, \"path\": \"/home/dell/go/bin/amass\", \"source\": \"user_bin\"}, \"assetfinder\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"/home/dell/go/bin/gau\", \"source\": \"user_bin\"}, \"waybackurls\": {\"installed\": true, \"path\": \"/home/dell/go/bin/waybackurls\", \"source\": \"user_bin\"}, \"cloudlist\": {\"installed\": true, \"path\": \"/home/dell/go/bin/cloudlist\", \"source\": \"user_bin\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"/home/dell/tools/spiderfoot/sf.py\", \"source\": \"python_script\"}, \"dnsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/dnsx\", \"source\": \"user_bin\"}, \"shuffledns\": {\"installed\": true, \"path\": \"/home/dell/go/bin/shuffledns\", \"source\": \"user_bin\"}, \"puredns\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"/home/dell/go/bin/naabu\", \"source\": \"user_bin\"}, \"masscan\": {\"installed\": true, \"path\": \"/usr/bin/masscan\", \"source\": \"PATH\"}, \"nmap\": {\"installed\": true, \"path\": \"/usr/bin/nmap\", \"source\": \"PATH\"}, \"tlsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/tlsx\", \"source\": \"user_bin\"}, \"testssl\": {\"installed\": true, \"path\": \"/home/dell/tools/testssl/testssl.sh\", \"source\": \"user_tools\"}, \"httprobe\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system cop",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "/home/dell/go/bin/subfinder",
+        "source": "user_bin"
+      },
+      "amass": {
+        "installed": true,
+        "path": "/home/dell/go/bin/amass",
+        "source": "user_bin"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gau",
+        "source": "user_bin"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "/home/dell/go/bin/waybackurls",
+        "source": "user_bin"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "/home/dell/go/bin/cloudlist",
+        "source": "user_bin"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "/home/dell/tools/spiderfoot/sf.py",
+        "source": "python_script"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/dnsx",
+        "source": "user_bin"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "/home/dell/go/bin/shuffledns",
+        "source": "user_bin"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "/home/dell/go/bin/naabu",
+        "source": "user_bin"
+      },
+      "masscan": {
+        "installed": true,
+        "path": "/usr/bin/masscan",
+        "source": "PATH"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "/usr/bin/nmap",
+        "source": "PATH"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/tlsx",
+        "source": "user_bin"
+      },
+      "testssl": {
+        "installed": true,
+        "path": "/home/dell/tools/testssl/testssl.sh",
+        "source": "user_tools"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "/home/dell/go/bin/katana",
+        "source": "user_bin"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "/home/dell/go/bin/hakrawler",
+        "source": "user_bin"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "/home/dell/tools/LinkFinder/linkfinder.py",
+        "source": "python_script"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "/home/dell/tools/SecretFinder/SecretFinder.py",
+        "source": "python_script"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "/home/dell/.local/bin/arjun",
+        "source": "user_bin"
+      },
+      "paramspider": {
+        "installed": false,
+        "reason": "script_not_found:paramspider"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "/usr/local/bin/feroxbuster",
+        "source": "PATH"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "/home/dell/go/bin/ffuf",
+        "source": "user_bin"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "/usr/local/bin/dirsearch",
+        "source": "python_script"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gobuster",
+        "source": "user_bin"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": false,
+        "reason": "script_not_found:inql"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gowitness",
+        "source": "user_bin"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "/home/dell/go/bin/aquatone",
+        "source": "user_bin"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782049087.4019945,
+    "id": "4597f5a7dc86fde04fa1a2eb2713c3b43136ca8ef999641dbd88364ca5fec2eb",
+    "scan_id": "test_scan",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"https://example.com/user/profile\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "https://example.com/user/profile",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782049090.66341,
+    "id": "8b1e79bd7d1cf4348f64a2cfb3a5be2d103ff4046fe8c02dbf5b0added65fda4",
+    "scan_id": "test_scan",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"/home/dell/go/bin/subfinder\", \"source\": \"user_bin\"}, \"amass\": {\"installed\": true, \"path\": \"/home/dell/go/bin/amass\", \"source\": \"user_bin\"}, \"assetfinder\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"/home/dell/go/bin/gau\", \"source\": \"user_bin\"}, \"waybackurls\": {\"installed\": true, \"path\": \"/home/dell/go/bin/waybackurls\", \"source\": \"user_bin\"}, \"cloudlist\": {\"installed\": true, \"path\": \"/home/dell/go/bin/cloudlist\", \"source\": \"user_bin\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"/home/dell/tools/spiderfoot/sf.py\", \"source\": \"python_script\"}, \"dnsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/dnsx\", \"source\": \"user_bin\"}, \"shuffledns\": {\"installed\": true, \"path\": \"/home/dell/go/bin/shuffledns\", \"source\": \"user_bin\"}, \"puredns\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"/home/dell/go/bin/naabu\", \"source\": \"user_bin\"}, \"masscan\": {\"installed\": true, \"path\": \"/usr/bin/masscan\", \"source\": \"PATH\"}, \"nmap\": {\"installed\": true, \"path\": \"/usr/bin/nmap\", \"source\": \"PATH\"}, \"tlsx\": {\"installed\": true, \"path\": \"/home/dell/go/bin/tlsx\", \"source\": \"user_bin\"}, \"testssl\": {\"installed\": true, \"path\": \"/home/dell/tools/testssl/testssl.sh\", \"source\": \"user_tools\"}, \"httprobe\": {\"installed\": true, \"path\": \"/mnt/d/Antigravity 2/penetration testing system cop",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "/home/dell/go/bin/subfinder",
+        "source": "user_bin"
+      },
+      "amass": {
+        "installed": true,
+        "path": "/home/dell/go/bin/amass",
+        "source": "user_bin"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gau",
+        "source": "user_bin"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "/home/dell/go/bin/waybackurls",
+        "source": "user_bin"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "/home/dell/go/bin/cloudlist",
+        "source": "user_bin"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "/home/dell/tools/spiderfoot/sf.py",
+        "source": "python_script"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/dnsx",
+        "source": "user_bin"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "/home/dell/go/bin/shuffledns",
+        "source": "user_bin"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "/home/dell/go/bin/naabu",
+        "source": "user_bin"
+      },
+      "masscan": {
+        "installed": true,
+        "path": "/usr/bin/masscan",
+        "source": "PATH"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "/usr/bin/nmap",
+        "source": "PATH"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "/home/dell/go/bin/tlsx",
+        "source": "user_bin"
+      },
+      "testssl": {
+        "installed": true,
+        "path": "/home/dell/tools/testssl/testssl.sh",
+        "source": "user_tools"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "/home/dell/go/bin/katana",
+        "source": "user_bin"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "/home/dell/go/bin/hakrawler",
+        "source": "user_bin"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "/home/dell/tools/LinkFinder/linkfinder.py",
+        "source": "python_script"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "/home/dell/tools/SecretFinder/SecretFinder.py",
+        "source": "python_script"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "/home/dell/.local/bin/arjun",
+        "source": "user_bin"
+      },
+      "paramspider": {
+        "installed": false,
+        "reason": "script_not_found:paramspider"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "/usr/local/bin/feroxbuster",
+        "source": "PATH"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "/home/dell/go/bin/ffuf",
+        "source": "user_bin"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "/usr/local/bin/dirsearch",
+        "source": "python_script"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gobuster",
+        "source": "user_bin"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": false,
+        "reason": "script_not_found:inql"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "/home/dell/go/bin/gowitness",
+        "source": "user_bin"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "/home/dell/go/bin/aquatone",
+        "source": "user_bin"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "/mnt/d/Antigravity 2/penetration testing system copy/penetration testing system/tools/recon_bin/interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
   }
 ]
