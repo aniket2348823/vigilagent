@@ -12,7 +12,7 @@ We release patches for security vulnerabilities. Currently supported versions:
 
 ## Reporting a Vulnerability
 
-We take the security of Antigravity seriously. If you believe you have found a security vulnerability, please report it to us as described below.
+We take the security of Vigilagent seriously. If you believe you have found a security vulnerability, please report it to us as described below.
 
 ### Please do NOT:
 
@@ -21,7 +21,7 @@ We take the security of Antigravity seriously. If you believe you have found a s
 
 ### Please DO:
 
-1. **Email us directly** at: security@antigravity.dev (or create a private security advisory on GitHub)
+1. **Email us directly** at: security@vigilagent.dev (or create a private security advisory on GitHub)
 2. **Include the following information**:
    - Type of vulnerability (e.g., SQL injection, XSS, CSRF, etc.)
    - Full paths of source file(s) related to the vulnerability
@@ -40,7 +40,7 @@ We take the security of Antigravity seriously. If you believe you have found a s
 
 ## Security Features
 
-Antigravity V6 includes the following security features:
+Vigilagent V6 includes the following security features:
 
 ### Authentication & Authorization
 - API key authentication
@@ -73,7 +73,7 @@ Antigravity V6 includes the following security features:
 
 ## Security Best Practices
 
-When deploying Antigravity, please follow these security best practices:
+When deploying Vigilagent, please follow these security best practices:
 
 1. **Environment Variables**: Never commit `.env` files or expose API keys
 2. **Network Isolation**: Run scans in isolated networks when possible
@@ -87,7 +87,7 @@ For more details, see our [Security Best Practices Guide](../docs/SECURITY_BEST_
 
 ## Security Audits
 
-Antigravity undergoes regular security audits:
+Vigilagent undergoes regular security audits:
 
 - **Last Audit**: May 2026
 - **Security Score**: 100% compliance
@@ -105,9 +105,9 @@ We aim to:
 
 ## Contact
 
-- **Security Email**: security@antigravity.dev
+- **Security Email**: security@vigilagent.dev
 - **GitHub Security Advisories**: [Create Advisory](https://github.com/aniket2348823/API-Endpoint-Scanner/security/advisories/new)
-- **General Support**: support@antigravity.dev
+- **General Support**: support@vigilagent.dev
 
 ## Hall of Fame
 
@@ -115,4 +115,4 @@ We recognize security researchers who responsibly disclose vulnerabilities:
 
 <!-- Security researchers will be listed here -->
 
-Thank you for helping keep Antigravity and our users safe!
+Thank you for helping keep Vigilagent and our users safe!

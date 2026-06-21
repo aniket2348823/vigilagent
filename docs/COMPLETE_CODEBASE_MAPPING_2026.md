@@ -755,7 +755,7 @@ class ReconRAGPipeline:
 ## Part 5: AI Engine Architecture (4 files)
 
 ### Overview
-Antigravity uses a **hybrid multi-core AI architecture** combining deterministic heuristics (GI5), tactical inference (Gemini 2.5 Flash), and strategic reasoning (Qwen3 80B via OpenRouter).
+Vigilagent uses a **hybrid multi-core AI architecture** combining deterministic heuristics (GI5), tactical inference (Gemini 2.5 Flash), and strategic reasoning (Qwen3 80B via OpenRouter).
 
 ### Core 1: GI5 "OMEGA" - Deterministic Heuristic Engine
 
@@ -1083,7 +1083,7 @@ FastAPI-based REST API with 8 endpoint modules providing comprehensive control o
 ## Part 7: Core Infrastructure (50+ Files)
 
 ### Overview
-The `backend/core/` directory contains 50+ critical infrastructure files that power the entire Antigravity system. This section documents all core files that have been read and analyzed.
+The `backend/core/` directory contains 50+ critical infrastructure files that power the entire Vigilagent system. This section documents all core files that have been read and analyzed.
 
 ### Security & Safety Layer
 
@@ -1668,9 +1668,9 @@ def get_user(request, user_id):
 - `test`/`ci`: All agents use LOW tier
 
 **Environment Overrides**:
-- `ANTIGRAVITY_{AGENT}_MODEL`: Per-agent override
-- `ANTIGRAVITY_MODEL`: Global override
-- `ANTIGRAVITY_MODEL_PROFILE`: Profile selection
+- `VIGILAGENT_{AGENT}_MODEL`: Per-agent override
+- `VIGILAGENT_MODEL`: Global override
+- `VIGILAGENT_MODEL_PROFILE`: Profile selection
 
 
 ### Browser & DOM Layer

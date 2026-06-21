@@ -16,7 +16,7 @@ from backend.core.stdout_watchdog import watch_output
 
 logger = logging.getLogger(__name__)
 
-temp_workspace_root = Path(os.getenv("VIGILAGENT_WORKSPACE_ROOT", Path(gettempdir()) / "antigravity-workspaces"))
+temp_workspace_root = Path(os.getenv("VIGILAGENT_WORKSPACE_ROOT", Path(gettempdir()) / "vigilagent-workspaces"))
 
 class TempWorkspace:
     """

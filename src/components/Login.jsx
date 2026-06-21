@@ -8,7 +8,7 @@ const Login = ({ onLoginSuccess }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [attemptCount, setAttemptCount] = useState(() => {
         try {
-            const stored = localStorage.getItem('antigravity_login_attempts');
+            const stored = localStorage.getItem('vigilagent_login_attempts');
             const data = stored ? JSON.parse(stored) : { count: 0, lockedUntil: 0 };
             // Reset if lockout expired
             if (data.lockedUntil && Date.now() > data.lockedUntil) {
@@ -44,7 +44,7 @@ const Login = ({ onLoginSuccess }) => {
             if (data.status === 'success') {
                 if (data.token) localStorage.setItem('vulagent_ws_token', data.token);
                 // Reset attempt counter on successful login
-                try { localStorage.removeItem('antigravity_login_attempts'); } catch { /* ignore */ }
+                try { localStorage.removeItem('vigilagent_login_attempts'); } catch { /* ignore */ }
                 onLoginSuccess();
             } else {
                 setError(data.message || 'Verification Failed');
@@ -54,7 +54,7 @@ const Login = ({ onLoginSuccess }) => {
             const newLockedUntil = newCount >= MAX_ATTEMPTS ? Date.now() + LOCKOUT_MS : 0;
             const newAttempt = { count: newCount >= MAX_ATTEMPTS ? 0 : newCount, lockedUntil: newLockedUntil };
             setAttemptCount(newAttempt);
-            try { localStorage.setItem('antigravity_login_attempts', JSON.stringify(newAttempt)); } catch { /* ignore */ }
+            try { localStorage.setItem('vigilagent_login_attempts', JSON.stringify(newAttempt)); } catch { /* ignore */ }
             if (newLockedUntil) {
                 setError('Too many attempts. Please wait before trying again.');
             } else {

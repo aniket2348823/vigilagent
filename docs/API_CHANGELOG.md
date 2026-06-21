@@ -600,7 +600,7 @@ ws.onmessage = (event) => {
 All requests should include API version:
 
 ```bash
-curl -H "Accept: application/vnd.antigravity.v1+json" \
+curl -H "Accept: application/vnd.vigilagent.v1+json" \
   http://localhost:8000/api/scans
 ```
 

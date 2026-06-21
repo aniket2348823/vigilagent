@@ -59,11 +59,11 @@ Complete guide for deploying Vigilagent to production environments.
 
 ```bash
 # Create dedicated user
-sudo useradd -m -s /bin/bash antigravity
-sudo usermod -aG sudo antigravity
+sudo useradd -m -s /bin/bash vigilagent
+sudo usermod -aG sudo vigilagent
 
 # Switch to user
-sudo su - antigravity
+sudo su - vigilagent
 ```
 
 ### 2. Install System Dependencies
@@ -107,7 +107,7 @@ playwright install-deps
 # Clone from repository
 cd /opt
 sudo git clone https://github.com/your-org/vigilagent.git
-sudo chown -R antigravity:antigravity vigilagent
+sudo chown -R vigilagent:vigilagent vigilagent
 cd vigilagent
 ```
 
@@ -314,7 +314,7 @@ sudo -u postgres psql
 # Create database and user
 CREATE DATABASE vigilagent;
 CREATE USER vigilagent_user WITH ENCRYPTED PASSWORD 'secure_password';
-GRANT ALL PRIVILEGES ON DATABASE antigravity TO vigilagent_user;
+GRANT ALL PRIVILEGES ON DATABASE vigilagent TO vigilagent_user;
 \q
 ```
 
@@ -353,8 +353,8 @@ After=network.target postgresql.service redis.service
 
 [Service]
 Type=notify
-User=antigravity
-Group=antigravity
+User=vigilagent
+Group=vigilagent
 WorkingDirectory=/opt/vigilagent
 Environment="PATH=/opt/vigilagent/venv/bin"
 ExecStart=/opt/vigilagent/venv/bin/python backend/main.py
@@ -385,13 +385,13 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 
 # Enable service
-sudo systemctl enable antigravity
+sudo systemctl enable vigilagent
 
 # Start service
-sudo systemctl start antigravity
+sudo systemctl start vigilagent
 
 # Check status
-sudo systemctl status antigravity
+sudo systemctl status vigilagent
 ```
 
 ### 3. Configure Log Rotation
@@ -405,10 +405,10 @@ Create `/etc/logrotate.d/vigilagent`:
     compress
     delaycompress
     notifempty
-    create 0640 antigravity antigravity
+    create 0640 vigilagent vigilagent
     sharedscripts
     postrotate
-        systemctl reload antigravity > /dev/null 2>&1 || true
+        systemctl reload vigilagent > /dev/null 2>&1 || true
     endscript
 }
 ```
@@ -421,7 +421,7 @@ Create `/etc/logrotate.d/vigilagent`:
 
 ```bash
 # View logs
-sudo journalctl -u antigravity -f
+sudo journalctl -u vigilagent -f
 
 # View application logs
 tail -f /var/log/vigilagent/app.log
@@ -469,7 +469,7 @@ DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p $BACKUP_DIR
 
 # Backup database
-pg_dump -U vigilagent_user antigravity | gzip > $BACKUP_DIR/db_$DATE.sql.gz
+pg_dump -U vigilagent_user vigilagent | gzip > $BACKUP_DIR/db_$DATE.sql.gz
 
 # Keep only last 7 days
 find $BACKUP_DIR -name "db_*.sql.gz" -mtime +7 -delete
@@ -492,14 +492,14 @@ crontab -e
 
 ```bash
 # Stop application
-sudo systemctl stop antigravity
+sudo systemctl stop vigilagent
 
 # Restore database
 gunzip < /var/backups/vigilagent/db_20260526_020000.sql.gz | \
-    psql -U vigilagent_user antigravity
+    psql -U vigilagent_user vigilagent
 
 # Start application
-sudo systemctl start antigravity
+sudo systemctl start vigilagent
 ```
 
 ---
@@ -548,9 +548,9 @@ DATABASES = {
 
 ```bash
 # Configure Redis Sentinel
-sentinel monitor antigravity 10.0.1.20 6379 2
-sentinel down-after-milliseconds antigravity 5000
-sentinel failover-timeout antigravity 10000
+sentinel monitor vigilagent 10.0.1.20 6379 2
+sentinel down-after-milliseconds vigilagent 5000
+sentinel failover-timeout vigilagent 10000
 ```
 
 ---
@@ -563,7 +563,7 @@ sentinel failover-timeout antigravity 10000
 
 ```bash
 # Check logs
-sudo journalctl -u antigravity -n 100
+sudo journalctl -u vigilagent -n 100
 
 # Check permissions
 ls -la /opt/vigilagent
@@ -577,7 +577,7 @@ python -c "import backend; print('OK')"
 
 ```bash
 # Test connection
-psql -U vigilagent_user -h localhost antigravity
+psql -U vigilagent_user -h localhost vigilagent
 
 # Check PostgreSQL status
 sudo systemctl status postgresql
@@ -596,14 +596,14 @@ curl http://localhost:8000/api/debug/contexts
 curl -X POST http://localhost:8000/api/debug/cleanup
 
 # Restart service
-sudo systemctl restart antigravity
+sudo systemctl restart vigilagent
 ```
 
 #### 4. Slow Performance
 
 ```bash
 # Check database queries
-sudo -u postgres psql antigravity -c "SELECT * FROM pg_stat_activity;"
+sudo -u postgres psql vigilagent -c "SELECT * FROM pg_stat_activity;"
 
 # Check Redis
 redis-cli INFO stats
@@ -643,7 +643,7 @@ htop
 pytest tests/smoke/ -v
 
 # Check all services
-systemctl status antigravity nginx postgresql redis
+systemctl status vigilagent nginx postgresql redis
 ```
 
 ### 2. Monitor for 24 Hours

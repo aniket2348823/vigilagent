@@ -1,7 +1,7 @@
 # Vigilagent IDE Framework
 
 ## Vision
-To provide a persistent, autonomous development and security ecosystem where the **"Get Shit Done" (GSD)** framework, **"Ralph Loop"**, and **"TestSprite"** oversee every project, task, and security assessment performed within the Antigravity workspace.
+To provide a persistent, autonomous development and security ecosystem where the **"Get Shit Done" (GSD)** framework, **"Ralph Loop"**, and **"TestSprite"** oversee every project, task, and security assessment performed within the Vigilagent workspace.
 
 ## Tech Stack
 - **Frontend**: React, Tailwind (Modern Liquid Aesthetic)

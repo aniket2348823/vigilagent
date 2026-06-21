@@ -2084,7 +2084,7 @@ The important conclusion from the uploaded prompt is:
 
 ```text
 Vigilagent should not be rebuilt from scratch.
-It should preserve Antigravity's domain-specific agents, Alpha V6 recon, browser intelligence,
+It should preserve Vigilagent's domain-specific agents, Alpha V6 recon, browser intelligence,
 forensics, reporting, learning foundations, and graph ideas,
 while replacing the weak orchestration core with Hermes-style terminal execution,
 hierarchical delegation, durable state, budgets, compression, and memory management.

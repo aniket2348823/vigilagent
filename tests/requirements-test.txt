@@ -1,4 +1,4 @@
-# Testing dependencies for Antigravity V5
+# Testing dependencies for Vigilagent V5
 
 # Core testing framework
 pytest>=7.4.0
