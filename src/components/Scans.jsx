@@ -36,6 +36,7 @@ const Scans = ({ navigate }) => {
     const [scans, setScans] = useState([]);
     const [hiddenIds, setHiddenIds] = useState(() => getHiddenScanIds());
     const [progressMap, setProgressMap] = useState({}); // Real-time report progress
+    const [phaseMap, setPhaseMap] = useState({}); // Real-time phase tracking per scan_id
     const [expandedScan, setExpandedScan] = useState(null); // Expanded scan row for findings detail
     const [selectedFinding, setSelectedFinding] = useState(null); // Finding detail modal
     const messageBuffer = useRef([]);
@@ -43,10 +44,12 @@ const Scans = ({ navigate }) => {
     const { subscribe } = useWebSocket();
     const scansRef = useRef(scans);
     const progressMapRef = useRef(progressMap);
+    const phaseMapRef = useRef(phaseMap);
     const hiddenIdsRef = useRef(hiddenIds);
 
     useEffect(() => { scansRef.current = scans; }, [scans]);
     useEffect(() => { progressMapRef.current = progressMap; }, [progressMap]);
+    useEffect(() => { phaseMapRef.current = phaseMap; }, [phaseMap]);
     useEffect(() => { hiddenIdsRef.current = hiddenIds; }, [hiddenIds]);
 
     // Visible scans = backend list minus locally hidden ids. Backend storage is untouched.
@@ -88,12 +91,43 @@ const Scans = ({ navigate }) => {
                     newProgress[data.payload.id] = data.payload.progress;
                 }
 
-                // 2. Scan Status Update (Trigger Fetch)
-                if (['SCAN_UPDATE', 'GI5_COMPLETE', 'REPORT_READY'].includes(data.type)) {
-                    shouldFetch = true;
+                // 2. Phase Status Updates (real-time phase tracking)
+                if (data.type === 'PHASE_STATUS' && data.payload?.scan_id) {
+                    const ph = data.payload;
+                    setPhaseMap(prev => {
+                        const cur = prev[ph.scan_id];
+                        if (cur && cur.current_phase === ph.current_phase && cur.phase_index === ph.phase_index) return prev;
+                        return {
+                            ...prev,
+                            [ph.scan_id]: {
+                                current_phase: ph.current_phase,
+                                previous_phase: ph.previous_phase,
+                                phase_index: ph.phase_index,
+                                total_phases: ph.total_phases,
+                                phase_names: ph.phase_names || [],
+                                elapsed_seconds: ph.elapsed_seconds,
+                                phase_durations: ph.phase_durations || {},
+                                timestamp: ph.timestamp,
+                            }
+                        };
+                    });
                 }
 
-                // 3. Auto-download generated PDF report (shared utility)
+                // 3. Scan Status Update (Trigger Fetch)
+                if (['SCAN_UPDATE', 'GI5_COMPLETE', 'REPORT_READY', 'ZOMBIE_SWEEP_RESULT'].includes(data.type)) {
+                    shouldFetch = true;
+                    // Clean up phaseMap for scans that reached a terminal state
+                    if (data.type === 'SCAN_UPDATE' && data.payload?.id &&
+                        ['Completed', 'Failed', 'Interrupted', 'Cancelled'].includes(data.payload.status)) {
+                        setPhaseMap(prev => {
+                            const next = { ...prev };
+                            delete next[data.payload.id];
+                            return next;
+                        });
+                    }
+                }
+
+                // 4. Auto-download generated PDF report (shared utility)
                 if (data.type === 'GI5_LOG') {
                     handleAutoDownload(data);
                 }
@@ -297,14 +331,35 @@ const Scans = ({ navigate }) => {
                                                                 ? 'bg-[#251e38] text-purple-400 border-purple-500/30'
                                                                 : scan.status === 'Completed' || scan.status === 'Fired'
                                                                     ? 'bg-[#1a2f30] text-teal-400 border-teal-500/30'
-                                                                    : 'bg-[#2f1a1a] text-red-400 border-red-500/30'
+                                                                : scan.status === 'Interrupted'
+                                                                    ? 'bg-[#2f2a1a] text-yellow-400 border-yellow-500/30'
+                                                                : scan.status === 'Failed'
+                                                                    ? 'bg-[#2f1a1a] text-red-400 border-red-500/30'
+                                                                : 'bg-[#1a1a2f] text-gray-400 border-gray-500/30'
                                                             }`}>
                                                             <span className={`w-1.5 h-1.5 rounded-full ${scan.status === 'Running' ? 'bg-blue-500 shadow-[0_0_6px_#3b82f6] animate-pulse' :
                                                                 scan.status === 'Finalizing' ? 'bg-purple-500 shadow-[0_0_6px_#a855f7] animate-pulse' :
-                                                                    scan.status === 'Completed' || scan.status === 'Fired' ? 'bg-teal-400' : 'bg-red-400'
+                                                                    scan.status === 'Completed' || scan.status === 'Fired' ? 'bg-teal-400' :
+                                                                scan.status === 'Interrupted' ? 'bg-yellow-400 shadow-[0_0_6px_#facc15]' :
+                                                                scan.status === 'Failed' ? 'bg-red-400' : 'bg-gray-400'
                                                                 }`}></span>
                                                             {scan.status}
                                                         </span>
+                                                        {scan.status === 'Running' && phaseMap[scan.id] && (
+                                                            <div className="mt-1.5 w-full">
+                                                                <div className="flex items-center gap-1.5 text-[9px] text-blue-300/70 font-mono">
+                                                                    <span className="material-symbols-outlined text-[10px]">radar</span>
+                                                                    {phaseMap[scan.id].current_phase}
+                                                                </div>
+                                                                <div className="mt-0.5 flex gap-0.5">
+                                                                    {(phaseMap[scan.id].phase_names || []).map((phaseName, i) => {
+                                                                        const phaseIdx = phaseMap[scan.id].phase_index || 0;
+                                                                        const bgClass = i < phaseIdx ? 'bg-blue-500/60' : i === phaseIdx ? 'bg-blue-400 animate-pulse' : 'bg-white/10';
+                                                                        return <div key={i} className={`h-0.5 flex-1 rounded-full transition-all duration-500 ${bgClass}`} title={phaseName} />;
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </td>
                                                     <td className="px-6 py-5 font-medium text-white">{scan.name || "Untitled Scan"}</td>
                                                     <td className="px-6 py-5 text-gray-400 font-mono text-xs tracking-wide truncate max-w-[200px]" title={scan.scope}>
@@ -340,7 +395,7 @@ const Scans = ({ navigate }) => {
                                                                         <span className="text-xs font-medium text-white">{findings.length}</span>
                                                                         <span className={`material-symbols-outlined text-[14px] text-gray-500 transition-transform ${expandedScan === scan.id ? 'rotate-180' : ''}`}>expand_more</span>
                                                                         {highestCvss > 0 && (
-                                                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${getScoreClass(highestCvss)}`}>\n                                                                                {highestCvss.toFixed(1)}
+                                                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${getScoreClass(highestCvss)}`}>{highestCvss.toFixed(1)}
                                                                             </span>
                                                                         )}
                                                                     </div>
@@ -379,7 +434,7 @@ const Scans = ({ navigate }) => {
                                                         </div>
                                                     </td>
                                                 </motion.tr>
-                                                {expandedScan === scan.id && (scan.findings || []).length > 0 && (
+                                                {expandedScan === scan.id && (
                                                     <motion.tr
                                                         initial={{ opacity: 0 }}
                                                         animate={{ opacity: 1 }}
@@ -387,28 +442,71 @@ const Scans = ({ navigate }) => {
                                                         className="bg-white/[0.01]"
                                                     >
                                                         <td colSpan="7" className="px-8 py-4">
-                                                            <div className="space-y-2">
-                                                                <h4 className="text-xs font-medium text-gray-400 mb-3">Findings ({(scan.findings || []).length})</h4>
-                                                                <div className="grid gap-2">
-                                                                    {(scan.findings || []).map((f, fi) => (
-                                                                        <div key={fi} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] cursor-pointer transition-colors" onClick={() => setSelectedFinding(f)}>
-                                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${getSeverityClass(f.cvss_severity || f.severity)}`}>
-                                                                                {(f.cvss_severity || f.severity || 'INFO').toUpperCase()}
-                                                                            </span>
-                                                                            <span className="text-xs text-white font-medium">{f.type || f.name || 'Finding'}</span>
-                                                                            <span className="text-[10px] text-gray-500 font-mono truncate flex-1" title={f.url || ''}>{f.url || ''}</span>
-                                                                            {f.cvss_score != null && (
-                                                                                <div className="flex items-center gap-2 shrink-0">
-                                                                                    <span className="text-[10px] font-bold text-white">CVSS {Number(f.cvss_score).toFixed(1)}</span>
-                                                                                    {f.cvss_vector && (
-                                                                                        <span className="text-[8px] text-gray-500 font-mono truncate max-w-[200px]" title={f.cvss_vector}>{f.cvss_vector}</span>
-                                                                                    )}
-                                                                                </div>
-                                                                            )}
-                                                                            {f.cwe && <span className="text-[9px] text-gray-500 font-mono shrink-0">{f.cwe}</span>}
+                                                            <div className="space-y-4">
+                                                                {/* Phase Timeline */}
+                                                                {phaseMap[scan.id] && (
+                                                                    <div>
+                                                                        <h4 className="text-xs font-medium text-gray-400 mb-3">Phase Timeline</h4>
+                                                                        <div className="flex items-center gap-0">
+                                                                            {(phaseMap[scan.id].phase_names || []).map((name, i) => {
+                                                                                const dur = phaseMap[scan.id].phase_durations?.[name];
+                                                                                const isCompleted = i < (phaseMap[scan.id].phase_index || 0);
+                                                                                const isCurrent = i === (phaseMap[scan.id].phase_index || 0);
+                                                                                return (
+                                                                                    <React.Fragment key={i}>
+                                                                                        <div className="flex flex-col items-center gap-1 min-w-0 flex-1">
+                                                                                            <div className={`w-2 h-2 rounded-full border-2 transition-all ${
+                                                                                                isCompleted ? 'bg-blue-500 border-blue-500' :
+                                                                                                isCurrent ? 'bg-blue-400 border-blue-400 shadow-[0_0_6px_#60a5fa] animate-pulse' :
+                                                                                                'bg-transparent border-white/20'
+                                                                                            }`} />
+                                                                                            <span className={`text-[8px] font-mono text-center leading-tight ${
+                                                                                                isCurrent ? 'text-blue-300' :
+                                                                                                isCompleted ? 'text-gray-300' : 'text-gray-500'
+                                                                                            }`}>{name}</span>
+                                                                                            {dur != null && (
+                                                                                                <span className="text-[8px] text-gray-500 font-mono">
+                                                                                                    {dur < 60 ? `${Math.round(dur)}s` : `${(dur / 60).toFixed(1)}m`}
+                                                                                                </span>
+                                                                                            )}
+                                                                                        </div>
+                                                                                        {i < (phaseMap[scan.id].phase_names || []).length - 1 && (
+                                                                                            <div className={`h-px flex-1 -mt-3 transition-all ${
+                                                                                                isCompleted ? 'bg-blue-500/40' : 'bg-white/10'
+                                                                                            }`} />
+                                                                                        )}
+                                                                                    </React.Fragment>
+                                                                                );
+                                                                            })}
                                                                         </div>
-                                                                    ))}
-                                                                </div>
+                                                                    </div>
+                                                                )}
+                                                                {/* Findings */}
+                                                                {(scan.findings || []).length > 0 && (
+                                                                    <div>
+                                                                        <h4 className="text-xs font-medium text-gray-400 mb-3">Findings ({(scan.findings || []).length})</h4>
+                                                                        <div className="grid gap-2">
+                                                                            {(scan.findings || []).map((f, fi) => (
+                                                                                <div key={fi} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] cursor-pointer transition-colors" onClick={() => setSelectedFinding(f)}>
+                                                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${getSeverityClass(f.cvss_severity || f.severity)}`}>
+                                                                                        {(f.cvss_severity || f.severity || 'INFO').toUpperCase()}
+                                                                                    </span>
+                                                                                    <span className="text-xs text-white font-medium">{f.type || f.name || 'Finding'}</span>
+                                                                                    <span className="text-[10px] text-gray-500 font-mono truncate flex-1" title={f.url || ''}>{f.url || ''}</span>
+                                                                                    {f.cvss_score != null && (
+                                                                                        <div className="flex items-center gap-2 shrink-0">
+                                                                                            <span className="text-[10px] font-bold text-white">CVSS {Number(f.cvss_score).toFixed(1)}</span>
+                                                                                            {f.cvss_vector && (
+                                                                                                <span className="text-[8px] text-gray-500 font-mono truncate max-w-[200px]" title={f.cvss_vector}>{f.cvss_vector}</span>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {f.cwe && <span className="text-[9px] text-gray-500 font-mono shrink-0">{f.cwe}</span>}
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         </td>
                                                     </motion.tr>

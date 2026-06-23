@@ -17,7 +17,14 @@ logger = logging.getLogger(__name__)
 
 
 class LambdaAgent:
-    """PRE-CODE SCANNER — Detects vulnerabilities in source code before deployment."""
+    """PRE-CODE SCANNER — Detects vulnerabilities in source code before deployment.
+
+    Exposes the same lifecycle interface as BaseAgent subclasses
+    (name, start, stop) so the orchestrator can activate and deactivate
+    it without special-casing.
+    """
+
+    name = "agent_lambda"
 
     PATTERNS = [
         {
@@ -84,7 +91,22 @@ class LambdaAgent:
 
     def __init__(self, agent_id: str = "agent_lambda", bus=None):
         self.agent_id = agent_id
+        self.name = agent_id
         self.bus = bus
+        self._is_active = False
+        self.active = False
+
+    async def start(self):
+        """Start the agent (BaseAgent-compatible lifecycle)."""
+        self._is_active = True
+        self.active = True
+        logger.info(f"🤖 {self.name} is ONLINE. Intelligence backbone synced.")
+
+    async def stop(self):
+        """Stop the agent (BaseAgent-compatible lifecycle)."""
+        self._is_active = False
+        self.active = False
+        logger.info(f"💤 {self.name} is OFFLINE.")
 
     async def analyze(self, code: str, language: str = "python") -> List[Dict]:
         """Analyze source code for security vulnerabilities."""

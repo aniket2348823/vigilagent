@@ -83,6 +83,25 @@ class RedisClient:
             logger.error(f"Failed to initialize Redis client: {e}")
             self._is_healthy = False
     
+    def get_pool_stats(self) -> dict:
+        """Return current connection pool utilization metrics."""
+        if not self._client or not hasattr(self._client, 'connection_pool'):
+            return {"active": 0, "idle": 0, "max": self.config.max_connections, "overflow": 0}
+        try:
+            pool = self._client.connection_pool
+            # aioredis ConnectionPool tracks _connection_kwargs, _available_connections, _in_use_connections
+            in_use = len(getattr(pool, '_in_use_connections', set())) if hasattr(pool, '_in_use_connections') else 0
+            available = len(getattr(pool, '_available_connections', [])) if hasattr(pool, '_available_connections') else 0
+            max_conn = getattr(pool, '_max_connections', self.config.max_connections) or self.config.max_connections
+            return {
+                "active": in_use,
+                "idle": available,
+                "max": max_conn,
+                "overflow": max(0, in_use + available - max_conn),
+            }
+        except Exception:
+            return {"active": 0, "idle": 0, "max": self.config.max_connections, "overflow": 0}
+
     async def _health_check_loop(self) -> None:
         """Background task to check Redis health periodically"""
         while True:
@@ -93,10 +112,25 @@ class RedisClient:
                     if not self._is_healthy:
                         logger.info("Redis connection restored")
                     self._is_healthy = True
+                    # Sync pool metrics to Prometheus gauges
+                    try:
+                        from backend.core.metrics import metrics as _m
+                        stats = self.get_pool_stats()
+                        _m.redis_pool_active.set(stats["active"])
+                        _m.redis_pool_idle.set(stats["idle"])
+                        _m.redis_pool_max.set(stats["max"])
+                        _m.redis_pool_overflow_total.set_value(stats["overflow"])
+                    except Exception:
+                        pass
             except Exception as e:
                 if self._is_healthy:
                     logger.error(f"Redis health check failed: {e}")
                 self._is_healthy = False
+                try:
+                    from backend.core.metrics import metrics as _m
+                    _m.redis_reconnect_total.inc()
+                except Exception:
+                    pass
                 # HIGH-40: Attempt reconnection on health check failure
                 try:
                     if self._client:
@@ -108,6 +142,7 @@ class RedisClient:
                         socket_connect_timeout=self.config.socket_connect_timeout,
                         decode_responses=self.config.decode_responses,
                         retry_on_timeout=True,
+                        health_check_interval=self.config.health_check_interval,
                     )
                 except Exception as reconnect_err:
                     logger.debug(f"Redis reconnect attempt failed: {reconnect_err}")
@@ -301,11 +336,6 @@ class RedisClient:
             logger.error(f"Failed to release lock {key}: {e}")
 
 
-class LockNotAcquiredError(Exception):
-    """Raised when a distributed lock cannot be acquired"""
-    pass
-
-
 # Global Redis client instance
 _redis_client: Optional[RedisClient] = None
 
@@ -343,12 +373,14 @@ def get_sync_redis():
             _sync_redis_instance.ping()
             return _sync_redis_instance
         except Exception:
-            pass
+            # Stale connection — clear and fall through to create a fresh one.
+            _sync_redis_instance = None
     try:
         import redis as _redis_mod
         url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-        _sync_redis_instance = _redis_mod.Redis.from_url(url, decode_responses=True)
-        _sync_redis_instance.ping()
+        conn = _redis_mod.Redis.from_url(url, decode_responses=True)
+        conn.ping()
+        _sync_redis_instance = conn
         return _sync_redis_instance
     except Exception as e:
         logger.warning(f"Sync Redis unavailable: {e}")

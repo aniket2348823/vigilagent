@@ -104,6 +104,11 @@ class AlphaOrchestrator:
         oob_url = await interactsh.start()
         phases.state.interactsh_url = oob_url
 
+        # Clear stale Docker caches so availability is re-checked per scan.
+        # Without this, a False result cached at import time persists forever.
+        from backend.tools.recon.docker_runtime import reset_container_cache
+        reset_container_cache()
+
         await db_manager.initialize()
         await db_manager.create_recon_run(scan_id=scan_id, target=target_url,
             mode=scan_mode.value, scope=scope.model_dump(mode="json"),

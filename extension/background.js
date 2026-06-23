@@ -9,6 +9,51 @@ const BACKEND_URL = "http://localhost:8000";
 const WS_ENDPOINT = "ws://localhost:8000/stream?client_type=spy";
 
 // ============================================================================
+// WEBSOCKET SPY REGISTRATION
+// ============================================================================
+
+let spyWs = null;
+let spyReconnectTimer = null;
+let spyReconnectAttempts = 0;
+const SPY_BASE_DELAY_MS = 2000;
+const SPY_MAX_DELAY_MS = 30000;
+
+function connectSpyWebSocket() {
+    if (spyWs && (spyWs.readyState === WebSocket.CONNECTING || spyWs.readyState === WebSocket.OPEN)) {
+        return;
+    }
+    if (!isBackendAlive) return;
+    try {
+        spyWs = new WebSocket(WS_ENDPOINT);
+        spyWs.onopen = () => {
+            spyReconnectAttempts = 0;
+            console.log("[SPY WS] Connected to backend as spy");
+        };
+        spyWs.onmessage = () => {
+            // Inbound frames are scope/pause signals — acknowledged silently.
+        };
+        spyWs.onclose = () => {
+            console.log("[SPY WS] Disconnected, scheduling reconnect");
+            scheduleSpyReconnect();
+        };
+        spyWs.onerror = () => {
+            // onclose fires after this — reconnect handled there.
+        };
+    } catch (e) {
+        console.warn("[SPY WS] Failed to create WebSocket:", e.message);
+        scheduleSpyReconnect();
+    }
+}
+
+function scheduleSpyReconnect() {
+    clearTimeout(spyReconnectTimer);
+    if (!isBackendAlive) return;
+    const delay = Math.min(SPY_MAX_DELAY_MS, SPY_BASE_DELAY_MS * (2 ** spyReconnectAttempts));
+    spyReconnectAttempts += 1;
+    spyReconnectTimer = setTimeout(connectSpyWebSocket, delay);
+}
+
+// ============================================================================
 // BACKEND HEALTH GUARD (Triple-Shield)
 // ============================================================================
 
@@ -354,3 +399,13 @@ function showBlockNotification(reason) {
 }
 
 console.log("[SPY V2] Antigravity Spy V2 Initialized");
+
+// Establish WebSocket spy registration so the backend knows the extension is online
+connectSpyWebSocket();
+
+// Reconnect the spy WebSocket if backend recovers from an outage
+setInterval(() => {
+    if (isBackendAlive && (!spyWs || spyWs.readyState === WebSocket.CLOSED)) {
+        connectSpyWebSocket();
+    }
+}, 5000);

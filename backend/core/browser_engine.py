@@ -43,7 +43,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse, parse_qsl, urljoin
 
 from backend.core.config import settings
-_CHROMIUM_PATH = os.getenv('OPENCLAW_CHROMIUM_PATH', '')
+_CHROMIUM_PATH = os.getenv('OPENCLAW_CHROMIUM_PATH') or None
 
 logger = logging.getLogger(__name__)
 

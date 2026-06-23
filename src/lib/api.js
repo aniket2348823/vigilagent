@@ -144,7 +144,14 @@ export const createScan = async ({ target_url, mode = 'STANDARD', modules = [] }
     try { body = await response.json(); } catch { /* keep null */ }
 
     if (!response.ok) {
-        const detail = (body && (body.detail || body.message)) || `HTTP ${response.status}`;
+        let detail = (body && (body.detail || body.message)) || `HTTP ${response.status}`;
+        if (body && body.errors && Array.isArray(body.errors)) {
+            const errList = body.errors.map(e => {
+                if (e.loc && Array.isArray(e.loc)) return `${e.loc.join('.')}: ${e.msg}`;
+                return e.msg || JSON.stringify(e);
+            }).join(', ');
+            detail += ` (${errList})`;
+        }
         const e = new Error(`Scan creation failed: ${detail}`);
         e.status = response.status;
         e.body = body;

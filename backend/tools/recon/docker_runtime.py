@@ -26,6 +26,7 @@ this module ever builds a container command.
 from __future__ import annotations
 
 import functools
+import logging
 import os
 import re
 import shutil
@@ -67,8 +68,7 @@ def docker_daemon_available() -> bool:
                            encoding="utf-8", errors="replace")
         return p.returncode == 0 and "linux" in (p.stdout or "").lower()
     except Exception as exc:
-        import logging as _log
-        _log.getLogger('docker_runtime').debug('docker_daemon_available check failed: %s', exc)
+        logger.debug('docker_daemon_available check failed: %s', exc)
         return False
 
 
@@ -84,8 +84,7 @@ def recon_image_present(image: str | None = None) -> bool:
                            encoding="utf-8", errors="replace")
         return p.returncode == 0
     except Exception as exc:
-        import logging as _log
-        _log.getLogger('docker_runtime').debug('recon_image_present check failed: %s', exc)
+        logger.debug('recon_image_present check failed: %s', exc)
         return False
     return False
 
@@ -120,10 +119,8 @@ def _running_recon_container_cached(image: str, override: str) -> str:
             if p.returncode == 0 and "true" in (p.stdout or "").lower():
                 return override
         except Exception as exc:
-            import logging as _log
-            _log.getLogger('docker_runtime').debug('container inspect failed: %s', exc)
+            logger.debug('container inspect failed: %s', exc)
             pass
-    return ""
     # 2. Otherwise pick the first running container based on the recon image.
     #    The ancestor filter matches by image ID, so it MISSES containers whose
     #    image was since re-tagged/committed (the running container then shows a
@@ -138,8 +135,7 @@ def _running_recon_container_cached(image: str, override: str) -> str:
             candidate_images.add(idp.stdout.strip())
             candidate_images.add(idp.stdout.strip().replace("sha256:", "")[:12])
     except Exception as exc:
-        import logging as _log
-        _log.getLogger('docker_runtime').debug('image inspect failed: %s', exc)
+        logger.debug('image inspect failed: %s', exc)
     for img in candidate_images:
         try:
             p = subprocess.run(
@@ -151,8 +147,7 @@ def _running_recon_container_cached(image: str, override: str) -> str:
                 if names:
                     return names[0]
         except Exception as exc:
-            import logging as _log
-            _log.getLogger('docker_runtime').debug('docker ps ancestor filter failed: %s', exc)
+            logger.debug('docker ps ancestor filter failed: %s', exc)
     # 3. Last-resort: scan running containers and match any whose image (by
     #    name or short ID) looks like the recon image. Survives commit/re-tag.
     try:
@@ -172,8 +167,7 @@ def _running_recon_container_cached(image: str, override: str) -> str:
                 if image_repo in img or img in short_ids:
                     return name
     except Exception as exc:
-        import logging as _log
-        _log.getLogger('docker_runtime').debug('docker ps scan failed: %s', exc)
+        logger.debug('docker ps scan failed: %s', exc)
     return ""
 
 
@@ -183,8 +177,97 @@ def running_recon_container() -> str:
 
 
 def reset_container_cache() -> None:
-    """Clear the running-container cache (after start/stop)."""
+    """Clear all Docker runtime caches (after start/stop/image pull)."""
     _running_recon_container_cached.cache_clear()
+    docker_daemon_available.cache_clear()
+    recon_image_present.cache_clear()
+
+
+# ── Startup readiness probe ──────────────────────────────────────────────
+
+async def probe_docker_readiness(
+    *,
+    max_retries: int = None,
+    initial_delay: float = None,
+    max_delay: float = None,
+) -> dict:
+    """Poll Docker daemon until it answers ``docker info``.
+
+    Called once during backend startup (lifespan) so that by the time the
+    first scan dispatches a tool, ``docker_daemon_available()`` caches True
+    instead of a stale False from import time.  Retries with exponential
+    backoff; returns a status dict for the boot log.
+
+    If Docker never becomes ready the function still returns (non-blocking)
+    so the backend starts in degraded/local-only mode.
+    """
+    import asyncio as _aio
+
+    if max_retries is None:
+        max_retries = int(os.getenv("VIGILAGENT_DOCKER_PROBE_RETRIES", "12"))
+    if initial_delay is None:
+        initial_delay = float(os.getenv("VIGILAGENT_DOCKER_PROBE_DELAY", "2"))
+    if max_delay is None:
+        max_delay = float(os.getenv("VIGILAGENT_DOCKER_PROBE_MAX_DELAY", "15"))
+
+    # Reset any stale caches from a previous check (e.g. hot-reload).
+    reset_container_cache()
+
+    delay = initial_delay
+    for attempt in range(1, max_retries + 1):
+        # Check: CLI exists AND daemon answers
+        if shutil.which("docker") is None:
+            logger.info(
+                "[DOCKER-PROBE] docker CLI not found on PATH — "
+                "skipping probe (attempt %d/%d)", attempt, max_retries)
+            break
+
+        try:
+            proc = await _aio.create_subprocess_exec(
+                "docker", "info", "--format", "{{.ServerVersion}}",
+                stdout=_aio.subprocess.PIPE,
+                stderr=_aio.subprocess.PIPE,
+            )
+            stdout, _ = await _aio.wait_for(proc.communicate(), timeout=10)
+            version = (stdout.decode("utf-8", errors="replace") or "").strip()
+            if proc.returncode == 0 and version:
+                # Daemon is live — warm the caches so every subsequent
+                # ``docker_recon_ready()`` call hits True immediately.
+                reset_container_cache()
+                _daemon_ok = docker_daemon_available()
+                _image_ok = recon_image_present()
+                _container = running_recon_container()
+                logger.info(
+                    "[DOCKER-PROBE] Docker %s ready (daemon=%s, "
+                    "image=%s, container=%r) after %d attempt(s)",
+                    version, _daemon_ok, _image_ok,
+                    _container or "none", attempt)
+                return {
+                    "ready": True,
+                    "version": version,
+                    "daemon": _daemon_ok,
+                    "image": _image_ok,
+                    "container": _container or None,
+                    "attempts": attempt,
+                }
+        except _aio.TimeoutError:
+            logger.debug(
+                "[DOCKER-PROBE] attempt %d/%d timed out",
+                attempt, max_retries)
+        except Exception as exc:
+            logger.debug(
+                "[DOCKER-PROBE] attempt %d/%d failed: %s",
+                attempt, max_retries, exc)
+
+        await _aio.sleep(delay)
+        delay = min(delay * 1.5, max_delay)
+
+    logger.warning(
+        "[DOCKER-PROBE] Docker not ready after %d attempts — "
+        "backend will run in local-only mode. Recon tools that require "
+        "Docker will be skipped until Docker becomes available.",
+        max_retries)
+    return {"ready": False, "attempts": max_retries}
 
 
 # Container-internal working dir for exec-based runs (output written here then
@@ -261,8 +344,7 @@ def _rewrite_for_exec(argv: Sequence[str], raw_dir: Path, tool_root: Path,
         if not Path(raw_dir).is_absolute():
             prefixes_raw.add(str(raw_dir))
     except Exception as exc:
-        import logging as _log
-        _log.getLogger('docker_runtime').debug('path normalization failed: %s', exc)
+        logger.debug('path normalization failed: %s', exc)
     for extra in extra_raw_prefixes or ():
         if extra:
             prefixes_raw.add(str(extra))
@@ -348,8 +430,7 @@ def _to_container_path(host_path: str, raw_dir: Path, tool_root: Path) -> str | 
         if not Path(raw_dir).is_absolute():
             raw_candidates.add(str(raw_dir))
     except Exception as path_exc:
-        import logging as _log
-        _log.getLogger('docker_runtime').debug('path normalization failed: %s', path_exc)
+        logger.debug('path normalization failed: %s', path_exc)
     tool_s = str(tool_root)
     norm = host_path.replace("\\", "/")
     norm_low = norm.lower()

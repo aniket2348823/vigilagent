@@ -8,14 +8,35 @@ import time
 import collections
 from backend.core.task_manager import TaskManager
 import hashlib
-import json
-import logging
 
 # Message schema validation (security hardening)
+# Every event type that any part of the backend may broadcast through
+# broadcast_immediate() (which validates) must appear here.
 _ALLOWED_EVENT_TYPES = {
-    "LIVE_ATTACK_FEED", "VULN_UPDATE", "SPY_STATUS", "BATCH",
-    "LIFECYCLE_EVENT", "LIVE_THREAT_LOG", "SCAN_UPDATE",
+    # Live feed & threats
+    "LIVE_ATTACK_FEED", "LIVE_THREAT_LOG",
+    # Vulnerability updates
+    "VULN_UPDATE", "RECON_PACKET", "COVERAGE_UPDATE",
+    # Spy / extension
+    "SPY_STATUS",
+    # Batch envelope
+    "BATCH",
+    # Lifecycle / scan state
+    "SCAN_UPDATE", "REPORT_READY",
+    "PHASE_STARTED", "PHASE_COMPLETED",
+    "LIFECYCLE_EVENT",
+    # Agent heartbeat & progress
     "AGENT_HEARTBEAT", "RECON_PROGRESS", "EXPLOIT_PROGRESS",
+    # Job dispatch & cluster telemetry
+    "JOB_ASSIGNED", "CLUSTER_TELEMETRY",
+    # Key capture (extension bridge)
+    "KEY_CAPTURE",
+    # Zombie sweep & governance
+    "ZOMBIE_SWEEP_RESULT",
+    # GI5 system log
+    "GI5_LOG",
+    # Endpoint discovery
+    "ENDPOINT_DISCOVERED", "ENDPOINT_TESTED",
 }
 _MAX_MESSAGE_SIZE = 65536  # 64KB max message size
 
@@ -233,6 +254,15 @@ class SocketManager:
                             *(self._send_with_timeout(conn, message) for conn in self.ui_connections),
                             return_exceptions=True
                         )
+                        try:
+                            from backend.core.metrics import metrics as _m
+                            n = len(self.ui_connections)
+                            errors = sum(1 for r in results if r is not None)
+                            _m.ws_messages_sent_total.inc(n * len(batch))
+                            if errors:
+                                _m.ws_send_errors_total.inc(errors)
+                        except Exception:
+                            pass
                         for dead in results:
                             if isinstance(dead, WebSocket) and dead in self.ui_connections:
                                 self.ui_connections.remove(dead)
@@ -278,6 +308,7 @@ class SocketManager:
         await websocket.accept()
         if client_type == "spy":
             self.spy_connections.append(websocket)
+            await self.mark_spy_alive()
             await self.broadcast_to_ui({
                 "type": "SPY_STATUS",
                 "payload": {"connected": True}

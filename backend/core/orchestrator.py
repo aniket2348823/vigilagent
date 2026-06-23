@@ -123,6 +123,10 @@ class HiveOrchestrator:
     # interfere. For concurrent scan support, these must be moved to
     # per-scan instances (tracked by scan_id).
     active_agents = {}
+    # Per-scan agent registry: maps scan_id -> {agent_name: agent_instance}.
+    # Enables surgical stop of only agents belonging to a specific scan
+    # instead of nuking the global registry on cancel/crash.
+    _scan_agents: Dict[str, Dict[str, Any]] = {}
     _active_agents_lock: Optional[asyncio.Lock] = None  # CRIT-04: lazily created per-loop
 
     @classmethod
@@ -136,6 +140,7 @@ class HiveOrchestrator:
     campaign_budget = None
     _orphaned_tasks = set()
     _task_manager = TaskManager("HiveOrchestrator")
+    _zombie_sweep_task: Optional[asyncio.Task] = None
 
     @staticmethod
     async def bootstrap_hive(target_config, scan_id=None):
@@ -180,6 +185,12 @@ class HiveOrchestrator:
             scan_duration = max(scan_duration, 10)
             
             # Lightweight monitoring loop — broadcasts frequently for WS listeners
+            try:
+                from backend.core.metrics import metrics as _m
+                _m.scans_started_total.inc()
+                _m.scans_active.inc()
+            except Exception:
+                pass
             loop_start = time.time()
             while time.time() - loop_start < scan_duration:
                 await manager.broadcast_immediate({"type": "SCAN_UPDATE", "payload": {"id": scan_id, "status": "Running", "target_url": target_config['url']}})
@@ -241,6 +252,12 @@ class HiveOrchestrator:
             })
             await manager.broadcast_immediate({"type": "REPORT_READY", "payload": {"id": scan_id}})
             await manager.broadcast_immediate({"type": "SCAN_UPDATE", "payload": {"id": scan_id, "status": "Completed"}})
+            try:
+                from backend.core.metrics import metrics as _m
+                _m.scans_completed_total.inc()
+                _m.scans_active.dec()
+            except Exception:
+                pass
             
             logger.info(f"[Orchestrator] TEST MODE: Scan {scan_id} completed in {time.time() - loop_start:.1f}s (fast-path).")
             return  # Exit early — no agents, no real HTTP I/O
@@ -702,7 +719,7 @@ class HiveOrchestrator:
         delta = AgentDelta(bus)
         
         # AWAKENING: The Pre-code Scanner (SAST + IaC + SBOM)
-        lambda_sast = LambdaAgent(bus)
+        lambda_sast = LambdaAgent(bus=bus)
         
         # AWAKENING: The Mission Planner (V6 Strategic Heart)
         planner = MissionPlanner(bus)
@@ -811,6 +828,12 @@ class HiveOrchestrator:
         healing_task.add_done_callback(HiveOrchestrator._orphaned_tasks.discard)
         healing_task.add_done_callback(lambda t: _log_task_error(t, "healing", scan_id))
         logger.info("[Orchestrator] Self-healing engine activated")
+
+        # Start zombie agent sweep if not already running
+        if HiveOrchestrator._zombie_sweep_task is None or HiveOrchestrator._zombie_sweep_task.done():
+            HiveOrchestrator._zombie_sweep_task = asyncio.create_task(
+                HiveOrchestrator._zombie_agent_sweep())
+            logger.info("[Orchestrator] Zombie agent sweep activated")
 
         # --- CognitiveRouter (requires active_agents populated) ---
         cognitive_router = CognitiveRouter(HiveOrchestrator.active_agents)
@@ -1109,6 +1132,12 @@ class HiveOrchestrator:
             broadcast_interval = 0.5 if is_test_mode else 2.0
             
             _monitor_agents = ["planner", "alpha", "beta", "sigma", "gamma", "omega", "kappa", "zeta", "prism", "chi", "delta", "lambda", "network"]
+            try:
+                from backend.core.metrics import metrics as _m
+                _m.scans_started_total.inc()
+                _m.scans_active.inc()
+            except Exception:
+                pass
             while time.time() - loop_start < scan_duration:
                 _mon_idx = int((time.time() - loop_start) / broadcast_interval) % len(_monitor_agents)
                 _cur_mon = _monitor_agents[_mon_idx]
@@ -1129,6 +1158,12 @@ class HiveOrchestrator:
                 })
                 await asyncio.sleep(broadcast_interval)
         except asyncio.CancelledError:
+            try:
+                from backend.core.metrics import metrics as _m
+                _m.scans_failed_total.inc()
+                _m.scans_active.dec()
+            except Exception:
+                pass
             pass
         finally:
             # ═══════════════════════════════════════════════════════════════════════
@@ -1206,11 +1241,16 @@ class HiveOrchestrator:
             # ═══════════════════════════════════════════════════════════════════════
             
             await manager.broadcast({"type": "GI5_LOG", "payload": "Hyper-Mind: Mission Complete. Shutting down."})
+            # Pop from per-scan registry BEFORE stopping agents to prevent
+            # the zombie sweep from racing with the shutdown loop.
+            async with HiveOrchestrator._get_lock():
+                HiveOrchestrator._scan_agents.pop(scan_id, None)
             for agent in agents:
+                agent_name = getattr(agent, "name", type(agent).__name__)
                 try:
                     await asyncio.wait_for(agent.stop(), timeout=5.0)
                 except Exception as e:
-                    logger.error(f"Failed to stop agent {agent.name}: {e}")
+                    logger.error(f"Failed to stop agent {agent_name}: {e}")
             
             # --- V6 GRACE PERIOD ---
             await asyncio.sleep(1.0)
@@ -1227,9 +1267,16 @@ class HiveOrchestrator:
             for etype in EventType:
                 bus.unsubscribe(etype, event_listener)
             
-            # Clear registry (CRIT-04: protected by lock)
+            # Surgically remove this scan's agents from the global registry
+            # (CRIT-04: protected by lock).  NOTE: We do NOT use
+            # active_agents.clear() because concurrent scans may share it.
+            # _scan_agents[scan_id] was already popped above before the stop
+            # loop to prevent racing with the zombie sweep.
+            _this_scan_names = {getattr(a, "name", None) for a in agents if getattr(a, "name", None)}
             async with HiveOrchestrator._get_lock():
-                HiveOrchestrator.active_agents.clear()
+                for name in list(HiveOrchestrator.active_agents):
+                    if name in _this_scan_names:
+                        HiveOrchestrator.active_agents.pop(name, None)
             logger.info(f"[Orchestrator] Scan {scan_id} Cleaned Up. Listeners detached.")
             
             # --- GENERATE GOD MODE REPORT ---
@@ -1370,7 +1417,6 @@ class HiveOrchestrator:
                         
                         # [TEST HARNESS COMPLIANCE: TC010] 
                         # Emit a terminating LIVE_ATTACK_FEED event to flush the pipeline for local E2E verification
-                        from datetime import datetime
                         await manager.broadcast({
                             "type": "LIVE_ATTACK_FEED",
                             "scan_id": scan_id,
@@ -1409,6 +1455,12 @@ class HiveOrchestrator:
                         stats_db_manager.sync_complete_scan(scan_id, status="Completed", report_ready=True)
                         await manager.broadcast({"type": "REPORT_READY", "payload": {"id": scan_id}})
                         await manager.broadcast({"type": "SCAN_UPDATE", "payload": {"id": scan_id, "status": "Completed"}})
+                        try:
+                            from backend.core.metrics import metrics as _m
+                            _m.scans_completed_total.inc()
+                            _m.scans_active.dec()
+                        except Exception:
+                            pass
                         
                         for s in stats_db_manager._stats["scans"]:
                             if s["id"] == scan_id:
@@ -1430,6 +1482,126 @@ class HiveOrchestrator:
             await manager.broadcast({"type": "GI5_LOG", "payload": f"SCAN FINISHED. AI FINALIZING FORENSIC DATA FOR {scan_id}..."})
 
     @staticmethod
+    async def _zombie_agent_sweep():
+        """Periodic sweep that detects and stops agents whose scans are no longer active.
+
+        Runs every 30 seconds. For each scan_id in _scan_agents whose database
+        status is not in (Running, Initializing, Finalizing), the agents are
+        stopped and removed from the registry.
+
+        Emits ZOMBIE_SWEEP_RESULT WebSocket events so the frontend can display
+        cleanup notifications.
+
+        Also performs per-scan agent health checks: if an agent's asyncio task
+        is done (finished/cancelled/crashed) but the scan is still running,
+        the agent is restarted via its restart callback.
+        """
+        import asyncio as _aio
+        from backend.core.recovery_engine import healing_engine  # hoisted above loop — cached by sys.modules anyway
+        while True:
+            try:
+                await _aio.sleep(30)
+                # Snapshot active scan statuses from the database
+                try:
+                    stats = stats_db_manager.get_stats()
+                    active_statuses = {
+                        s["id"] for s in stats.get("scans", [])
+                        if s.get("status") in ("Running", "Initializing", "Finalizing")
+                    }
+                except Exception:
+                    active_statuses = set()
+
+                # --- PART 1: Stop agents for inactive scans ---
+                async with HiveOrchestrator._get_lock():
+                    orphans = [
+                        sid for sid in list(HiveOrchestrator._scan_agents)
+                        if sid not in active_statuses
+                    ]
+
+                for scan_id in orphans:
+                    async with HiveOrchestrator._get_lock():
+                        scan_agents = HiveOrchestrator._scan_agents.pop(scan_id, {})
+                    if not scan_agents:
+                        continue
+                    stopped = []
+                    failed = []
+                    logger.warning(
+                        "[ZombieSweep] Stopping %d orphaned agents for inactive scan %s",
+                        len(scan_agents), scan_id)
+                    for name, agent in scan_agents.items():
+                        try:
+                            if hasattr(agent, "stop"):
+                                await _aio.wait_for(agent.stop(), timeout=5.0)
+                            stopped.append(name)
+                            # Remove from global registry
+                            async with HiveOrchestrator._get_lock():
+                                HiveOrchestrator.active_agents.pop(name, None)
+                        except Exception as e:
+                            failed.append(f"{name}: {e}")
+                            logger.warning("[ZombieSweep] Failed to stop %s: %s", name, e)
+                    # Broadcast cleanup result to frontend
+                    await manager.broadcast({
+                        "type": "ZOMBIE_SWEEP_RESULT",
+                        "payload": {
+                            "scan_id": scan_id,
+                            "stopped_agents": stopped,
+                            "failed_agents": failed,
+                            "timestamp": datetime.now().strftime("%H:%M:%S"),
+                        }
+                    })
+
+                # --- PART 2: Per-scan agent health check (active scans only) ---
+                # Agents now store self._task in BaseAgent.start(), so the
+                # check below can detect crashed tasks and trigger auto-restart.
+                # healing_engine is imported once above the while loop.
+                async with HiveOrchestrator._get_lock():
+                    active_scan_agents = {
+                        sid: dict(agents)
+                        for sid, agents in HiveOrchestrator._scan_agents.items()
+                        if sid in active_statuses
+                    }
+
+                for scan_id, scan_agents in active_scan_agents.items():
+                    for name, agent in scan_agents.items():
+                        # Check if the agent's asyncio task crashed
+                        # Agents may store their task in _task or _background_task
+                        task = (
+                            getattr(agent, "_task", None)
+                            or getattr(agent, "_background_task", None)
+                            or getattr(agent, "_running_task", None)
+                        )
+                        if task is not None and task.done():
+                            exc = task.exception() if not task.cancelled() else None
+                            if exc:
+                                logger.warning(
+                                    "[ZombieSweep] Agent %s task crashed for scan %s: %s",
+                                    name, scan_id, exc)
+                                # Attempt restart via self-healing callback
+                                try:
+                                    callback = healing_engine.restart_callbacks.get(name)
+                                    if callback:
+                                        await _aio.wait_for(callback(), timeout=10.0)
+                                        logger.info("[ZombieSweep] Restarted %s for scan %s", name, scan_id)
+                                        await manager.broadcast({
+                                            "type": "ZOMBIE_SWEEP_RESULT",
+                                            "payload": {
+                                                "scan_id": scan_id,
+                                                "restarted_agent": name,
+                                                "reason": "task_crash",
+                                                "error": str(exc)[:200],
+                                                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                            }
+                                        })
+                                except Exception as restart_err:
+                                    logger.error(
+                                        "[ZombieSweep] Failed to restart %s: %s", name, restart_err)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"[ZombieSweep] Sweep error: {e}")
+
+    @staticmethod
     async def _cluster_telemetry_loop(redis_url: str, scan_id: str):
         """Syncs distributed cluster metrics to the UI Dashboard.
 
@@ -1437,12 +1609,24 @@ class HiveOrchestrator:
         synchronous ``redis`` client which blocked the event loop on every
         iteration.
         """
-        import redis.asyncio as aioredis
-        import json
+        from backend.core.redis_client import get_redis_client
         r = None
         try:
-            r = aioredis.from_url(redis_url)
+            _rc = await get_redis_client()
+            r = _rc.client
+            if r is None:
+                logger.warning("[ClusterTelemetry] Redis client unavailable, telemetry loop will retry")
             while True:
+                if r is None:
+                    try:
+                        _rc = await get_redis_client()
+                        r = _rc.client
+                    except Exception:
+                        await asyncio.sleep(5)
+                        continue
+                    if r is None:
+                        await asyncio.sleep(5)
+                        continue
                 # 1. Gather Metrics (async — no event-loop blocking)
                 worker_data = await r.hgetall("workers")
                 worker_count = len(worker_data)
@@ -1468,9 +1652,7 @@ class HiveOrchestrator:
         except Exception as e:
             logger.debug(f"Cluster Telemetry loop failure: {e}")
         finally:
-            if r is not None:
-                try:
-                    await r.close()
-                except Exception:
-                    pass
+            # Don't close r — it's the centralized pool client; other
+            # callers share the same connection pool.
+            pass
 

@@ -37,6 +37,7 @@ class EventType(str, Enum):
     MISSION_PLANNED = "MISSION_PLANNED"
     PHASE_STARTED = "PHASE_STARTED"
     PHASE_COMPLETED = "PHASE_COMPLETED"
+    PHASE_STATUS = "PHASE_STATUS"
     ENDPOINT_DISCOVERED = "ENDPOINT_DISCOVERED"
     ENDPOINT_TESTED = "ENDPOINT_TESTED"
     COVERAGE_UPDATE = "COVERAGE_UPDATE"
@@ -151,6 +152,7 @@ class EventBus:
             EventType.LOG,
             EventType.PHASE_STARTED,
             EventType.PHASE_COMPLETED,
+            EventType.PHASE_STATUS,
             EventType.ENDPOINT_DISCOVERED,
             EventType.ENDPOINT_TESTED,
             EventType.COVERAGE_UPDATE,
@@ -212,6 +214,12 @@ class EventBus:
                     logger.debug("[EventBus] ingest_http_record failed: %s", e)
         if event.type == EventType.VULN_CONFIRMED:
             knowledge_graph.ingest_finding(event.payload, scan_id=event.scan_id)
+            try:
+                from backend.core.metrics import metrics as _m
+                severity = (event.payload or {}).get('severity', 'MEDIUM')
+                _m.record_vuln(str(severity))
+            except Exception:
+                pass
 
         if event.scan_id == "GLOBAL":
             if event.type in self.subscribers:
@@ -256,6 +264,11 @@ class EventBus:
                 "payload_summary": str(event.payload)[:200]
             }
             self.dead_letters.append(dead_entry)
+            try:
+                from backend.core.metrics import metrics as _m
+                _m.event_handler_errors_total.inc()
+            except Exception:
+                pass
             
             # Enforce DLQ size limit
             if len(self.dead_letters) > self._max_dead_letters:
@@ -326,9 +339,9 @@ class DistributedEventBus(EventBus):
     """
     def __init__(self, redis_url: str):
         super().__init__()
-        import redis.asyncio as aioredis
-        self.redis_client = aioredis.from_url(redis_url, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
-        self.pubsub = self.redis_client.pubsub()
+        self._redis_url = redis_url
+        self.redis_client = None  # Initialized lazily in start()
+        self.pubsub = None
         self.is_running = False
         self._is_redis_online = None # Lazy check
 
@@ -350,7 +363,10 @@ class DistributedEventBus(EventBus):
         """Activates the distributed bridge."""
         self.is_running = True
         try:
-            # We attempt to subscribe to the global channel
+            from backend.core.redis_client import get_redis_client
+            rc = await get_redis_client()
+            self.redis_client = rc.client
+            self.pubsub = self.redis_client.pubsub()
             await self.pubsub.subscribe("xytherion_events")
             self._task_manager.create_task(self._listen_loop(), name="redis_listener")
             logging.info("📡 Distributed Event Bus Online (Async).")
@@ -359,46 +375,93 @@ class DistributedEventBus(EventBus):
             self.is_running = False
             logging.warning(f"⚠️ [Hive] Redis subscribe failed: {e}. Event Bus staying local.")
 
-
     async def _listen_loop(self):
-        """Listens for global events and injects them into the local hive (Fixed Async).
+        """Listens for global events and injects them into the local hive.
 
         SECURITY FIX (C-13): Verify HMAC signature on Redis messages before
-        deserializing and publishing to the local bus. If HMAC_KEY is set,
-        unsigned or tampered messages are rejected to prevent event injection.
+        deserializing and publishing to the local bus.
+
+        RESILIENCE: On Redis timeout/connection errors, the loop sleeps with
+        exponential backoff (2s → 4s → 8s → 30s cap) and reconnects instead
+        of crashing permanently. After _REDIS_RECREATE_THRESHOLD consecutive
+        reconnect failures, the entire redis_client connection pool is
+        recreated from the original redis_url to recover from broken pools.
         """
-        try:
-            async for message in self.pubsub.listen():
-                if not self.is_running: break
-                if message['type'] == 'message':
-                    try:
-                        raw_data = message['data']
-                        # Extract signature if present (format: "signature|json")
-                        signature = None
-                        if isinstance(raw_data, str) and '|' in raw_data:
-                            sep_idx = raw_data.index('|')
-                            signature = raw_data[:sep_idx]
-                            raw_data = raw_data[sep_idx + 1:]
+        backoff = 2.0
+        max_backoff = 30.0
+        _reconnect_failures = 0
+        _REDIS_RECREATE_THRESHOLD = 5
+        while self.is_running:
+            try:
+                async for message in self.pubsub.listen():
+                    if not self.is_running:
+                        break
+                    # Reset backoff and reconnect counter on successful message
+                    backoff = 2.0
+                    _reconnect_failures = 0
+                    if message['type'] == 'message':
+                        try:
+                            raw_data = message['data']
+                            # Extract signature if present (format: "signature|json")
+                            signature = None
+                            if isinstance(raw_data, str) and '|' in raw_data:
+                                sep_idx = raw_data.index('|')
+                                signature = raw_data[:sep_idx]
+                                raw_data = raw_data[sep_idx + 1:]
 
-                        event_data = json.loads(raw_data)
+                            event_data = json.loads(raw_data)
 
-                        # HMAC verification when key is configured
-                        if _EVENT_BUS_HMAC_KEY:
-                            if not _verify_event_signature(raw_data, signature or ''):
-                                logging.warning(
-                                    "[DistributedEventBus] HMAC verification failed — "
-                                    "dropping potentially tampered event")
+                            # HMAC verification when key is configured
+                            if _EVENT_BUS_HMAC_KEY:
+                                if not _verify_event_signature(raw_data, signature or ''):
+                                    logging.warning(
+                                        "[DistributedEventBus] HMAC verification failed — "
+                                        "dropping potentially tampered event")
                                 continue
 
-                        event = HiveEvent(**event_data)
-                        
-                        # Local Broadcast
-                        await super().publish(event)
-                    except Exception as e:
-                        logging.error(f"[DistributedEventBus] Remote injection failed: {e}")
-        except Exception as e:
-            if self.is_running:
-                logging.error(f"[DistributedEventBus] Listen loop crash: {e}")
+                            event = HiveEvent(**event_data)
+                            
+                            # Local Broadcast
+                            await super().publish(event)
+                        except Exception as e:
+                            logging.error(f"[DistributedEventBus] Remote injection failed: {e}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                if not self.is_running:
+                    break
+                logging.warning(
+                    "[DistributedEventBus] Listen loop error: %s — reconnecting in %.1fs",
+                    e, backoff)
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    break
+                backoff = min(backoff * 2, max_backoff)
+                _reconnect_failures += 1
+                # After N consecutive failures, recreate the entire connection
+                # pool — a broken pool (e.g. stale socket) won't heal by just
+                # creating a new pubsub object on the same pool.
+                if _reconnect_failures >= _REDIS_RECREATE_THRESHOLD:
+                    try:
+                        from backend.core.redis_client import get_redis_client
+                        rc = await get_redis_client()
+                        self.redis_client = rc.client
+                        logging.info(
+                            "[DistributedEventBus] Refreshed Redis client "
+                            "after %d failed reconnects", _reconnect_failures)
+                        _reconnect_failures = 0
+                    except Exception as pool_err:
+                        logging.warning(
+                            "[DistributedEventBus] Client refresh failed: %s", pool_err)
+                # Attempt to re-subscribe
+                try:
+                    self.pubsub = self.redis_client.pubsub()
+                    await self.pubsub.subscribe("xytherion_events")
+                    logging.info("[DistributedEventBus] Reconnected to Redis")
+                except Exception as re_err:
+                    logging.warning(
+                        "[DistributedEventBus] Reconnect failed: %s", re_err)
 
 
     async def publish(self, event: HiveEvent):
@@ -444,6 +507,56 @@ class DistributedEventBus(EventBus):
 from backend.core.database import db_manager
 
 logger = logging.getLogger(__name__)
+
+
+class _HiveFacade:
+    """Facade providing agent registry access to dashboard/self-awareness endpoints.
+
+    Uses lazy import to avoid circular dependency with orchestrator.py
+    (which imports from hive.py at module level).
+    """
+
+    def get_all_agents(self):
+        """Return all currently active agent instances."""
+        try:
+            from backend.core.orchestrator import HiveOrchestrator
+            return list(HiveOrchestrator.active_agents.values())
+        except Exception:
+            return []
+
+    def get_agent(self, agent_id: str):
+        """Look up a single agent by id.
+
+        Tries exact match first, then case-insensitive key match, then
+        suffix match (e.g. ``"omega"`` matches ``"OMEGA"`` or
+        ``"agent_omega"``).  Unlike a plain substring check, this avoids
+        false positives like ``"a"`` matching ``"alpha"``.
+        """
+        try:
+            from backend.core.orchestrator import HiveOrchestrator
+        except Exception:
+            return None
+        # 1. Exact key match
+        agent = HiveOrchestrator.active_agents.get(agent_id)
+        if agent is not None:
+            return agent
+        # 2. Case-insensitive exact key match
+        lower_id = agent_id.lower()
+        for key, val in HiveOrchestrator.active_agents.items():
+            if str(key).lower() == lower_id:
+                return val
+        # 3. Key *ends with* the requested id (e.g. "agent_chi" for "chi")
+        for key, val in HiveOrchestrator.active_agents.items():
+            k = str(key).lower()
+            if k.endswith("_" + lower_id) or k.endswith("." + lower_id):
+                return val
+        return None
+
+
+# Module-level singleton used by dashboard.py and self_awareness.py
+# via ``from backend.core.hive import hive``.
+hive = _HiveFacade()
+
 
 class BaseAgent:
     """
@@ -529,10 +642,14 @@ class BaseAgent:
         # Start the internal thinking loop (if needed)
         task = self._task_manager.create_task(self.lifecycle(), name=f"lifecycle_{self.name}")
         self._agent_tasks.add(task)
+        # Store primary task reference so the zombie sweep health check
+        # can detect crashed agents (checks self._task.done()).
+        self._task = task
         
         # Start health reporting loop
         health_task = self._task_manager.create_task(self._health_reporting_loop(), name=f"health_reporting_{self.name}")
         self._agent_tasks.add(health_task)
+        self._background_task = health_task
 
     async def stop(self):
         """Puts the agent to sleep."""

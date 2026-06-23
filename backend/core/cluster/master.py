@@ -20,9 +20,7 @@ class MasterNode:
     """XYTHERION COMMAND MATRIX (MASTER NODE)"""
 
     def __init__(self, redis_url: str, supabase_url: str, supabase_key: str):
-        import redis.asyncio as aioredis
-        # Redis is required for distribution; use decode_responses for JSON safety.
-        self.redis_client = aioredis.from_url(redis_url, decode_responses=True)
+        self.redis_client = None  # Initialized lazily in start() via centralized pool
         self.supabase = None  # Optional — populated below if creds provided.
         if supabase_url and supabase_key:
             try:
@@ -44,6 +42,9 @@ class MasterNode:
 
     async def start(self):
         self.active = True
+        from backend.core.redis_client import get_redis_client
+        rc = await get_redis_client()
+        self.redis_client = rc.client
         await self._discover_swarm()
         self._task_manager.create_task(self.monitor_workers(), name="worker_monitor")
         try:
@@ -64,16 +65,21 @@ class MasterNode:
             await self.shutdown()
 
     async def shutdown(self):
-        """Clean shutdown: stop the monitor task and close Redis."""
+        """Clean shutdown: stop the monitor task and clean up Redis registry."""
+        if not self.active:
+            return
         self.active = False
         try:
             await self._task_manager.cancel_all()
         except Exception as e:
             logger.debug("MasterNode task cancel failed: %s", e)
+        # NOTE: Don't close redis_client here — it's the shared centralized pool client.
+        # Remove our worker registry entries (specific field names, not wildcards).
         try:
-            await self.redis_client.close()
+            if self.workers:
+                await self.redis_client.hdel("workers", *self.workers.keys())
         except Exception as e:
-            logger.debug("MasterNode redis close failed: %s", e)
+            logger.debug("MasterNode shutdown cleanup failed: %s", e)
 
     async def _discover_swarm(self):
         try:

@@ -20,6 +20,11 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Canonical phase order — used by advance_phase for index calculations
+# and by the frontend for progress bar rendering.
+_PHASE_ORDER = ["PLANNING", "RECONNAISSANCE", "ASSESSMENT",
+                "EXPLOITATION", "REPORTING", "COMPLETED"]
+
 
 class ScanLifecycleManager:
     """Manages scan lifecycle: registration, agent bootstrapping, phase transitions, finalization."""
@@ -89,37 +94,59 @@ class ScanLifecycleManager:
         This replaces the inline ``for agent in agents:`` loop that was
         previously duplicated inside bootstrap_hive().
 
+        Agents that fail to start are skipped and removed from the list so
+        downstream code (self-healing, shutdown) never touches them.
+
         Args:
             agents: List of agent instances (each must have .name, .start()).
             mission_config: Dict with target, scan_id, modules to pass to agents.
+
+        Returns:
+            None (modifies ``agents`` in-place, removing failed entries).
         """
         from backend.core.orchestrator import HiveOrchestrator
 
+        activated: List[Any] = []  # successfully started agents
+        # Per-scan registry: track which agents belong to this scan
+        async with HiveOrchestrator._get_lock():
+            if self._scan_id not in HiveOrchestrator._scan_agents:
+                HiveOrchestrator._scan_agents[self._scan_id] = {}
         for agent in agents:
+            agent_name = getattr(agent, "name", None)
             try:
                 # Pass mission profile if the agent supports it
                 if hasattr(agent, "set_mission"):
                     agent.set_mission(mission_config)
                 await agent.start()
                 agent._is_active = True
+                activated.append(agent)
                 # Register in global state under both string key and name
                 async with HiveOrchestrator._get_lock():
-                    HiveOrchestrator.active_agents[agent.name] = agent
+                    HiveOrchestrator.active_agents[agent_name] = agent
+                    # Per-scan registry: track which agents belong to this scan
+                    if self._scan_id in HiveOrchestrator._scan_agents:
+                        HiveOrchestrator._scan_agents[self._scan_id][agent_name] = agent
                 await self._broadcast_live_feed("AGENT_ACTIVATED", {
-                    "action": f"Agent {agent.name} online",
+                    "action": f"Agent {agent_name} online",
                     "url": self._target_config.get("url", ""),
                     "scan_id": self._scan_id,
                     "timestamp": time.strftime("%H:%M:%S"),
-                    "agent": agent.name,
+                    "agent": agent_name or "unknown",
                     "threat_type": "LIFECYCLE",
                     "severity": "INFO", "risk_score": 0,
                 })
             except Exception as exc:
                 logger.error("[Lifecycle] Failed to start agent %s: %s",
-                             getattr(agent, "name", "?"), exc)
+                             agent_name or "?", exc)
 
-        logger.info("[Lifecycle] Activated %d agents for scan %s",
-                    len(agents), self._scan_id)
+        # Replace the caller's list content so downstream code (self-healing,
+        # shutdown loop) only sees agents that actually started.
+        original_count = len(agents)
+        agents.clear()
+        agents.extend(activated)
+
+        logger.info("[Lifecycle] Activated %d/%d agents for scan %s",
+                    len(activated), original_count, self._scan_id)
 
     # -- 3. Self-Healing Registration -----------------------------------
 
@@ -130,33 +157,52 @@ class ScanLifecycleManager:
         This replaces the inline ``for agent in agents: healing_engine.register_restart_callback(...)``
         block that was previously duplicated inside bootstrap_hive().
 
+        Agents without a ``name`` attribute are silently skipped.
+
         Args:
             agents: List of agent instances.
             healing_engine: The recovery_engine.healing_engine singleton.
         """
+        registered = 0
         for agent in agents:
+            agent_name = getattr(agent, "name", None)
+            if not agent_name:
+                logger.warning("[Lifecycle] Skipping self-healing registration for agent without name: %s",
+                               type(agent).__name__)
+                continue
+
             async def restart_callback(a=agent):
                 try:
                     await a.start()
                     a._is_active = True
                     await self._manager.broadcast({
                         "type": "GI5_LOG",
-                        "payload": f"SELF-HEALING: Restarted agent {a.name}"
+                        "payload": f"SELF-HEALING: Restarted agent {getattr(a, 'name', '?')}"
                     })
                 except Exception as e:
                     logger.error("[SelfHealing] Failed to restart %s: %s",
-                                 a.name, e)
+                                 getattr(a, "name", "?"), e)
 
-            healing_engine.register_restart_callback(agent.name, restart_callback)
+            healing_engine.register_restart_callback(agent_name, restart_callback)
+            registered += 1
 
         logger.info("[Lifecycle] Self-healing callbacks registered for %d agents",
-                    len(agents))
+                    registered)
 
     # -- 4. Phase Transitions -------------------------------------------
 
     async def advance_phase(self, to_phase: Any, *,
                             metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Advance to the next scan phase and broadcast lifecycle events."""
+        """Advance to the next scan phase and broadcast lifecycle events.
+
+        Emits three events on each transition:
+          1. PHASE_COMPLETED — the old phase is done.
+          2. PHASE_STARTED   — the new phase begins.
+          3. PHASE_STATUS    — a unified snapshot with current_phase,
+             previous_phase, elapsed time, and phase-specific metadata.
+             The frontend can use this single event to render a phase
+             progress indicator without tracking separate start/complete.
+        """
         from_phase = getattr(self._phase_gate, "current_phase", "UNKNOWN")
         phase_start = time.time()
         try:
@@ -164,6 +210,7 @@ class ScanLifecycleManager:
         except Exception as exc:
             logger.error("[Lifecycle] Phase advance failed: %s", exc)
             return
+        elapsed = time.time() - self._start_time
         if from_phase != "UNKNOWN":
             self._phase_durations[str(from_phase)] = time.time() - phase_start
         await self._broadcast_event("PHASE_COMPLETED", {
@@ -176,6 +223,24 @@ class ScanLifecycleManager:
             "phase": str(to_phase),
             "scan_id": self._scan_id,
             "timestamp": time.strftime("%H:%M:%S"),
+        })
+        # Unified PHASE_STATUS: single event the frontend uses to render
+        # the current scan phase and overall progress.
+        try:
+            _cur_idx = _PHASE_ORDER.index(str(to_phase))
+        except ValueError:
+            _cur_idx = -1
+        await self._broadcast_event("PHASE_STATUS", {
+            "scan_id": self._scan_id,
+            "current_phase": str(to_phase),
+            "previous_phase": str(from_phase),
+            "phase_index": _cur_idx,
+            "total_phases": len(_PHASE_ORDER),
+            "phase_names": list(_PHASE_ORDER),
+            "elapsed_seconds": round(elapsed, 1),
+            "phase_durations": dict(self._phase_durations),
+            "timestamp": time.strftime("%H:%M:%S"),
+            **(metadata or {}),
         })
         logger.info("[Lifecycle] Phase: %s -> %s", from_phase, to_phase)
 

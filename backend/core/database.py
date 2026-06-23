@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import json
+import time as _time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
@@ -25,6 +26,11 @@ class EliteDBManager:
         self._initialized = False
         # Fallback in-process lock when Redis is unavailable for dedup
         self._vuln_lock = asyncio.Lock()
+        # Circuit breaker for Supabase: after consecutive failures, pause
+        # retries to avoid hammering an unreachable endpoint.
+        self._supabase_failures = 0
+        self._supabase_circuit_open = False
+        self._supabase_circuit_open_until: float = 0.0
 
     async def initialize(self):
         """Lazy initialization of cloud/cache connections.
@@ -33,6 +39,10 @@ class EliteDBManager:
         initialized manager.  If Supabase fails we still mark _initialized
         so callers don't spin forever, but we log at WARNING so operators
         can see the problem in production (previously logged at DEBUG).
+
+        Circuit breaker: after 3 consecutive initialization failures for
+        Supabase or Redis, the corresponding connection is marked as
+        unavailable for 120s to avoid hammering an unreachable endpoint.
         """
         if self._initialized:
             return
@@ -40,8 +50,14 @@ class EliteDBManager:
         try:
             # 1. Supabase Initialization
             if self.supabase_url and self.supabase_key:
-                self.supabase = create_client(self.supabase_url, self.supabase_key)
-                logger.info("ELITE-DB: Supabase Connection Active ✓")
+                try:
+                    self.supabase = create_client(self.supabase_url, self.supabase_key)
+                    self._supabase_record_success()
+                    logger.info("ELITE-DB: Supabase Connection Active ✓")
+                except Exception as sup_e:
+                    self._supabase_record_failure()
+                    logger.warning("ELITE-DB: Supabase init failed: %s", sup_e)
+                    self.supabase = None
             
             # 2. Redis Initialization
             if self.redis_url:
@@ -62,8 +78,7 @@ class EliteDBManager:
             logger.error("ELITE-DB Initialization Failed: %s", e, exc_info=True)
             self._initialized = True
 
-    @staticmethod
-    async def _run_sync(fn, *args, _timeout: float = 30.0, **kwargs):
+    async def _run_sync(self, fn, *args, _timeout: float = 30.0, **kwargs):
         """Run a blocking call (e.g. supabase-py's HTTPS .execute()) on a worker
         thread so it cannot stall the event loop. The Supabase client is
         synchronous; without this, every recon entity/toolcall upsert blocks
@@ -72,11 +87,31 @@ class EliteDBManager:
         execution must not block the orchestrator.
 
         HIGH-03: Wrapped with ``asyncio.wait_for`` so a stalled thread
-        cannot hang the event loop indefinitely."""
-        return await asyncio.wait_for(
-            asyncio.to_thread(fn, *args, **kwargs),
-            timeout=_timeout,
-        )
+        cannot hang the event loop indefinitely.
+
+        Circuit breaker: after _CB_FAILURE_THRESHOLD consecutive failures,
+        the method short-circuits for _CB_COOLDOWN_SECONDS to avoid
+        hammering an unreachable Supabase endpoint. Timeouts are recorded
+        at DEBUG level only (a slow but connected query shouldn't trip
+        the breaker)."""
+        if not self._supabase_available():
+            raise ConnectionError("Supabase circuit breaker open — retries paused")
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(fn, *args, **kwargs),
+                timeout=_timeout,
+            )
+            self._supabase_record_success()
+            return result
+        except asyncio.TimeoutError:
+            # FIX: Timeouts don't count toward the circuit breaker threshold.
+            # A slow but connected Supabase query shouldn't trip the breaker.
+            # Log at DEBUG so operators can still see timeout patterns.
+            logger.debug("_run_sync timed out after %.1fs (not counting toward circuit breaker)", _timeout)
+            raise
+        except Exception:
+            self._supabase_record_failure()
+            raise
 
     # --- 1. VULNERABILITY MANAGEMENT (Intelligence) ---
 
@@ -94,8 +129,11 @@ class EliteDBManager:
                 _timeout=timeout,
             )
             return result.data
+        except ConnectionError:
+            return None  # Circuit breaker open — already logged by _run_sync
         except Exception as e:
-            logger.warning("_upsert(%s) failed: %s", table, e)
+            if not self._supabase_circuit_open:
+                logger.warning("_upsert(%s) failed: %s", table, e)
             return None
 
     async def report_vulnerability(self, scan_id: str, endpoint: str, vuln_type: str, severity: str, evidence: Dict[str, Any], validated_by: str) -> Optional[str]:
@@ -206,7 +244,8 @@ class EliteDBManager:
             
             return True
         except Exception as e:
-            logger.error(f"Supabase task lock failed: {e}")
+            if not self._supabase_circuit_open:
+                logger.error(f"Supabase task lock failed: {e}")
             if self.redis: await self.redis.delete(lock_key)
             return False
 
@@ -224,7 +263,8 @@ class EliteDBManager:
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }).eq("id", task_id).execute())
         except Exception as e:
-            logger.error(f"Failed to complete task {task_id}: {e}")
+            if not self._supabase_circuit_open:
+                logger.error(f"Failed to complete task {task_id}: {e}")
 
     # --- 3. BATCH OPERATIONS (Optimization) ---
 
@@ -235,7 +275,8 @@ class EliteDBManager:
             await self._run_sync(
                 lambda: self.supabase.table("distributed_tasks").insert(tasks).execute())
         except Exception as e:
-            logger.error(f"Batch task creation failed: {e}")
+            if not self._supabase_circuit_open:
+                logger.error(f"Batch task creation failed: {e}")
 
     # --- 4. EXPLOIT & REMEDIATION ( Intelligence ) ---
 
@@ -253,7 +294,8 @@ class EliteDBManager:
                     "execution_time_ms": result.get("time_ms", 0)
                 }).execute())
         except Exception as e:
-            logger.error(f"Failed to log exploit result: {e}")
+            if not self._supabase_circuit_open:
+                logger.error(f"Failed to log exploit result: {e}")
 
     # --- 5. QUERY HELPERS ---
 
@@ -267,7 +309,8 @@ class EliteDBManager:
                     .eq("scan_id", scan_id).execute())
             return result.data or []
         except Exception as e:
-            logger.error(f"Failed to fetch vulnerabilities for scan {scan_id}: {e}")
+            if not self._supabase_circuit_open:
+                logger.error(f"Failed to fetch vulnerabilities for scan {scan_id}: {e}")
             return []
 
     async def store_scan_episode(self, scan_id: str, event_type: str, payload: Dict[str, Any]):
@@ -282,8 +325,44 @@ class EliteDBManager:
                 }).execute())
             return result.data[0]["id"] if result.data else None
         except Exception as e:
-            logger.warning("Failed to store scan episode: %s", e)
+            if not self._supabase_circuit_open:
+                logger.warning("Failed to store scan episode: %s", e)
             return None
+
+    # Circuit breaker constants (single source of truth)
+    _CB_FAILURE_THRESHOLD = 3
+    _CB_COOLDOWN_SECONDS = 120.0
+
+    def _supabase_available(self) -> bool:
+        """Circuit breaker check: returns False if Supabase is down.
+
+        After _CB_FAILURE_THRESHOLD consecutive failures, the circuit opens
+        for _CB_COOLDOWN_SECONDS so we stop hammering an unreachable endpoint.
+        On cooldown expiry, allows one probe request (half-open state).
+        """
+        if self._supabase_circuit_open:
+            if _time.time() < self._supabase_circuit_open_until:
+                return False
+            # Cooldown expired — allow one probe request.
+            self._supabase_circuit_open = False
+            logger.info("ELITE-DB: Supabase circuit breaker half-open — probing")
+        return True
+
+    def _supabase_record_success(self) -> None:
+        self._supabase_failures = 0
+        if self._supabase_circuit_open:
+            logger.info("ELITE-DB: Supabase circuit breaker closed — connection restored")
+            self._supabase_circuit_open = False
+
+    def _supabase_record_failure(self) -> None:
+        self._supabase_failures += 1
+        if self._supabase_failures >= self._CB_FAILURE_THRESHOLD:
+            self._supabase_circuit_open = True
+            self._supabase_circuit_open_until = _time.time() + self._CB_COOLDOWN_SECONDS
+            logger.warning(
+                "ELITE-DB: Supabase circuit breaker OPEN — %d consecutive failures, "
+                "pausing retries for %.0fs",
+                self._supabase_failures, self._CB_COOLDOWN_SECONDS)
 
     async def store_semantic_memory(
         self,
@@ -311,7 +390,8 @@ class EliteDBManager:
                 }).execute())
             return result.data[0]["id"] if result.data else None
         except Exception as e:
-            logger.warning("Failed to store semantic memory: %s", e)
+            if not self._supabase_circuit_open:
+                logger.warning("Failed to store semantic memory: %s", e)
             return None
 
     async def create_recon_run(

@@ -108,8 +108,9 @@ class AgentPrism(BrowserEnabledAgent):
         redis_url = getattr(self.config.redis, "url", None)
         if redis_url:
             try:
-                import redis.asyncio as aioredis
-                self.redis_client = aioredis.from_url(redis_url, decode_responses=True)
+                from backend.core.redis_client import get_redis_client
+                rc = await get_redis_client()
+                self.redis_client = rc.client
                 # Start result interception (Monitoring the swarm stream)
                 self._task_manager.create_task(
                     self._subscribe_to_results(),

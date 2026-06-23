@@ -8,6 +8,7 @@ import uuid
 import os
 import json
 import time
+import warnings
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
 from json import JSONDecodeError
@@ -67,6 +68,14 @@ from backend.core.csrf_protection import start_csrf_cleanup_task, csrf_protectio
 # Global TaskManager for background tasks
 _background_task_manager = TaskManager("BackgroundTasks")
 
+# Suppress Pydantic v2 deprecation warnings from third-party dependencies
+# that use Field(validate_default=True) which is unsupported in v2.
+try:
+    from pydantic.errors import UnsupportedFieldAttributeWarning as _UFAWarning
+    warnings.filterwarnings("ignore", category=_UFAWarning, message=".*validate_default.*")
+except ImportError:
+    warnings.filterwarnings("ignore", message=".*validate_default.*")
+
 # FIX: Windows charmap encoding crash
 if sys.platform == 'win32':
     try:
@@ -91,6 +100,31 @@ async def lifespan(app: FastAPI):
     logger.info("[PILLAR] Activating Governance Frameworks...")
     register_default_tools()
 
+    # Docker readiness probe — polls daemon until it answers, then warms
+    # all Docker caches so the first scan finds tools immediately.
+    try:
+        from backend.tools.recon.docker_runtime import probe_docker_readiness
+        _docker_probe = await probe_docker_readiness()
+        if _docker_probe.get("ready"):
+            logger.info(
+                f"[BOOT] Docker probe: ready={_docker_probe['ready']} "
+                f"version={_docker_probe.get('version')} "
+                f"image={_docker_probe.get('image')} "
+                f"attempts={_docker_probe.get('attempts')}")
+            # Refresh terminal engine so its internal `_docker_ok` flag
+            # picks up the now-warm daemon cache.
+            try:
+                from backend.core.terminal_engine import terminal_engine
+                terminal_engine._docker_ok = _docker_probe["daemon"]
+            except Exception as _te_exc:
+                logger.debug(f"[BOOT] terminal engine refresh skipped: {_te_exc}")
+        else:
+            logger.warning(
+                "[BOOT] Docker probe: NOT ready — backend runs local-only. "
+                "Docker recon tools will be skipped.")
+    except Exception as _dp:
+        logger.info(f"[BOOT] Docker probe skipped: {_dp}")
+
     # Runtime self-check on boot (Architecture §24): scope authorization,
     # recon tool + Docker availability, configured LLMs, skill catalog.
     try:
@@ -99,7 +133,7 @@ async def lifespan(app: FastAPI):
         from backend.core.config import settings as _settings
         logger.info(f"[BOOT] Engagement '{scope_guard.engagement_name}' authorization={scope_guard.authorization} authorized_now={scope_guard.is_authorized()}")
         _tt = terminal_engine.get_telemetry()
-        logger.info(f"[BOOT] Terminal Engine: docker_available={_tt['docker_available']} ""prefer_docker={_tt['prefer_docker']}")
+        logger.info(f"[BOOT] Terminal Engine: docker_available={_tt['docker_available']} prefer_docker={_tt['prefer_docker']}")
         logger.info(f"[BOOT] LLMs: strategic={_settings.STRATEGIC_MODEL} tactical={_settings.TACTICAL_MODEL}")
     except Exception as _e:
         logger.info(f"[BOOT] self-check warning: {_e}")
@@ -216,19 +250,24 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     """TC004 Compliance: Map missing fields / Pydantic 422s to explicit REST 400 Bad Requests."""
     # Pydantic errors may contain non-JSON-serializable types (ValueError, etc).
     # Safely convert each error to a plain string dict.
-    _safe_errors = [{"msg": str(e)} for e in exc.errors()]
+    _raw_errors = exc.errors()
+    _safe_errors = [{"msg": str(e)} for e in _raw_errors]
 
     if request.url.path.endswith("/api/attack/fire"):
         return JSONResponse(
             status_code=422,
             content={"detail": _safe_errors}
         )
-    # Return detailed validation errors for scan endpoints too
+    # Return detailed validation errors for scan endpoints (preserve loc/msg
+    # for frontend display, but strip non-JSON-serializable ctx objects).
     if request.url.path.rstrip("/").endswith("/api/scans"):
+        _scan_errors = [{"loc": list(e.get("loc", ())), "msg": e.get("msg", str(e))} for e in _raw_errors]
+        logger.error(f"Validation error on /api/scans: {_scan_errors}")
         return JSONResponse(
             status_code=400,
-            content={"detail": "Invalid or missing payload.", "errors": _safe_errors}
+            content={"detail": "Invalid or missing payload.", "errors": _scan_errors}
         )
+    logger.error(f"Validation error: {_safe_errors}")
     return JSONResponse(
         status_code=400,
         content={"detail": "Invalid or missing payload. Expected a valid request structure."}
@@ -308,8 +347,17 @@ if not _app_api_key:
 @app.middleware("http")
 async def _api_key_middleware(request: Request, call_next):
     path = request.url.path
-    # Skip auth for health checks, docs, and non-API paths
-    if path in ('/api/health', '/docs', '/openapi.json', '/', '/redoc') or not path.startswith('/api/'):
+    # Skip auth for health checks, docs, non-API paths, and extension bridge
+    # endpoints.  The extension runs locally and its recon/bridge endpoints are
+    # already protected by scope-guard + CORS middleware.
+    _api_key_skip = (
+        path in ('/api/health', '/docs', '/openapi.json', '/', '/redoc')
+        or not path.startswith('/api/')
+        or path.startswith('/api/recon/')
+        or path.startswith('/api/bridge/')
+        or path.startswith('/api/defense/')
+    )
+    if _api_key_skip:
         return await call_next(request)
     provided = request.headers.get('X-API-Key', '') or request.headers.get('Authorization', '').replace('Bearer ', '')
     if not provided or not hmac.compare_digest(provided, _app_api_key):
@@ -356,29 +404,33 @@ async def _scope_guard_middleware(request: Request, call_next):
     caches the body after the first ``request.body()`` call so downstream
     handlers still see the original bytes.
     """
+    # Skip scope-guard for extension bridge/recon endpoints: these receive
+    # passive observation data (traffic captured from ALL browser tabs) that
+    # will naturally include external domain URLs outside the engagement scope.
     if request.method in ("POST", "PUT", "PATCH") and request.url.path.startswith("/api/"):
-        try:
-            body = await request.body()  # Starlette caches internally
-            if body:
-                import json as _json
-                data = _json.loads(body)
-                target = (
-                    data.get("target_url")
-                    or data.get("url")
-                    or (data.get("target", {}).get("url") if isinstance(data.get("target"), dict) else None)
-                )
-                if target and isinstance(target, str):
-                    from backend.core.scope import scope_guard as _sg, ScopeViolation
-                    try:
-                        _sg.assert_allowed(target, action="api_request")
-                    except ScopeViolation as sv:
-                        return JSONResponse(status_code=403, content={"detail": str(sv)})
-        except JSONDecodeError:
-            pass  # Non-JSON bodies pass through
-        except Exception as exc:
-            import logging as _log
-            _log.getLogger("main").debug("Scope guard middleware error: %s", exc)
-            pass  # Other errors pass through to handler
+        if not (request.url.path.startswith("/api/recon/") or request.url.path.startswith("/api/bridge/")):
+            try:
+                body = await request.body()  # Starlette caches internally
+                if body:
+                    import json as _json
+                    data = _json.loads(body)
+                    target = (
+                        data.get("target_url")
+                        or data.get("url")
+                        or (data.get("target", {}).get("url") if isinstance(data.get("target"), dict) else None)
+                    )
+                    if target and isinstance(target, str):
+                        from backend.core.scope import scope_guard as _sg, ScopeViolation
+                        try:
+                            _sg.assert_allowed(target, action="api_request")
+                        except ScopeViolation as sv:
+                            return JSONResponse(status_code=403, content={"detail": str(sv)})
+            except JSONDecodeError:
+                pass  # Non-JSON bodies pass through
+            except Exception as exc:
+                import logging as _log
+                _log.getLogger("main").debug("Scope guard middleware error: %s", exc)
+                pass  # Other errors pass through to handler
     return await call_next(request)
 
 # CSRF Protection Middleware - protects all state-changing endpoints
@@ -395,9 +447,13 @@ async def _csrf_middleware(request: Request, call_next):
         # SECURITY FIX (C-8): Instead of skipping CSRF for write endpoints,
         # require API key auth as alternative. This prevents CSRF on attack/
         # recon endpoints that were previously unprotected.
-        skip_paths = ['/api/attack/fire', '/api/recon/ingest', '/api/recon/keys', '/api/bridge/']
+        skip_paths = ['/api/attack/fire', '/api/recon/ingest', '/api/recon/keys', '/api/bridge/', '/api/defense/analyze']
         if any(request.url.path.startswith(p) for p in skip_paths):
-            # Alternative auth: require X-API-Key for these endpoints
+            # Extension bridge/recon endpoints run over localhost only and are
+            # protected by scope-guard + CORS.  Skip CSRF+API-key for these.
+            if request.url.path.startswith('/api/recon/') or request.url.path.startswith('/api/bridge/') or request.url.path.startswith('/api/defense/'):
+                return await call_next(request)
+            # Other skip paths: require X-API-Key as CSRF alternative
             api_key = request.headers.get('X-API-Key', '')
             if not api_key or not hmac.compare_digest(api_key, _app_api_key):
                 return JSONResponse(
@@ -451,7 +507,7 @@ async def health_check():
         if settings.REDIS_URL:
             import redis.asyncio as aioredis
             r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-            await r.ping(); await r.close()
+            await r.ping(); await r.aclose()
             comps["redis"] = "healthy"
         else:
             comps["redis"] = "not_configured"
@@ -462,8 +518,66 @@ async def health_check():
     comps["alpha"] = "enabled" if getattr(settings, "ALPHA_ENABLE_V6", False) else "disabled"
     overall = "healthy" if "unhealthy" not in comps.values() else "degraded"
     # FIX-045: Return minimal info for unauthenticated health checks
+    # Include extension/spy status so the frontend can detect the Chrome extension
+    _spy_connected = False
+    _extensions_active = 0
+    try:
+        from backend.api.socket_manager import manager as _mgr
+        _spy_connected = _mgr.is_spy_online()
+        _extensions_active = len(getattr(_mgr, 'spy_connections', []))
+    except Exception:
+        pass
     return {"status": overall,
-            "latency_ms": round((_t.time() - start) * 1000, 1)}
+            "latency_ms": round((_t.time() - start) * 1000, 1),
+            "spy_connected": _spy_connected,
+            "extensions_active": _extensions_active}
+
+
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus-compatible metrics endpoint for monitoring."""
+    from backend.core.metrics import metrics as _metrics
+    from fastapi.responses import PlainTextResponse
+
+    # Sync gauge values from live state
+    try:
+        from backend.api.socket_manager import manager as _mgr
+        _ui_conns = list(_mgr.ui_connections)  # snapshot to avoid concurrent mutation
+        _spy_conns = list(_mgr.spy_connections)
+        _metrics.ws_ui_connections.set(len(_ui_conns))
+        _metrics.ws_spy_connections.set(len(_spy_conns))
+    except Exception:
+        pass
+
+    try:
+        from backend.core.redis_client import get_redis_client
+        rc = await get_redis_client()
+        _metrics.redis_connected.set(1 if rc.is_healthy else 0)
+        # Sync pool utilization from the centralized client
+        stats = rc.get_pool_stats()
+        _metrics.redis_pool_active.set(stats["active"])
+        _metrics.redis_pool_idle.set(stats["idle"])
+        _metrics.redis_pool_max.set(stats["max"])
+    except Exception:
+        _metrics.redis_connected.set(0)
+
+    try:
+        from backend.core.orchestrator import HiveOrchestrator
+        _metrics.agents_active.set(len(HiveOrchestrator.active_agents))
+    except Exception:
+        pass
+
+    try:
+        from backend.ai.cortex import get_cortex_engine
+        cortex = get_cortex_engine()
+        t = cortex.get_telemetry()
+        _metrics.llm_calls_total.set_value(t.get("llm_calls", 0))
+        _metrics.llm_errors_total.set_value(t.get("llm_errors", 0))
+        _metrics.circuit_breaker_trips_total.set_value(t.get("circuit_breaker_trips", 0))
+    except Exception:
+        pass
+
+    return PlainTextResponse(_metrics.render_prometheus(), media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 @app.get("/api/v1/tools")

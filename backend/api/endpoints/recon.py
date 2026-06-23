@@ -1,24 +1,17 @@
 import asyncio
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from backend.schemas.payloads import ReconPayload
 from backend.api.socket_manager import manager, publish_request_event
-from pydantic import BaseModel
 from typing import Dict, Any
 import os
 import json
 from datetime import datetime
 import random
-from backend.core.url_validator import validate_url
 import logging
 
 logger = logging.getLogger(__name__)
 
 KEYRING_FILE = "keyring.json"
-
-class KeyringPayload(BaseModel):
-    url: str
-    keys: Dict[str, str]
-    timestamp: float
 
 router = APIRouter()
 
@@ -121,14 +114,69 @@ async def get_keyring():
         return []
 
 @router.post("/keys")
-async def ingest_keys(payload: KeyringPayload):
-    # Validate URL to prevent SSRF
-    is_valid, reason = validate_url(payload.url, allow_private=True)
-    if not is_valid:
-        logger.warning(f"Rejected keyring URL: {payload.url} - {reason}")
-        raise HTTPException(status_code=400, detail=f"Invalid URL: {reason}")
-    
-    data = payload.model_dump()
+async def ingest_keys(request: Request):
+    """Ingest extension-captured auth keys.
+
+    This is a passive observation endpoint — the extension reports what it
+    sees from ALL browser tabs.  We accept raw JSON and normalize the
+    payload so that every realistic extension request is properly ingested.
+    Only dangerous payloads (SSRF to cloud metadata) are rejected.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        # Even unparseable bodies get a minimal record so the extension
+        # doesn't backoff and retry endlessly.
+        body = {}
+
+    if not isinstance(body, dict):
+        body = {}
+
+    # Normalize fields — accept whatever the extension sends and coerce
+    # to the shape we need.  Never reject for missing/malformed data;
+    # instead provide sensible defaults.
+    #
+    # NOTE: We use ``is not None`` instead of truthiness (``or``) because
+    # empty dicts/strings are valid values the caller may send intentionally.
+    # An empty ``keys`` dict means "no sensitive headers found" — we should
+    # ingest it as-is, not skip to the next field.
+    url = str(body.get("url") or body.get("target_url") or body.get("endpoint") or "").strip()
+
+    keys_raw = body.get("keys")
+    if keys_raw is None:
+        keys_raw = body.get("headers")
+    if keys_raw is None:
+        keys_raw = body.get("captured_keys")
+    if keys_raw is None:
+        keys_raw = {}
+    if not isinstance(keys_raw, dict):
+        try:
+            keys_raw = {"raw": str(keys_raw)}
+        except Exception:
+            keys_raw = {}
+
+    # Coerce timestamp from any format (int, float, string, epoch millis)
+    timestamp = body.get("timestamp")
+    if timestamp is None:
+        timestamp = body.get("ts", 0.0)
+    try:
+        timestamp = float(timestamp)
+        # Extension sometimes sends epoch milliseconds; normalize to seconds
+        if timestamp > 1e12:
+            timestamp = timestamp / 1000.0
+    except (TypeError, ValueError):
+        timestamp = 0.0
+
+    # SSRF guard: block cloud metadata endpoints only
+    if url:
+        from urllib.parse import urlparse as _urlparse
+        _parsed = _urlparse(url)
+        _blocked_metadata = {"169.254.169.254", "metadata.google.internal", "metadata.azure.com"}
+        if (_parsed.hostname or "").lower() in _blocked_metadata:
+            raise HTTPException(status_code=400, detail="Cloud metadata endpoint blocked")
+
+    data = {"url": url, "keys": keys_raw, "timestamp": timestamp}
+
     # FIX-059: Wrap sync file I/O in asyncio.to_thread
     def _write_keyring():
         keyring = []

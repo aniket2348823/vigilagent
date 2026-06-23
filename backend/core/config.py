@@ -137,7 +137,7 @@ class GlobalSettings:
     ALPHA_DEFAULT_RPS: int = int(os.getenv("ALPHA_DEFAULT_RPS", "50"))
     ALPHA_MAX_HTTPX_THREADS: int = int(os.getenv("ALPHA_MAX_HTTPX_THREADS", "50"))
     ALPHA_MAX_CRAWL_DEPTH: int = int(os.getenv("ALPHA_MAX_CRAWL_DEPTH", "3"))
-    ALPHA_ENABLE_EXTERNAL_TOOLS: bool = os.getenv("ALPHA_ENABLE_EXTERNAL_TOOLS", "false").lower() == "true"
+    ALPHA_ENABLE_EXTERNAL_TOOLS: bool = os.getenv("ALPHA_ENABLE_EXTERNAL_TOOLS", "true" if os.getenv("VIGILAGENT_DEV_MODE", "false").lower() == "true" else "false").lower() == "true"
     ALPHA_TOOL_TIMEOUT_SECONDS: int = int(os.getenv("ALPHA_TOOL_TIMEOUT_SECONDS", "3600"))
     ALPHA_ENABLE_PINCHTAB: bool = os.getenv("ALPHA_ENABLE_PINCHTAB", "true").lower() == "true"
     ALPHA_RECON_VIA_PLANNER: bool = os.getenv("ALPHA_RECON_VIA_PLANNER", "true").lower() == "true"

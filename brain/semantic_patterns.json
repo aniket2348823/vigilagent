@@ -252026,5 +252026,1157 @@
       }
     },
     "vector": []
+  },
+  {
+    "timestamp": 1782224050.0348222,
+    "id": "20f88725e80eb040985e994026e1c4f7258777c7b083c224062ed18228ebc4c5",
+    "scan_id": "HIVE-V5-c88bc8c04d",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080/login.php\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080/login.php",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782224057.0142312,
+    "id": "18954f287404e131215d8dd907a28e9258ca67501fa467104d7d6c0eb4dc2907",
+    "scan_id": "HIVE-V5-c88bc8c04d",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\subfinder\", \"source\": \"tool_root\"}, \"amass\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\amass\", \"source\": \"tool_root\"}, \"assetfinder\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\gau\", \"source\": \"tool_root\"}, \"waybackurls\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\waybackurls\", \"source\": \"tool_root\"}, \"cloudlist\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\cloudlist\", \"source\": \"tool_root\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\.venv_win\\\\Scripts\\\\python.EXE\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\dnsx\", \"source\": \"tool_root\"}, \"shuffledns\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\shuffledns\", \"source\": \"tool_root\"}, \"puredns\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\naabu\", \"source\": \"tool_root\"}, \"masscan\": {\"installed\": false, \"reason\": \"binary_not_in_path:masscan\"}, \"nmap\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\nmap\", \"source\": \"tool_root\"}, \"tlsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\tlsx\", \"source\": \"tool_root\"}, \"testssl\": {\"installed\": false, \"reason\": \"binary_not_in_path:testssl.sh\"}, \"httprobe\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penet",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "D:\\projects\\subfinder",
+        "source": "tool_root"
+      },
+      "amass": {
+        "installed": true,
+        "path": "D:\\projects\\amass",
+        "source": "tool_root"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "D:\\projects\\gau",
+        "source": "tool_root"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "D:\\projects\\waybackurls",
+        "source": "tool_root"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "D:\\projects\\cloudlist",
+        "source": "tool_root"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "D:\\projects\\dnsx",
+        "source": "tool_root"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "D:\\projects\\shuffledns",
+        "source": "tool_root"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "D:\\projects\\naabu",
+        "source": "tool_root"
+      },
+      "masscan": {
+        "installed": false,
+        "reason": "binary_not_in_path:masscan"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "D:\\projects\\nmap",
+        "source": "tool_root"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "D:\\projects\\tlsx",
+        "source": "tool_root"
+      },
+      "testssl": {
+        "installed": false,
+        "reason": "binary_not_in_path:testssl.sh"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "D:\\projects\\katana",
+        "source": "tool_root"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "D:\\projects\\hakrawler",
+        "source": "tool_root"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "C:\\Users\\Dell.000\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\arjun.EXE",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "D:\\projects\\feroxbuster",
+        "source": "tool_root"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "D:\\projects\\ffuf",
+        "source": "tool_root"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "D:\\projects\\gobuster",
+        "source": "tool_root"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "D:\\projects\\gowitness",
+        "source": "tool_root"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "D:\\projects\\aquatone",
+        "source": "tool_root"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782224108.7055228,
+    "id": "20f88725e80eb040985e994026e1c4f7258777c7b083c224062ed18228ebc4c5",
+    "scan_id": "HIVE-V5-c88bc8c04d",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080/login.php\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080/login.php",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782224113.7326388,
+    "id": "18954f287404e131215d8dd907a28e9258ca67501fa467104d7d6c0eb4dc2907",
+    "scan_id": "HIVE-V5-c88bc8c04d",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\subfinder\", \"source\": \"tool_root\"}, \"amass\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\amass\", \"source\": \"tool_root\"}, \"assetfinder\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\gau\", \"source\": \"tool_root\"}, \"waybackurls\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\waybackurls\", \"source\": \"tool_root\"}, \"cloudlist\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\cloudlist\", \"source\": \"tool_root\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\.venv_win\\\\Scripts\\\\python.EXE\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\dnsx\", \"source\": \"tool_root\"}, \"shuffledns\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\shuffledns\", \"source\": \"tool_root\"}, \"puredns\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\naabu\", \"source\": \"tool_root\"}, \"masscan\": {\"installed\": false, \"reason\": \"binary_not_in_path:masscan\"}, \"nmap\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\nmap\", \"source\": \"tool_root\"}, \"tlsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\tlsx\", \"source\": \"tool_root\"}, \"testssl\": {\"installed\": false, \"reason\": \"binary_not_in_path:testssl.sh\"}, \"httprobe\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penet",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "D:\\projects\\subfinder",
+        "source": "tool_root"
+      },
+      "amass": {
+        "installed": true,
+        "path": "D:\\projects\\amass",
+        "source": "tool_root"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "D:\\projects\\gau",
+        "source": "tool_root"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "D:\\projects\\waybackurls",
+        "source": "tool_root"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "D:\\projects\\cloudlist",
+        "source": "tool_root"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "D:\\projects\\dnsx",
+        "source": "tool_root"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "D:\\projects\\shuffledns",
+        "source": "tool_root"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "D:\\projects\\naabu",
+        "source": "tool_root"
+      },
+      "masscan": {
+        "installed": false,
+        "reason": "binary_not_in_path:masscan"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "D:\\projects\\nmap",
+        "source": "tool_root"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "D:\\projects\\tlsx",
+        "source": "tool_root"
+      },
+      "testssl": {
+        "installed": false,
+        "reason": "binary_not_in_path:testssl.sh"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "D:\\projects\\katana",
+        "source": "tool_root"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "D:\\projects\\hakrawler",
+        "source": "tool_root"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "C:\\Users\\Dell.000\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\arjun.EXE",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "D:\\projects\\feroxbuster",
+        "source": "tool_root"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "D:\\projects\\ffuf",
+        "source": "tool_root"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "D:\\projects\\gobuster",
+        "source": "tool_root"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "D:\\projects\\gowitness",
+        "source": "tool_root"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "D:\\projects\\aquatone",
+        "source": "tool_root"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782226144.024495,
+    "id": "453e7c80567ff6c4c030688c9cda7281a85af644056b618125913a89a487ce5b",
+    "scan_id": "HIVE-V5-7f50dbfcd1",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080/login.php\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080/login.php",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782226146.5790625,
+    "id": "3ab34d7a9329a81d160d62228b1342302eafdebb90eef78f63b68525e6da70fd",
+    "scan_id": "HIVE-V5-7f50dbfcd1",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\subfinder\", \"source\": \"tool_root\"}, \"amass\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\amass\", \"source\": \"tool_root\"}, \"assetfinder\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\gau\", \"source\": \"tool_root\"}, \"waybackurls\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\waybackurls\", \"source\": \"tool_root\"}, \"cloudlist\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\cloudlist\", \"source\": \"tool_root\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\.venv_win\\\\Scripts\\\\python.EXE\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\dnsx\", \"source\": \"tool_root\"}, \"shuffledns\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\shuffledns\", \"source\": \"tool_root\"}, \"puredns\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\naabu\", \"source\": \"tool_root\"}, \"masscan\": {\"installed\": false, \"reason\": \"binary_not_in_path:masscan\"}, \"nmap\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\nmap\", \"source\": \"tool_root\"}, \"tlsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\tlsx\", \"source\": \"tool_root\"}, \"testssl\": {\"installed\": false, \"reason\": \"binary_not_in_path:testssl.sh\"}, \"httprobe\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penet",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "D:\\projects\\subfinder",
+        "source": "tool_root"
+      },
+      "amass": {
+        "installed": true,
+        "path": "D:\\projects\\amass",
+        "source": "tool_root"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "D:\\projects\\gau",
+        "source": "tool_root"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "D:\\projects\\waybackurls",
+        "source": "tool_root"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "D:\\projects\\cloudlist",
+        "source": "tool_root"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "D:\\projects\\dnsx",
+        "source": "tool_root"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "D:\\projects\\shuffledns",
+        "source": "tool_root"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "D:\\projects\\naabu",
+        "source": "tool_root"
+      },
+      "masscan": {
+        "installed": false,
+        "reason": "binary_not_in_path:masscan"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "D:\\projects\\nmap",
+        "source": "tool_root"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "D:\\projects\\tlsx",
+        "source": "tool_root"
+      },
+      "testssl": {
+        "installed": false,
+        "reason": "binary_not_in_path:testssl.sh"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "D:\\projects\\katana",
+        "source": "tool_root"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "D:\\projects\\hakrawler",
+        "source": "tool_root"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "C:\\Users\\Dell.000\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\arjun.EXE",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "D:\\projects\\feroxbuster",
+        "source": "tool_root"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "D:\\projects\\ffuf",
+        "source": "tool_root"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "D:\\projects\\gobuster",
+        "source": "tool_root"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "D:\\projects\\gowitness",
+        "source": "tool_root"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "D:\\projects\\aquatone",
+        "source": "tool_root"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782226158.0175416,
+    "id": "453e7c80567ff6c4c030688c9cda7281a85af644056b618125913a89a487ce5b",
+    "scan_id": "HIVE-V5-7f50dbfcd1",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080/login.php\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080/login.php",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782226159.90885,
+    "id": "3ab34d7a9329a81d160d62228b1342302eafdebb90eef78f63b68525e6da70fd",
+    "scan_id": "HIVE-V5-7f50dbfcd1",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\subfinder\", \"source\": \"tool_root\"}, \"amass\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\amass\", \"source\": \"tool_root\"}, \"assetfinder\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\gau\", \"source\": \"tool_root\"}, \"waybackurls\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\waybackurls\", \"source\": \"tool_root\"}, \"cloudlist\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\cloudlist\", \"source\": \"tool_root\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\.venv_win\\\\Scripts\\\\python.EXE\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\dnsx\", \"source\": \"tool_root\"}, \"shuffledns\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\shuffledns\", \"source\": \"tool_root\"}, \"puredns\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\naabu\", \"source\": \"tool_root\"}, \"masscan\": {\"installed\": false, \"reason\": \"binary_not_in_path:masscan\"}, \"nmap\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\nmap\", \"source\": \"tool_root\"}, \"tlsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\tlsx\", \"source\": \"tool_root\"}, \"testssl\": {\"installed\": false, \"reason\": \"binary_not_in_path:testssl.sh\"}, \"httprobe\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penet",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "D:\\projects\\subfinder",
+        "source": "tool_root"
+      },
+      "amass": {
+        "installed": true,
+        "path": "D:\\projects\\amass",
+        "source": "tool_root"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "D:\\projects\\gau",
+        "source": "tool_root"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "D:\\projects\\waybackurls",
+        "source": "tool_root"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "D:\\projects\\cloudlist",
+        "source": "tool_root"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "D:\\projects\\dnsx",
+        "source": "tool_root"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "D:\\projects\\shuffledns",
+        "source": "tool_root"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "D:\\projects\\naabu",
+        "source": "tool_root"
+      },
+      "masscan": {
+        "installed": false,
+        "reason": "binary_not_in_path:masscan"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "D:\\projects\\nmap",
+        "source": "tool_root"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "D:\\projects\\tlsx",
+        "source": "tool_root"
+      },
+      "testssl": {
+        "installed": false,
+        "reason": "binary_not_in_path:testssl.sh"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "D:\\projects\\katana",
+        "source": "tool_root"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "D:\\projects\\hakrawler",
+        "source": "tool_root"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "C:\\Users\\Dell.000\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\arjun.EXE",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "D:\\projects\\feroxbuster",
+        "source": "tool_root"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "D:\\projects\\ffuf",
+        "source": "tool_root"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "D:\\projects\\gobuster",
+        "source": "tool_root"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "D:\\projects\\gowitness",
+        "source": "tool_root"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "D:\\projects\\aquatone",
+        "source": "tool_root"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782229979.643353,
+    "id": "c599b487638fcbdb4862f4f7af7c910f848d34fe389f6109fbaa41e9a87061a0",
+    "scan_id": "HIVE-V5-184b93896e",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080/login.php\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080/login.php",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782229989.7485075,
+    "id": "e41ab5ea9f07232fd877f1eb24ff696abc2d7a8e91e1c57e6c71ab313cbdf8e7",
+    "scan_id": "HIVE-V5-184b93896e",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\subfinder\", \"source\": \"tool_root\"}, \"amass\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\amass\", \"source\": \"tool_root\"}, \"assetfinder\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\gau\", \"source\": \"tool_root\"}, \"waybackurls\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\waybackurls\", \"source\": \"tool_root\"}, \"cloudlist\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\cloudlist\", \"source\": \"tool_root\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\.venv_win\\\\Scripts\\\\python.EXE\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\dnsx\", \"source\": \"tool_root\"}, \"shuffledns\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\shuffledns\", \"source\": \"tool_root\"}, \"puredns\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\naabu\", \"source\": \"tool_root\"}, \"masscan\": {\"installed\": false, \"reason\": \"binary_not_in_path:masscan\"}, \"nmap\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\nmap\", \"source\": \"tool_root\"}, \"tlsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\tlsx\", \"source\": \"tool_root\"}, \"testssl\": {\"installed\": false, \"reason\": \"binary_not_in_path:testssl.sh\"}, \"httprobe\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penet",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "D:\\projects\\subfinder",
+        "source": "tool_root"
+      },
+      "amass": {
+        "installed": true,
+        "path": "D:\\projects\\amass",
+        "source": "tool_root"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "D:\\projects\\gau",
+        "source": "tool_root"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "D:\\projects\\waybackurls",
+        "source": "tool_root"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "D:\\projects\\cloudlist",
+        "source": "tool_root"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "D:\\projects\\dnsx",
+        "source": "tool_root"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "D:\\projects\\shuffledns",
+        "source": "tool_root"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "D:\\projects\\naabu",
+        "source": "tool_root"
+      },
+      "masscan": {
+        "installed": false,
+        "reason": "binary_not_in_path:masscan"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "D:\\projects\\nmap",
+        "source": "tool_root"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "D:\\projects\\tlsx",
+        "source": "tool_root"
+      },
+      "testssl": {
+        "installed": false,
+        "reason": "binary_not_in_path:testssl.sh"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "D:\\projects\\katana",
+        "source": "tool_root"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "D:\\projects\\hakrawler",
+        "source": "tool_root"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "C:\\Users\\Dell.000\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\arjun.EXE",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "D:\\projects\\feroxbuster",
+        "source": "tool_root"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "D:\\projects\\ffuf",
+        "source": "tool_root"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "D:\\projects\\gobuster",
+        "source": "tool_root"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "D:\\projects\\gowitness",
+        "source": "tool_root"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "D:\\projects\\aquatone",
+        "source": "tool_root"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782230179.6630104,
+    "id": "c599b487638fcbdb4862f4f7af7c910f848d34fe389f6109fbaa41e9a87061a0",
+    "scan_id": "HIVE-V5-184b93896e",
+    "memory_type": "tool_summary",
+    "content": "tool alpha_scope: {\"target\": \"http://localhost:8080/login.php\", \"mode\": \"STANDARD\"}",
+    "metadata": {
+      "tool_name": "alpha_scope",
+      "target": "http://localhost:8080/login.php",
+      "mode": "STANDARD"
+    },
+    "vector": []
+  },
+  {
+    "timestamp": 1782230186.1645591,
+    "id": "e41ab5ea9f07232fd877f1eb24ff696abc2d7a8e91e1c57e6c71ab313cbdf8e7",
+    "scan_id": "HIVE-V5-184b93896e",
+    "memory_type": "tool_summary",
+    "content": "tool tool_inventory: {\"subfinder\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\subfinder\", \"source\": \"tool_root\"}, \"amass\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\amass\", \"source\": \"tool_root\"}, \"assetfinder\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\assetfinder.exe\", \"source\": \"project_bin\"}, \"github-subdomains\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\github-subdomains.exe\", \"source\": \"project_bin\"}, \"gau\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\gau\", \"source\": \"tool_root\"}, \"waybackurls\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\waybackurls\", \"source\": \"tool_root\"}, \"cloudlist\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\cloudlist\", \"source\": \"tool_root\"}, \"spiderfoot\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\.venv_win\\\\Scripts\\\\python.EXE\", \"source\": \"PATH\"}, \"dnsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\dnsx\", \"source\": \"tool_root\"}, \"shuffledns\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\shuffledns\", \"source\": \"tool_root\"}, \"puredns\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\puredns.exe\", \"source\": \"project_bin\"}, \"cdncheck\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penetration testing system copy\\\\penetration testing system\\\\tools\\\\recon_bin\\\\cdncheck.exe\", \"source\": \"project_bin\"}, \"naabu\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\naabu\", \"source\": \"tool_root\"}, \"masscan\": {\"installed\": false, \"reason\": \"binary_not_in_path:masscan\"}, \"nmap\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\nmap\", \"source\": \"tool_root\"}, \"tlsx\": {\"installed\": true, \"path\": \"D:\\\\projects\\\\tlsx\", \"source\": \"tool_root\"}, \"testssl\": {\"installed\": false, \"reason\": \"binary_not_in_path:testssl.sh\"}, \"httprobe\": {\"installed\": true, \"path\": \"D:\\\\Antigravity 2\\\\penet",
+    "metadata": {
+      "tool_name": "tool_inventory",
+      "subfinder": {
+        "installed": true,
+        "path": "D:\\projects\\subfinder",
+        "source": "tool_root"
+      },
+      "amass": {
+        "installed": true,
+        "path": "D:\\projects\\amass",
+        "source": "tool_root"
+      },
+      "assetfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\assetfinder.exe",
+        "source": "project_bin"
+      },
+      "github-subdomains": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\github-subdomains.exe",
+        "source": "project_bin"
+      },
+      "gau": {
+        "installed": true,
+        "path": "D:\\projects\\gau",
+        "source": "tool_root"
+      },
+      "waybackurls": {
+        "installed": true,
+        "path": "D:\\projects\\waybackurls",
+        "source": "tool_root"
+      },
+      "cloudlist": {
+        "installed": true,
+        "path": "D:\\projects\\cloudlist",
+        "source": "tool_root"
+      },
+      "spiderfoot": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "dnsx": {
+        "installed": true,
+        "path": "D:\\projects\\dnsx",
+        "source": "tool_root"
+      },
+      "shuffledns": {
+        "installed": true,
+        "path": "D:\\projects\\shuffledns",
+        "source": "tool_root"
+      },
+      "puredns": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\puredns.exe",
+        "source": "project_bin"
+      },
+      "cdncheck": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\cdncheck.exe",
+        "source": "project_bin"
+      },
+      "naabu": {
+        "installed": true,
+        "path": "D:\\projects\\naabu",
+        "source": "tool_root"
+      },
+      "masscan": {
+        "installed": false,
+        "reason": "binary_not_in_path:masscan"
+      },
+      "nmap": {
+        "installed": true,
+        "path": "D:\\projects\\nmap",
+        "source": "tool_root"
+      },
+      "tlsx": {
+        "installed": true,
+        "path": "D:\\projects\\tlsx",
+        "source": "tool_root"
+      },
+      "testssl": {
+        "installed": false,
+        "reason": "binary_not_in_path:testssl.sh"
+      },
+      "httprobe": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\httprobe.exe",
+        "source": "project_bin"
+      },
+      "katana": {
+        "installed": true,
+        "path": "D:\\projects\\katana",
+        "source": "tool_root"
+      },
+      "gospider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\gospider.exe",
+        "source": "project_bin"
+      },
+      "hakrawler": {
+        "installed": true,
+        "path": "D:\\projects\\hakrawler",
+        "source": "tool_root"
+      },
+      "linkfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "secretfinder": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "arjun": {
+        "installed": true,
+        "path": "C:\\Users\\Dell.000\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\arjun.EXE",
+        "source": "PATH"
+      },
+      "paramspider": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "feroxbuster": {
+        "installed": true,
+        "path": "D:\\projects\\feroxbuster",
+        "source": "tool_root"
+      },
+      "ffuf": {
+        "installed": true,
+        "path": "D:\\projects\\ffuf",
+        "source": "tool_root"
+      },
+      "dirsearch": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gobuster": {
+        "installed": true,
+        "path": "D:\\projects\\gobuster",
+        "source": "tool_root"
+      },
+      "kiterunner": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\kr.exe",
+        "source": "project_bin"
+      },
+      "inql": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\.venv_win\\Scripts\\python.EXE",
+        "source": "PATH"
+      },
+      "gowitness": {
+        "installed": true,
+        "path": "D:\\projects\\gowitness",
+        "source": "tool_root"
+      },
+      "aquatone": {
+        "installed": true,
+        "path": "D:\\projects\\aquatone",
+        "source": "tool_root"
+      },
+      "interactsh": {
+        "installed": true,
+        "path": "D:\\Antigravity 2\\penetration testing system copy\\penetration testing system\\tools\\recon_bin\\interactsh-client.exe",
+        "source": "project_bin"
+      }
+    },
+    "vector": []
   }
 ]

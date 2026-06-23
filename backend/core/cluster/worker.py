@@ -28,8 +28,7 @@ class WorkerNode:
     def __init__(self, worker_id: str, specialty: str, redis_url: str, supabase_url: str, supabase_key: str):
         self.id = worker_id
         self.specialty = specialty
-        import redis.asyncio as aioredis
-        self.redis_client = aioredis.from_url(redis_url, decode_responses=True)
+        self.redis_client = None  # Initialized lazily in start() via centralized pool
         # Supabase is OPTIONAL — keep working with Redis-only when missing
         # (Architecture §29.13: never block the cluster on a slow/down DB).
         self.supabase = None
@@ -49,6 +48,9 @@ class WorkerNode:
 
     async def start(self):
         self.running = True
+        from backend.core.redis_client import get_redis_client
+        rc = await get_redis_client()
+        self.redis_client = rc.client
         await self.bus.start()
         if self.specialty in ["browser", "hybrid"]:
             await self.pinchtab.start()
@@ -103,7 +105,6 @@ class WorkerNode:
         await self.pinchtab.stop()
         try:
             await self.redis_client.hdel("workers", self.id)
-            await self.redis_client.close()
         except Exception as e:
             logger.debug("Worker[%s] shutdown cleanup failed: %s", self.id, e)
 

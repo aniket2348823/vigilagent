@@ -515,10 +515,25 @@ class CortexEngine:
         if _time.time() - last_fail < 60:
             return None
         try:
+            import asyncio as _aio
+            loop = _aio.get_event_loop()
+            if loop.is_running():
+                # We're inside an async context — schedule get_redis_client
+                from backend.core.redis_client import get_redis_client
+                # Can't await here (sync method), so create a fresh lightweight
+                # client. The centralized pool will handle pooling elsewhere.
+                pass
+            from backend.core.redis_client import get_redis_client as _grc
+            # Lazy: create a task-free connection for sync access
+            import redis.asyncio as _aioredis
             import os as _os
             redis_url = _os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-            import redis.asyncio as aioredis
-            self._redis_client = aioredis.from_url(redis_url, decode_responses=True, max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "20")), socket_timeout=int(os.getenv("REDIS_SOCKET_TIMEOUT", "10")), retry_on_timeout=True)
+            self._redis_client = _aioredis.from_url(
+                redis_url, decode_responses=True,
+                max_connections=10,
+                socket_timeout=5,
+                retry_on_timeout=True,
+            )
             self._redis_last_fail = 0
             return self._redis_client
         except Exception:

@@ -106,8 +106,9 @@ class AgentChi(BrowserEnabledAgent):
         redis_url = getattr(self.config.redis, "url", None)
         if redis_url:
             try:
-                import redis.asyncio as aioredis
-                self.redis_client = aioredis.from_url(redis_url, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
+                from backend.core.redis_client import get_redis_client
+                rc = await get_redis_client()
+                self.redis_client = rc.client
                 # Active payload auditing loop
                 self._task_manager.create_task(
                     self._audit_cluster_payloads(),
@@ -373,12 +374,21 @@ class AgentChi(BrowserEnabledAgent):
     # --- AGENT IOTA: DISTRIBUTED AUDITOR UPGRADE ---
 
     async def _audit_cluster_payloads(self):
-        """Intercepts and scrutinizes global swarm jobs before execution (V6-ASYNC)."""
+        """Intercepts and scrutinizes global swarm jobs before execution (V6-ASYNC).
+
+        Resilience: when Redis is unavailable the loop backs off exponentially
+        (1s → 2s → 4s → … 30s cap) instead of retrying every 1s and spamming
+        ERROR logs. Once Redis is reachable again the backoff resets.
+        """
         if not self.redis_client: return
+        _consecutive_failures = 0
+        _BACKOFF_CAP = 30  # seconds
         while self.active:
             try:
                 # Use await to avoid blocking the event loop
                 job_data = await self.redis_client.brpop("xytherion_audit_queue", timeout=5)
+                # Success — reset backoff
+                _consecutive_failures = 0
                 if job_data:
 
                     event_dict = json.loads(job_data[1])
@@ -404,8 +414,14 @@ class AgentChi(BrowserEnabledAgent):
                             payload={"job_id": job_id, "status": "BLOCKED", "reason": reason}
                         ))
             except Exception as e:
-                logger.error(f"Inspector Audit Loop Error: {e}")
-                await asyncio.sleep(1)
+                _consecutive_failures += 1
+                delay = min(_BACKOFF_CAP, 2 ** _consecutive_failures)
+                if _consecutive_failures <= 3:
+                    logger.warning(f"[{self.name}] Audit loop error ({_consecutive_failures}): {e} — retrying in {delay}s")
+                elif _consecutive_failures == 4:
+                    logger.warning(f"[{self.name}] Audit loop degraded — retrying silently until Redis recovers")
+                # else: silent retry to avoid log spam
+                await asyncio.sleep(delay)
 
     async def _audit_logic(self, payload: Dict) -> tuple[bool, str]:
         """Deep pattern and semantic scrutiny for safety violations.

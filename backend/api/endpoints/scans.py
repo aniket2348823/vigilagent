@@ -39,9 +39,12 @@ router = APIRouter()
 _SCAN_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$", re.ASCII)
 _TARGET_URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
 # FIX-009: Reject dangerous target URLs
-# In dev mode, allow localhost scanning (scope.yaml governs real access control).
-_dev_mode = os.getenv("VIGILAGENT_DEV_MODE", "false").lower() == "true"
-forbidden_hosts = {"0.0.0.0", "::1", "169.254.169.254"} if _dev_mode else {"localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"}
+# SECURITY: localhost/127.0.0.1 are NEVER blocked — this is a pentest tool
+# that must be able to scan local targets. The scope-guard middleware
+# (Architecture CRIT-28) handles real access control via scope.yaml.
+# Only cloud metadata endpoints and wildcard addresses are blocked here.
+def _get_forbidden_hosts() -> set:
+    return {"0.0.0.0", "::1", "169.254.169.254"}
 
 
 class CreateScanRequest(BaseModel):
@@ -68,8 +71,9 @@ class CreateScanRequest(BaseModel):
         from urllib.parse import urlparse
         parsed = urlparse(v)
         hostname = (parsed.hostname or "").lower()
-        if hostname in forbidden_hosts or hostname.startswith(("192.168.", "10.", "172.")):
-            raise ValueError("target_url points to a private/internal address which is not allowed")
+        forbidden = _get_forbidden_hosts()
+        if hostname in forbidden:
+            raise ValueError("target_url points to a reserved/loopback address which is not allowed")
         if hostname in {"169.254.169.254", "metadata.google.internal", "metadata.azure.com"}:
             raise ValueError("target_url points to a cloud metadata endpoint which is not allowed")
         if parsed.scheme not in {"http", "https"}:
@@ -103,9 +107,54 @@ async def create_scan(req: CreateScanRequest, background_tasks: BackgroundTasks)
             stats_db_manager.update_scan_status(scan_id, "Failed")
             import logging
             logging.getLogger("api.scans").error("scan %s failed: %s", scan_id, exc)
+            # Cleanup: stop any agents that managed to start before the crash
+            try:
+                await _cleanup_zombie_agents(scan_id)
+            except Exception:
+                pass
 
     background_tasks.add_task(_run)
     return JSONResponse(status_code=202, content={"scan_id": scan_id, "status": "accepted"})
+
+
+async def _cleanup_zombie_agents(scan_id: str) -> None:
+    """Stop any agents registered for this specific scan.
+
+    Uses the per-scan agent registry to surgically stop only agents
+    belonging to the given scan_id, rather than clearing the global registry
+    which would break other concurrent scans.
+    """
+    try:
+        from backend.core.orchestrator import HiveOrchestrator
+        import asyncio as _aio
+
+        # Per-scan cleanup: only stop agents registered for this scan
+        async with HiveOrchestrator._get_lock():
+            scan_agents = HiveOrchestrator._scan_agents.pop(scan_id, {})
+
+        if scan_agents:
+            for name, agent in scan_agents.items():
+                try:
+                    if hasattr(agent, "stop"):
+                        await _aio.wait_for(agent.stop(), timeout=5.0)
+                    # Also remove from global registry
+                    async with HiveOrchestrator._get_lock():
+                        HiveOrchestrator.active_agents.pop(name, None)
+                    logger.info("[Cancel] Stopped zombie agent %s for scan %s", name, scan_id)
+                except Exception as e:
+                    logger.warning("[Cancel] Failed to stop agent %s: %s", name, e)
+        else:
+            # Fallback: scan had no per-scan entries (legacy path).
+            # Do NOT clear all agents — other concurrent scans may be using
+            # them.  Log a warning and let the zombie sweep handle cleanup
+            # when the scan status transitions to a terminal state.
+            logger.warning(
+                "[Cancel] No per-scan agents found for %s; "
+                "global fallback skipped to protect concurrent scans. "
+                "Zombie sweep will clean up when scan status changes.",
+                scan_id)
+    except Exception as exc:
+        logger.warning("[Cancel] Zombie cleanup failed: %s", exc)
 
 
 @router.get("")
@@ -267,7 +316,11 @@ async def resume_scan(scan_id: str):
 @router.post("/{scan_id}/cancel")
 async def cancel_scan(scan_id: str):
     stats_db_manager.update_scan_status(scan_id, "Cancelled")
-    return _signal(scan_id, "ABORT")
+    # Send ABORT signal first while agents are still registered
+    result = _signal(scan_id, "ABORT")
+    # Then stop zombie agents so they don't keep flooding the frontend
+    await _cleanup_zombie_agents(scan_id)
+    return result
 
 
 @router.get("/{scan_id}/events")

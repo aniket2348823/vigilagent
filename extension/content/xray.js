@@ -291,12 +291,15 @@
     // DASHBOARD UI HANDSHAKE (HEARTBEAT)
     // ========================================================================
 
-    // Broadcast immediately on load
-    window.postMessage({ type: 'ANTIGRAVITY_EXTENSION_CONNECTED' }, '*');
+    // Broadcast immediately on load — use VIGILAGENT prefix so the React frontend
+    // (NewScan.jsx) can detect the extension via window.addEventListener('message').
+    window.postMessage({ type: 'VIGILAGENT_EXTENSION_CONNECTED' }, '*');
+    document.dispatchEvent(new CustomEvent('VIGILAGENT_EXTENSION_HEARTBEAT'));
 
     // Broadcast periodically to guarantee React picks it up regardless of mount timing
     setInterval(() => {
-        window.postMessage({ type: 'ANTIGRAVITY_EXTENSION_CONNECTED' }, '*');
+        window.postMessage({ type: 'VIGILAGENT_EXTENSION_CONNECTED' }, '*');
+        document.dispatchEvent(new CustomEvent('VIGILAGENT_EXTENSION_HEARTBEAT'));
     }, 2000);
 
 })();
