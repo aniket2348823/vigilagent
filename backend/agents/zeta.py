@@ -1,19 +1,21 @@
 import asyncio
-import psutil
-import time
+import logging
 import random
-from typing import List, Dict, Any
+import time
 from collections import deque
-from backend.core.hive import EventType, HiveEvent
+from typing import Any
+
+import psutil
+
+# Hybrid AI Engine
+from backend.ai.cortex import get_cortex_engine
 from backend.core.browser_agent import BrowserEnabledAgent
+from backend.core.hive import EventType, HiveEvent
 from backend.core.protocol import JobPacket
 from backend.core.queue import command_lane
-# Hybrid AI Engine
-from backend.ai.cortex import CortexEngine, get_cortex_engine
-from backend.core.content_boundary import content_boundary
-import logging
 
 logger = logging.getLogger("AgentZeta")
+
 
 class ZetaAgent(BrowserEnabledAgent):
     """
@@ -27,32 +29,33 @@ class ZetaAgent(BrowserEnabledAgent):
     - SOTA: Adaptive Gaussian Jitter.
     - Browser resource monitoring and cleanup
     """
+
     def __init__(self, bus):
         super().__init__("agent_zeta", bus)
-        
-        self.latency_window = deque(maxlen=50) 
-        self.error_window = deque(maxlen=50)   
-        
+
+        self.latency_window = deque(maxlen=50)
+        self.error_window = deque(maxlen=50)
+
         self.error_budget_max = 50
         self.error_budget_current = 50
         self.last_budget_refill = time.time()
-        
+
         self.priority_queue = {0: [], 1: [], 2: []}
         # Hybrid AI Engine for stress analysis
         self.cortex = get_cortex_engine()
-        
+
         # Browser resource tracking
         self.browser_memory_threshold = 500 * 1024 * 1024  # 500MB
         self.max_browser_contexts = 5
 
         # ===== RUNTIME GOVERNOR STATE (Architecture §5.1/§5.2/§29.4) =====
         # Zeta actively controls RPS, concurrency, backoff, and WAF pressure.
-        self.base_rps = 5.0          # nominal requests-per-second target
-        self.min_rps = 0.5           # floor when heavily throttled
+        self.base_rps = 5.0  # nominal requests-per-second target
+        self.min_rps = 0.5  # floor when heavily throttled
         self.base_concurrency = command_lane.max_concurrent
-        self.throttled = False       # current governor throttle state
-        self.waf_pressure = 0        # rolling 403/429/5xx burst pressure (0..10)
-        self._skill_rec_cache: Dict[str, Any] = {}  # HIGH-69: bounded via SkillRecallMixin or manual eviction
+        self.throttled = False  # current governor throttle state
+        self.waf_pressure = 0  # rolling 403/429/5xx burst pressure (0..10)
+        self._skill_rec_cache: dict[str, Any] = {}  # HIGH-69: bounded via SkillRecallMixin or manual eviction
 
     async def setup(self):
         self.bus.subscribe(EventType.JOB_COMPLETED, self.handle_job_completion)
@@ -82,9 +85,9 @@ class ZetaAgent(BrowserEnabledAgent):
         recs = []
         try:
             from backend.core.skill_library import skill_library
+
             for vuln_class in ("rate-limit", "waf", "anomaly", "runtime-governance"):
-                recs.extend(skill_library.get_recommendations(
-                    target_url=target_url, vuln_class=vuln_class, limit=3))
+                recs.extend(skill_library.get_recommendations(target_url=target_url, vuln_class=vuln_class, limit=3))
         except Exception as e:
             logger.debug(f"[{self.name}] Governance skill recall failed: {e}")
             recs = []
@@ -99,29 +102,31 @@ class ZetaAgent(BrowserEnabledAgent):
             _ctx.append_event(event)
         if "duration_ms" in payload:
             self.latency_window.append(payload["duration_ms"])
-        
+
         if "status" in payload:
             status_val = payload["status"]
             is_error = status_val in ("FAILED", "BLOCKED", "ERROR") or (isinstance(status_val, bool) and not status_val)
             self.error_window.append(is_error)
-            
+
             # HYBRID AI: Deep Server Stress Analysis
             if is_error and "data" in payload:
-                 error_msg = str(payload["data"])
-                 stress_analysis = await self.cortex.analyze_server_stress(error_msg)
-                 stress_level = stress_analysis.get("stress_level", "NORMAL")
-                 indicators = stress_analysis.get("indicators", [])
-                 action = stress_analysis.get("recommended_action", "CONTINUE")
-                 
-                 if stress_level in ["HIGH", "MEDIUM"]:
-                     penalty = 10 if stress_level == "HIGH" else 5
-                     self.error_budget_current -= penalty
-                     logger.warning(f"[{self.name}] Server Sentiment: {stress_level} (AI: {indicators}) -> Action: {action}")
-                     
-                     if action == "ABORT":
-                         await self.broadcast_signal("STEALTH_MODE", {"reason": f"AI: Server Stress {stress_level}"})
-                     elif action == "THROTTLE":
-                         await self.broadcast_signal("THROTTLE", {"level": "HIGH", "reason": f"AI: {indicators}"})
+                error_msg = str(payload["data"])
+                stress_analysis = await self.cortex.analyze_server_stress(error_msg)
+                stress_level = stress_analysis.get("stress_level", "NORMAL")
+                indicators = stress_analysis.get("indicators", [])
+                action = stress_analysis.get("recommended_action", "CONTINUE")
+
+                if stress_level in ["HIGH", "MEDIUM"]:
+                    penalty = 10 if stress_level == "HIGH" else 5
+                    self.error_budget_current -= penalty
+                    logger.warning(
+                        f"[{self.name}] Server Sentiment: {stress_level} (AI: {indicators}) -> Action: {action}"
+                    )
+
+                    if action == "ABORT":
+                        await self.broadcast_signal("STEALTH_MODE", {"reason": f"AI: Server Stress {stress_level}"})
+                    elif action == "THROTTLE":
+                        await self.broadcast_signal("THROTTLE", {"level": "HIGH", "reason": f"AI: {indicators}"})
 
     async def lifecycle(self):
         while self.active:
@@ -134,18 +139,18 @@ class ZetaAgent(BrowserEnabledAgent):
         # 1. PREDICTIVE AUTO-SCALING
         if len(self.latency_window) > 10:
             trend = self.calculate_trend(list(self.latency_window))
-            if trend > 0.5: 
-                 await self.broadcast_signal("THROTTLE", {"level": "HIGH", "reason": "Latency Acceleration"})
+            if trend > 0.5:
+                await self.broadcast_signal("THROTTLE", {"level": "HIGH", "reason": "Latency Acceleration"})
 
         # 2. ERROR BUDGET CHECK
         if self.error_budget_current < 5:
-             await self.broadcast_signal("STEALTH_MODE", {"reason": "Error Budget Depleted"})
+            await self.broadcast_signal("STEALTH_MODE", {"reason": "Error Budget Depleted"})
 
         # 3. DYNAMIC IP ROTATION
         if len(self.error_window) > 20:
             block_count = sum(1 for x in self.error_window if x is True)
             block_rate = block_count / len(self.error_window)
-            if block_rate > 0.02: 
+            if block_rate > 0.02:
                 await self.broadcast_signal("INFRA_ROTATE", {"reason": "High Block Rate"})
                 self.error_window.clear()
 
@@ -158,10 +163,13 @@ class ZetaAgent(BrowserEnabledAgent):
 
         telemetry = command_lane.telemetry
         if telemetry["active_count"] >= telemetry["max_concurrent"] or telemetry["total_timed_out"] > 0:
-            await self.broadcast_signal("THROTTLE", {
-                "level": "HIGH",
-                "reason": f"CommandLane pressure active={telemetry['active_count']} timed_out={telemetry['total_timed_out']}"
-            })
+            await self.broadcast_signal(
+                "THROTTLE",
+                {
+                    "level": "HIGH",
+                    "reason": f"CommandLane pressure active={telemetry['active_count']} timed_out={telemetry['total_timed_out']}",
+                },
+            )
 
         # 5. RUNTIME GOVERNOR DECISION (Architecture §5.2/§29.4)
         # Decide whether to slow/pause or resume based on aggregate instability,
@@ -169,18 +177,21 @@ class ZetaAgent(BrowserEnabledAgent):
         if self.should_throttle():
             if not self.throttled:
                 self.throttled = True
-                await self.broadcast_signal("THROTTLE", {
-                    "level": "HIGH",
-                    "reason": f"Governor pacing: rps={self.recommended_rps():.2f} waf_pressure={self.waf_pressure}"
-                })
+                await self.broadcast_signal(
+                    "THROTTLE",
+                    {
+                        "level": "HIGH",
+                        "reason": f"Governor pacing: rps={self.recommended_rps():.2f} waf_pressure={self.waf_pressure}",
+                    },
+                )
         else:
             # Target is stable again: decay WAF pressure and resume normal pacing.
             self.waf_pressure = max(0, self.waf_pressure - 1)
             if self.throttled and self.waf_pressure == 0:
                 self.throttled = False
-                await self.broadcast_signal("RESUME", {
-                    "reason": f"Governor resume: stability recovered, rps={self.recommended_rps():.2f}"
-                })
+                await self.broadcast_signal(
+                    "RESUME", {"reason": f"Governor resume: stability recovered, rps={self.recommended_rps():.2f}"}
+                )
 
     def detect_anomalies(self) -> tuple[bool, str]:
         """SOTA: Z-Score Statistical Anomaly Detection for WAF/Firewall triggers."""
@@ -188,12 +199,12 @@ class ZetaAgent(BrowserEnabledAgent):
             latencies = list(self.latency_window)
             mean = sum(latencies) / len(latencies)
             variance = sum((x - mean) ** 2 for x in latencies) / len(latencies)
-            std_dev = max(variance ** 0.5, 0.001)
-            
+            std_dev = max(variance**0.5, 0.001)
+
             latest_latency = latencies[-1]
             z_score = (latest_latency - mean) / std_dev
-            
-            if z_score > 3.0: # 3 standard deviations = anomaly (e.g. sudden WAF tarpit)
+
+            if z_score > 3.0:  # 3 standard deviations = anomaly (e.g. sudden WAF tarpit)
                 return True, f"Latency Spike Anomaly (Z-Score: {z_score:.2f})"
         return False, ""
 
@@ -218,9 +229,7 @@ class ZetaAgent(BrowserEnabledAgent):
             if block_rate > 0.10:
                 return True
         telemetry = command_lane.telemetry
-        if telemetry["total_timed_out"] > 0:
-            return True
-        return False
+        return telemetry["total_timed_out"] > 0
 
     def recommended_rps(self) -> float:
         """Recommended requests-per-second for the swarm right now.
@@ -262,9 +271,10 @@ class ZetaAgent(BrowserEnabledAgent):
         jitter = random.gauss(1.5, 0.5)
         return max(0.1, jitter)
 
-    def calculate_trend(self, data: List[float]) -> float:
+    def calculate_trend(self, data: list[float]) -> float:
         n = len(data)
-        if n < 2: return 0.0
+        if n < 2:
+            return 0.0
         x = range(n)
         y = data
         x_mean = sum(x) / n
@@ -284,23 +294,28 @@ class ZetaAgent(BrowserEnabledAgent):
         """Process queued jobs from the priority queue."""
         for priority in [0, 1, 2]:  # 0 = highest priority
             while self.priority_queue[priority]:
-                job = self.priority_queue[priority].pop(0)
+                self.priority_queue[priority].pop(0)
                 # Process or delegate job
                 pass
 
-    async def broadcast_signal(self, type: str, payload: Dict[str, Any]):
-        await self.bus.publish(HiveEvent(
-            type=EventType.CONTROL_SIGNAL,
-            source=self.name,
-            payload={"signal": type, "data": payload}
-        ))
+    async def broadcast_signal(self, type: str, payload: dict[str, Any]):
+        await self.bus.publish(
+            HiveEvent(type=EventType.CONTROL_SIGNAL, source=self.name, payload={"signal": type, "data": payload})
+        )
         # Broadcast to Dashboard: Governance action
-        await self.bus.publish(HiveEvent(
-            type=EventType.LIVE_ATTACK,
-            source=self.name,
-            payload={"url": "System", "arsenal": f"Governance: {type}", "action": type, "payload": str(payload.get('reason', ''))[:50]}
-        ))
-    
+        await self.bus.publish(
+            HiveEvent(
+                type=EventType.LIVE_ATTACK,
+                source=self.name,
+                payload={
+                    "url": "System",
+                    "arsenal": f"Governance: {type}",
+                    "action": type,
+                    "payload": str(payload.get("reason", ""))[:50],
+                },
+            )
+        )
+
     def validate_job(self, packet: JobPacket) -> bool:
         """
         Cyber-Organism Protocol: Pre-Flight Check.
@@ -315,98 +330,99 @@ class ZetaAgent(BrowserEnabledAgent):
 
         # 2. Budget Check (< 10?)
         if self.error_budget_current < 10:
-             logger.warning(f"[{self.name}]: DENY JOB {packet.id}. Low Budget ({self.error_budget_current}).")
-             return False
+            logger.warning(f"[{self.name}]: DENY JOB {packet.id}. Low Budget ({self.error_budget_current}).")
+            return False
 
         return True
 
     # ============ BROWSER RESOURCE MONITORING (Phase 4) ============
-    
+
     async def _monitor_browser_memory(self) -> dict:
         """Monitor browser memory usage and detect leaks."""
         try:
             # Get current process memory
             process = psutil.Process()
             memory_info = process.memory_info()
-            
+
             # Check if browser memory exceeds threshold
             if memory_info.rss > self.browser_memory_threshold:
-                logger.warning(f"[{self.name}] Browser memory threshold exceeded: {memory_info.rss / 1024 / 1024:.1f}MB")
-                
+                logger.warning(
+                    f"[{self.name}] Browser memory threshold exceeded: {memory_info.rss / 1024 / 1024:.1f}MB"
+                )
+
                 # Trigger cleanup
                 await self._close_idle_contexts()
-                
+
                 return {
                     "memory_mb": memory_info.rss / 1024 / 1024,
                     "threshold_exceeded": True,
-                    "action": "cleanup_triggered"
+                    "action": "cleanup_triggered",
                 }
-            
-            return {
-                "memory_mb": memory_info.rss / 1024 / 1024,
-                "threshold_exceeded": False
-            }
-            
+
+            return {"memory_mb": memory_info.rss / 1024 / 1024, "threshold_exceeded": False}
+
         except Exception as e:
             logger.error(f"[{self.name}] Browser memory monitoring failed: {e}")
             return {}
-    
+
     async def _get_active_contexts(self) -> list:
         """Get list of active browser contexts from the orchestrator."""
         try:
             # Access browser orchestrator through the browser property
-            if not hasattr(self, 'browser') or not self.browser:
+            if not hasattr(self, "browser") or not self.browser:
                 return []
-            
+
             # Get the orchestrator from browser agent
             orchestrator = self.browser_orchestrator
-            
+
             if not orchestrator:
                 return []
-            
+
             # Get context statistics
-            stats = orchestrator.get_context_stats()
-            
+            orchestrator.get_context_stats()
+
             # Build list of active contexts with metadata
             active_contexts = []
             current_time = time.time()
-            
+
             async with orchestrator._context_lock:
                 for context_id, context_data in orchestrator._active_contexts.items():
                     idle_time = current_time - context_data["last_activity"]
-                    
-                    active_contexts.append({
-                        "context_id": context_id,
-                        "scan_id": context_data["scan_id"],
-                        "created_at": context_data["created_at"],
-                        "last_activity": context_data["last_activity"],
-                        "idle_time": idle_time,
-                        "engine": context_data.get("engine", "unknown")
-                    })
-            
+
+                    active_contexts.append(
+                        {
+                            "context_id": context_id,
+                            "scan_id": context_data["scan_id"],
+                            "created_at": context_data["created_at"],
+                            "last_activity": context_data["last_activity"],
+                            "idle_time": idle_time,
+                            "engine": context_data.get("engine", "unknown"),
+                        }
+                    )
+
             return active_contexts
-            
+
         except Exception as e:
             logger.error(f"[{self.name}] Context enumeration failed: {e}")
             return []
-    
+
     async def _close_idle_contexts(self) -> int:
         """Close idle browser contexts to free memory."""
         try:
             logger.debug(f"[{self.name}] Closing idle browser contexts...")
-            
+
             # Access browser orchestrator through the browser property
-            if not hasattr(self, 'browser') or not self.browser:
+            if not hasattr(self, "browser") or not self.browser:
                 return 0
-            
+
             orchestrator = self.browser_orchestrator
-            
+
             if not orchestrator:
                 return 0
-            
+
             # Get active contexts
             active_contexts = await self._get_active_contexts()
-            
+
             closed_count = 0
             for context in active_contexts:
                 # Close contexts idle for more than 5 minutes (300 seconds)
@@ -414,15 +430,17 @@ class ZetaAgent(BrowserEnabledAgent):
                     try:
                         await orchestrator.close_context(context["context_id"])
                         closed_count += 1
-                        logger.debug(f"[{self.name}] Closed idle context: {context['context_id']} (idle: {context['idle_time']:.0f}s)")
+                        logger.debug(
+                            f"[{self.name}] Closed idle context: {context['context_id']} (idle: {context['idle_time']:.0f}s)"
+                        )
                     except Exception as close_err:
                         logger.error(f"[{self.name}] Failed to close context {context['context_id']}: {close_err}")
-            
+
             if closed_count > 0:
                 logger.debug(f"[{self.name}] Closed {closed_count} idle contexts")
-            
+
             return closed_count
-            
+
         except Exception as e:
             logger.error(f"[{self.name}] Context cleanup failed: {e}")
             return 0

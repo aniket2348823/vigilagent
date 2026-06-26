@@ -13,13 +13,14 @@ Skill runtime contract (Architecture §5.3.4):
   "recommendations", "next_actions"
 }
 """
+
 from __future__ import annotations
 
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from backend.core.iteration_budget import IterationBudget, budget_config
 from backend.core.scope import ScopePolicy, ScopeViolation, scope_guard
@@ -49,7 +50,7 @@ def _substitute_template_vars(content: str, variables: dict[str, str]) -> str:
     if not content or "${" not in content:
         return content
 
-    def _replace(match: "re.Match[str]") -> str:
+    def _replace(match: re.Match[str]) -> str:
         token = match.group(1)
         value = variables.get(token)
         return str(value) if value is not None else match.group(0)
@@ -81,6 +82,7 @@ def _tool_availability(tool: str) -> dict:
         return cached
     try:
         from backend.tools.recon.registry import check_tool_availability
+
         info = check_tool_availability(tool)
     except Exception as exc:  # pragma: no cover - recon registry optional
         info = {"installed": None, "reason": f"check_unavailable:{exc}"}
@@ -98,10 +100,11 @@ def clear_tool_availability_cache() -> None:
 @dataclass
 class SkillRunResult:
     """Structured skill runtime output (Architecture §5.3.4)."""
+
     skill_id: str
     agent: str
     risk_class: str
-    scope_decision: str                       # allowed | blocked | needs_approval | disabled
+    scope_decision: str  # allowed | blocked | needs_approval | disabled
     approval_id: str = ""
     inputs: dict[str, Any] = field(default_factory=dict)
     tool_runs: list[dict] = field(default_factory=list)
@@ -205,15 +208,18 @@ class SkillExecutor:
         budget: IterationBudget | None = None,
         approval_id: str = "",
     ) -> SkillRunResult:
-        meta: Optional[SkillMeta] = skill_catalog.get(skill_id)
+        meta: SkillMeta | None = skill_catalog.get(skill_id)
         if not meta:
-            return SkillRunResult(skill_id, agent, "unknown", "blocked",
-                                  error=f"skill not found: {skill_id}")
+            return SkillRunResult(skill_id, agent, "unknown", "blocked", error=f"skill not found: {skill_id}")
 
         risk = meta.risk_class
         result = SkillRunResult(
-            skill_id=skill_id, agent=agent, risk_class=risk.value,
-            scope_decision="allowed", approval_id=approval_id, inputs=inputs or {},
+            skill_id=skill_id,
+            agent=agent,
+            risk_class=risk.value,
+            scope_decision="allowed",
+            approval_id=approval_id,
+            inputs=inputs or {},
         )
 
         # 1. Disabled risk classes never run (Architecture §5.3.3, §9).
@@ -237,8 +243,9 @@ class SkillExecutor:
 
         # 4. Scope check for network-touching skills (Architecture §9, §29.14).
         if meta.requires_network and target:
-            action = "validate" if risk in (RiskClass.CONTROLLED_VALIDATION,
-                                             RiskClass.INTRUSIVE_VALIDATION) else "recon"
+            action = (
+                "validate" if risk in (RiskClass.CONTROLLED_VALIDATION, RiskClass.INTRUSIVE_VALIDATION) else "recon"
+            )
             try:
                 self.scope.assert_allowed(target, action=action)
             except ScopeViolation as exc:
@@ -257,7 +264,11 @@ class SkillExecutor:
         # Build the live ${TOKEN} map and render it into the skill inputs/steps
         # so scan/target/scope context is substituted at runtime (Hermes parity).
         variables = self._build_template_vars(
-            meta, agent=agent, scan_id=scan_id, target=target, inputs=result.inputs,
+            meta,
+            agent=agent,
+            scan_id=scan_id,
+            target=target,
+            inputs=result.inputs,
         )
         result.template_vars = variables
         result.inputs = _render_obj(result.inputs, variables)
@@ -283,14 +294,18 @@ class SkillExecutor:
             f"Domain={meta.domain}, attack={meta.attack or 'n/a'}",
         ]
         if missing:
-            result.recommendations.append(
-                f"Preflight: install missing tools before execution: {', '.join(missing)}"
-            )
+            result.recommendations.append(f"Preflight: install missing tools before execution: {', '.join(missing)}")
         result.next_actions = [f"execute_tool:{t}" for t in meta.required_tools]
         # Lower confidence when preconditions are unmet (some tools missing).
         result.confidence = 0.5 if not missing else max(0.1, 0.5 - 0.1 * len(missing))
-        logger.info("[SkillExecutor] %s authorized for %s (risk=%s, scope=%s, missing_tools=%d)",
-                    skill_id, agent, risk.value, result.scope_decision, len(missing))
+        logger.info(
+            "[SkillExecutor] %s authorized for %s (risk=%s, scope=%s, missing_tools=%d)",
+            skill_id,
+            agent,
+            risk.value,
+            result.scope_decision,
+            len(missing),
+        )
         return result
 
 

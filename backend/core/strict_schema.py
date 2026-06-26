@@ -25,10 +25,7 @@ def _ensure_strict(node: Any, root: dict[str, Any]) -> Any:
     schema_type = node.get("type")
     if schema_type == "object" or "properties" in node:
         props = node.get("properties") or {}
-        node["properties"] = {
-            key: _ensure_strict(value, root)
-            for key, value in props.items()
-        }
+        node["properties"] = {key: _ensure_strict(value, root) for key, value in props.items()}
         node["required"] = sorted(props.keys())
         node["additionalProperties"] = False
 
@@ -40,16 +37,10 @@ def _ensure_strict(node: Any, root: dict[str, Any]) -> Any:
             node[combiner] = [_ensure_strict(item, root) for item in node[combiner]]
 
     if "$defs" in node:
-        node["$defs"] = {
-            key: _ensure_strict(value, root)
-            for key, value in node["$defs"].items()
-        }
+        node["$defs"] = {key: _ensure_strict(value, root) for key, value in node["$defs"].items()}
 
     if "definitions" in node:
-        node["definitions"] = {
-            key: _ensure_strict(value, root)
-            for key, value in node["definitions"].items()
-        }
+        node["definitions"] = {key: _ensure_strict(value, root) for key, value in node["definitions"].items()}
 
     return node
 

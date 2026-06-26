@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "Vul Agent Spy V2",
+    "name": "Vigilagent Spy V2",
     "version": "2.0",
-    "description": "Cyber-Augmented Reality Security Toolkit for Vul Agent.",
+    "description": "Cyber-Augmented Reality Security Toolkit for Vigilagent.",
     "permissions": [
         "webRequest",
         "activeTab",
@@ -38,7 +38,7 @@
     ],
     "action": {
         "default_popup": "popup/popup.html",
-        "default_title": "Antigravity Mimic"
+        "default_title": "Vigilagent Mimic"
     },
     "content_security_policy": {
         "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws://127.0.0.1:8000 http://127.0.0.1:8000 ws://localhost:8000 http://localhost:8000"

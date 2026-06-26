@@ -862,7 +862,7 @@ const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
                 </AnimatePresence>
 
                 <footer className="w-full text-center py-6 text-xs text-gray-600 relative z-10">
-                    Vigilagent Scanner Intelligence Backbone © 2024
+                    Vigilagent Intelligence Backbone © 2025-2026
                 </footer>
             </div>
         </div>

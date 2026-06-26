@@ -11,13 +11,17 @@ Tiny, zero-dependency utilities used across hot paths:
 
 Designed to add zero overhead at import time and never raise at the call site.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import threading
 import time
-from typing import Any, Callable, Hashable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Hashable
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,9 @@ try:  # orjson is in requirements.txt; treat as optional in case of slim builds.
             return json.dumps(obj, default=str)
 except Exception as _exc:  # pragma: no cover — orjson missing; keep stdlib path.
     import logging as _log
+
     _log.getLogger(__name__).debug("orjson unavailable, using stdlib json: %s", _exc)
+
     def dumps_fast(obj: Any) -> str:
         return json.dumps(obj, default=str)
 

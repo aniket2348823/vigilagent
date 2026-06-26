@@ -6,8 +6,9 @@ Provides clean imports for the three cluster components:
   - MasterNode: Central coordinator for distributed work
   - WorkerNode: Distributed task executor with module dispatch
 """
-from backend.core.cluster.pinchtab import PinchTabInstance
+
 from backend.core.cluster.master import MasterNode
+from backend.core.cluster.pinchtab import PinchTabInstance
 from backend.core.cluster.worker import WorkerNode
 
 __all__ = ["PinchTabInstance", "MasterNode", "WorkerNode"]

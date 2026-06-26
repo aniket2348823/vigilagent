@@ -1,9 +1,17 @@
 # Vigilagent — Architecture Blueprint
 
+> **Single source of truth for system architecture.**
 > Senior‑engineer onboarding document. Every claim in this doc cites a file
 > and a line range so a new engineer can read the source alongside the prose.
-> The companion docs in this folder are: `SYSTEM_DESIGN.md`, `DATA_FLOW.md`,
-> `CLEAN_ARCH_TARGET.md`, `API.md`, and `DB_SCHEMA.md`.
+>
+> Companion docs in this folder:
+> [`API.md`](API.md) · [`DB_SCHEMA.md`](DB_SCHEMA.md) ·
+> [`INTERNAL_API.md`](INTERNAL_API.md) · [`DEPLOYMENT.md`](DEPLOYMENT.md) ·
+> [`CONFIGURATION.md`](CONFIGURATION.md) · [`OBSERVABILITY.md`](OBSERVABILITY.md) ·
+> [`PERFORMANCE.md`](PERFORMANCE.md) ·
+> [`SECURITY_BEST_PRACTICES.md`](SECURITY_BEST_PRACTICES.md) ·
+> [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) ·
+> [`USAGE_EXAMPLES.md`](USAGE_EXAMPLES.md)
 
 ---
 
@@ -224,7 +232,7 @@ selectable via CLI (`backend/main.py:332`):
 
 | Mode | Entry | Purpose |
 | --- | --- | --- |
-| `serve` (default) | `vulagent_serve` → `uvicorn.Server` | API + Hive in‑process |
+| `serve` (default) | `vigilagent_serve` → `uvicorn.Server` | API + Hive in‑process |
 | `master` | `DistributedAttackCluster.start_master` | Just the Master node |
 | `worker` | `DistributedAttackCluster.start_worker` | Just a Worker |
 | `cluster` | `DistributedAttackCluster.start_cluster` | Master + N workers |
@@ -425,7 +433,7 @@ The end‑to‑end path of a single scan, traced through code.
 2. **Bootstrap.** `backend/core/orchestrator.py:78` (`bootstrap_hive`).
    - Sets `http_client.scope = ScopePolicy.from_target(...)` so every
      outgoing HTTP request is in scope.
-   - Honors `VULAGENT_TEST_MODE` fast‑path
+   - Honors `VIGILAGENT_TEST_MODE` fast‑path
      (`orchestrator.py:127-208`) — emits a synthetic mock report, no real
      network.
    - Decides EventBus flavour (`EventBus` vs `DistributedEventBus`)
@@ -472,23 +480,91 @@ The end‑to‑end path of a single scan, traced through code.
 ## 9. Event vocabulary
 
 Every coordination message uses `HiveEvent`
-(`backend/core/hive.py:39`). The closed set of `EventType` values is at
-`backend/core/hive.py:18-37`. See `DATA_FLOW.md` for the per‑event narrative.
-
-```text
-SYSTEM_START, LOG, TARGET_ACQUIRED,
-VULN_CANDIDATE, VULN_CONFIRMED,
-AGENT_STATUS, JOB_ASSIGNED, JOB_COMPLETED, CONTROL_SIGNAL,
-LIVE_ATTACK, RECON_PACKET, RECON_COMPLETE,
-SCHEMA_DISCOVERED, MOBILE_ENDPOINT_DISCOVERED,
-SCOPE_VIOLATION, REPORT_READY, PATTERN_LEARNED,
-MISSION_PLANNED, PHASE_STARTED, PHASE_COMPLETED,
-ENDPOINT_DISCOVERED, ENDPOINT_TESTED, COVERAGE_UPDATE
-```
+(`backend/core/hive.py:48`). The closed set of `EventType` values is at
+`backend/core/hive.py:19-45`.
 
 `HiveEvent.scan_id` defaults to `"GLOBAL"` for system‑wide events. Anything
 else is per‑scan and routed through that scan's `ScanContext` queue
 (`hive.py:172-201`).
+
+### 9.1 Event reference
+
+The table below documents every event type, who typically publishes it, and
+what subscribers do with it.
+
+#### Lifecycle & control events
+
+| Event | Publisher(s) | Subscriber(s) / Effect |
+| --- | --- | --- |
+| `SYSTEM_START` | `lifespan` (main.py) | Global bus bootstrap; agents use it as a readiness gate. |
+| `LOG` | Any agent | Appended to `ScanContext.transcript`; forwarded to `SocketManager` for live UI. |
+| `TARGET_ACQUIRED` | `bootstrap_hive` | Signals that scope + target config is locked; agents begin their lifecycle. |
+| `MISSION_PLANNED` | `MissionPlanner` | Carries the task DAG for the current scan; consumed by `HiveOrchestrator` to schedule phases. |
+| `PHASE_STARTED` | `PhaseGate` | Broadcast at every phase boundary; agents use it to enable/disable behaviours per phase. |
+| `PHASE_COMPLETED` | `PhaseGate` | Marks a phase as done; triggers `checkpoint_phase` in `ScanStateDB`. |
+| `CONTROL_SIGNAL` | Zeta | Payload contains `THROTTLE`, `RESUME`, or `STEALTH_MODE`; all agents with `ControlSignalMixin` react. |
+| `REPORT_READY` | `VigilagentReportBuilder` | UI displays download link; scan status moves to terminal. |
+
+#### Reconnaissance events
+
+| Event | Publisher(s) | Subscriber(s) / Effect |
+| --- | --- | --- |
+| `RECON_PACKET` | Alpha | Each packet carries one recon observation (port, header, tech fingerprint). Ingested into the knowledge graph via `knowledge_graph.ingest_http_record()` (`hive.py:159`). Persisted to Supabase `recon_*` tables. |
+| `RECON_COMPLETE` | Alpha | Unblocks `alpha_recon_complete.wait()` in the orchestrator, allowing the assessment phase to proceed. |
+| `ENDPOINT_DISCOVERED` | Alpha, Delta | A new URL / route has been found; the attack surface seeder adds it to the candidate pool. |
+| `ENDPOINT_TESTED` | Beta, Sigma | Confirms that a specific endpoint has been tested; drives `COVERAGE_UPDATE` computation. |
+| `COVERAGE_UPDATE` | Orchestrator | Periodic broadcast summarising endpoint‑coverage percentage; consumed by the UI progress bar. |
+| `SCHEMA_DISCOVERED` | Alpha | An API schema (OpenAPI, GraphQL introspection) has been found; Sigma uses it to generate targeted payloads. |
+| `MOBILE_ENDPOINT_DISCOVERED` | Alpha | A mobile‑specific endpoint or deep‑link has been detected; routed to specialised mobile testing logic. |
+
+#### Vulnerability events
+
+| Event | Publisher(s) | Subscriber(s) / Effect |
+| --- | --- | --- |
+| `VULN_CANDIDATE` | Beta, Sigma, Delta | A potential finding with < 2 corroborating signals. Queued for Gamma's forensic validation. |
+| `VULN_CONFIRMED` | Gamma | A finding promoted after ≥2‑signal evidence (§3.3). GuardLayer filters it at `orchestrator.py:303`; on success it is written to Supabase and updates dashboard counters. Also ingested into the knowledge graph via `knowledge_graph.ingest_finding()` (`hive.py:163`). |
+| `SCOPE_VIOLATION` | `ScopePolicy.assert_allowed` | Logged, broadcast to UI as a warning, and the offending action is blocked. Never silently swallowed. |
+
+#### Agent coordination events
+
+| Event | Publisher(s) | Subscriber(s) / Effect |
+| --- | --- | --- |
+| `AGENT_STATUS` | Any agent | Heartbeat / status change (IDLE, BUSY, ERROR). Consumed by `SocketManager` for the live agent‑status panel. |
+| `JOB_ASSIGNED` | `DelegationManager` | A `JobPacket` has been dispatched to an agent. Tracked by the orchestrator for completion. |
+| `JOB_COMPLETED` | Any agent | Signals that a `JobPacket` is done; the orchestrator decrements its pending‑work counter. |
+| `LIVE_ATTACK` | Beta, Sigma | Real‑time attack telemetry (request/response pairs). Forwarded to the `LIVE_ATTACK_FEED` WebSocket channel. |
+| `PATTERN_LEARNED` | Kappa | A new attack/defence pattern has been stored in the skill library; other agents can recall it via `SkillRecallMixin`. |
+
+### 9.2 Event routing rules
+
+```text
+                ┌───────────────────────────────────────────┐
+                │  EventBus.publish(event)                  │
+                └────────────────┬──────────────────────────┘
+                                 │
+                    scan_id == "GLOBAL"?
+                   ┌─── yes ─────┴───── no ───┐
+                   │                           │
+          global subscribers            ScanContext[scan_id]
+          (lifespan, metrics)              .event_queue
+                                               │
+                                     single consumer coroutine
+                                     (_scan_event_loop)
+                                               │
+                                     per-event-type subscribers
+                                     (sequential within scan)
+```
+
+- **Global events** (`scan_id == "GLOBAL"`) are delivered to all global
+  subscribers immediately.
+- **Scan‑scoped events** are enqueued into the target scan's
+  `ScanContext.event_queue` and drained by a single consumer coroutine,
+  preserving causal order within each scan while allowing cross‑scan
+  concurrency.
+- **Deduplication**: `ScanContext._recent_events` (a 1000‑entry ring) drops
+  exact‑duplicate event IDs within a short window.
+- **Dead letters**: failed handler invocations are captured in the DLQ
+  (`hive.py:208-228`) rather than silently dropped.
 
 ---
 
@@ -539,11 +615,16 @@ WebSocket batcher cleanly, then closes Redis + DB clients
 
 | If you want to understand… | Read |
 | --- | --- |
-| What every public endpoint does | `API.md` |
-| The end‑to‑end shape of one scan | `SYSTEM_DESIGN.md` |
-| What each event type means | `DATA_FLOW.md` |
-| The proposed clean‑arch refactor target (not yet applied) | `CLEAN_ARCH_TARGET.md` |
-| Every SQLite + Supabase table | `DB_SCHEMA.md` |
+| What every public endpoint does | [`API.md`](API.md) |
+| Every SQLite + Supabase table | [`DB_SCHEMA.md`](DB_SCHEMA.md) |
+| Internal (non-public) API contracts between modules | [`INTERNAL_API.md`](INTERNAL_API.md) |
+| Deployment topology, Docker, and production setup | [`DEPLOYMENT.md`](DEPLOYMENT.md) |
+| Environment variables, YAML config, and feature flags | [`CONFIGURATION.md`](CONFIGURATION.md) |
+| Metrics, alerting thresholds, and dashboards | [`OBSERVABILITY.md`](OBSERVABILITY.md) |
+| Benchmarks, profiling, and performance tuning | [`PERFORMANCE.md`](PERFORMANCE.md) |
+| Hardening, auth, scope enforcement, and secrets management | [`SECURITY_BEST_PRACTICES.md`](SECURITY_BEST_PRACTICES.md) |
+| Common failure modes and diagnostic runbooks | [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) |
+| Walkthroughs for common operator workflows | [`USAGE_EXAMPLES.md`](USAGE_EXAMPLES.md) |
 
 Direct entry points for code reading, ranked by load‑bearing weight:
 
@@ -556,7 +637,7 @@ Direct entry points for code reading, ranked by load‑bearing weight:
 
 ---
 
-## 12. Honest gaps in this document
+## 12. Known documentation gaps
 
 - **Supabase columns are inferred from Python upserts**, not from a SQL
   declaration in this repo. There is no `migrations/supabase.sql` checked in;
@@ -570,7 +651,8 @@ Direct entry points for code reading, ranked by load‑bearing weight:
   subsystem is the cluster modules themselves.
 - **Browser stack** (`OpenClawEngine`, `PinchTabEngine`, `BrowserOrchestrator`)
   is referenced but not mapped here — it deserves its own deep‑dive doc.
-
+- **End‑to‑end integration tests** are not yet documented. Test coverage
+  exists in `tests/` but there is no testing architecture guide.
 
 ---
 
@@ -740,7 +822,12 @@ Operational rules for the schedule:
 | The coordinator implementation                    | `backend/core/integration_coordinator.py:179`                 |
 | Config schema + env-var matrix                    | `backend/core/integration_config.py:23`                       |
 | Per-scan rollout cohorts                          | `config/integration.yaml`                                     |
-| The HTTP surface                                  | `API.md` §17a — Deep System Integration endpoints             |
+| The HTTP surface                                  | [`API.md`](API.md) §17a — Deep System Integration endpoints  |
 | Daily ops + rollback drill                        | `runbooks/integration_ops.md`                                 |
-| Alerting thresholds                               | `alerts.md`                                                   |
-| Dashboards reading these metrics                  | `dashboards.md`                                               |
+| Alerting thresholds + dashboard definitions       | [`OBSERVABILITY.md`](OBSERVABILITY.md)                        |
+
+---
+
+> **Last updated:** 2026-06-26 · **Version:** 2.0
+> This document is the single source of truth for Vigilagent's architecture.
+> If it conflicts with any other doc, this one wins — file a PR to fix the other.

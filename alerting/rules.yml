@@ -1,0 +1,150 @@
+# Prometheus alerting rules for Vigilagent
+# Covers: service health, scan lifecycle, agent performance, Redis, WebSocket, LLM.
+
+groups:
+  - name: vigilagent_service
+    rules:
+      # ── Service Health ──
+      - alert: VigilagentDown
+        expr: up{job="vigilagent"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Vigilagent backend is down"
+          description: "The Vigilagent backend has been unreachable for over 1 minute."
+
+      - alert: HighErrorRate
+        expr: rate(vigilagent_scans_failed_total[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High scan failure rate"
+          description: "More than 0.5 scans/sec are failing over the last 5 minutes."
+
+  - name: vigilagent_scans
+    rules:
+      # ── Scan Lifecycle ──
+      - alert: TooManyActiveScans
+        expr: vigilagent_scans_active > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unusually high number of active scans"
+          description: "{{ $value }} scans are running concurrently (threshold: 10)."
+
+      - alert: ScanDurationHigh
+        expr: histogram_quantile(0.95, rate(vigilagent_scan_duration_seconds_bucket[10m])) > 600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scan p95 duration exceeds 10 minutes"
+          description: "The 95th percentile scan duration is {{ $value | humanizeDuration }}."
+
+  - name: vigilagent_redis
+    rules:
+      # ── Redis Health ──
+      - alert: RedisDown
+        expr: vigilagent_redis_connected == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is unreachable"
+          description: "The Vigilagent Redis connection has been down for over 2 minutes."
+
+      - alert: RedisReconnecting
+        expr: rate(vigilagent_redis_reconnect_total[5m]) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis is frequently reconnecting"
+          description: "Redis reconnection rate is {{ $value }}/sec — check connection stability."
+
+      - alert: RedisPoolOverflow
+        expr: rate(vigilagent_redis_pool_overflow_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis connection pool overflow detected"
+          description: "The Redis pool has overflowed {{ $value }} times — increase pool size."
+
+  - name: vigilagent_websocket
+    rules:
+      # ── WebSocket Health ──
+      - alert: WebSocketSendErrors
+        expr: rate(vigilagent_ws_send_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WebSocket send errors detected"
+          description: "WebSocket error rate is {{ $value }}/sec — check client connections."
+
+  - name: vigilagent_agents
+    rules:
+      # ── Agent Performance ──
+      - alert: AgentTaskErrorsHigh
+        expr: rate(vigilagent_agent_task_errors_total[5m]) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High agent task error rate"
+          description: "Agent task errors are {{ $value }}/sec — agents may be degraded."
+
+      - alert: AgentRestartsFrequent
+        expr: rate(vigilagent_agent_restart_total[10m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Frequent agent restarts (zombie sweep)"
+          description: "Agents are restarting at {{ $value }}/sec — investigate stability."
+
+  - name: vigilagent_vulns
+    rules:
+      # ── Vulnerabilities ──
+      - alert: CriticalVulnFound
+        expr: delta(vigilagent_vulns_critical_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical vulnerability confirmed"
+          description: "{{ $value }} critical vulnerability/vulnerabilities found in the last hour."
+
+  - name: vigilagent_llm
+    rules:
+      # ── LLM / Cortex ──
+      - alert: LLMErrorRateHigh
+        expr: rate(vigilagent_llm_errors_total[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High LLM API error rate"
+          description: "LLM errors are {{ $value }}/sec — check API keys and circuit breaker."
+
+      - alert: LLMCircuitBreakerTripping
+        expr: rate(vigilagent_circuit_breaker_trips_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM circuit breaker is tripping"
+          description: "The cortex circuit breaker has tripped — LLM backend may be down."
+
+      - alert: LLMLatencyHigh
+        expr: histogram_quantile(0.95, rate(vigilagent_llm_latency_seconds_bucket[10m])) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM p95 latency exceeds 30 seconds"
+          description: "The 95th percentile LLM latency is {{ $value | humanizeDuration }}."

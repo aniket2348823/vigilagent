@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 import logging
+
 """
 Vigilagent Iteration Budget (Architecture §5, §29.3, §29.13)
 ================================================================================
@@ -25,6 +27,7 @@ try:
     import yaml  # type: ignore
 except Exception as _yaml_exc:  # pragma: no cover - yaml is a standard dependency
     import logging as _log
+
     _log.getLogger(__name__).debug("PyYAML not available: %s", _yaml_exc)
     yaml = None  # type: ignore
 
@@ -96,7 +99,7 @@ class IterationBudget:
         with self._lock:
             return self._remaining <= 0
 
-    def child(self, max_total: int, *, label: str | None = None) -> "IterationBudget":
+    def child(self, max_total: int, *, label: str | None = None) -> IterationBudget:
         """Create an INDEPENDENT child budget. Consuming the child never affects
         this (parent) budget (Architecture §5, Property: budget boundedness)."""
         return IterationBudget(max_total, label=label or f"{self._label}.child")
@@ -112,10 +115,7 @@ class IterationBudget:
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         snap = self.snapshot()
-        return (
-            f"IterationBudget(label={snap['label']!r}, "
-            f"remaining={snap['remaining']}/{snap['max_total']})"
-        )
+        return f"IterationBudget(label={snap['label']!r}, remaining={snap['remaining']}/{snap['max_total']})"
 
 
 @dataclass
@@ -126,7 +126,7 @@ class BudgetConfig:
     phases: dict[str, int] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: str | Path | None = None) -> "BudgetConfig":
+    def load(cls, path: str | Path | None = None) -> BudgetConfig:
         cfg_path = Path(path) if path else _BUDGETS_FILE
         roles = dict(_DEFAULT_BUDGETS)
         phases: dict[str, int] = {}
@@ -138,7 +138,8 @@ class BudgetConfig:
             except Exception as exc:
                 # Fail safe to defaults; never crash on a malformed config.
                 import logging as _log
-                _log.getLogger('IterationBudget').debug('yaml config fallback: %s', exc)
+
+                _log.getLogger("IterationBudget").debug("yaml config fallback: %s", exc)
         return cls(roles=roles, phases=phases)
 
     def for_role(self, role: str) -> int:

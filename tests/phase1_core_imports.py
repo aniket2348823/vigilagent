@@ -6,7 +6,7 @@ agents instantiate, and the Guard Layer gates enforce correctly.
 import os, sys, time, asyncio, importlib
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 os.chdir(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-os.environ["VULAGENT_TEST_MODE"] = "true"
+os.environ["VIGILAGENT_TEST_MODE"] = "true"
 
 P, F = 0, 0
 errors = []

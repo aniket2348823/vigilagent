@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.core.tool_types import BarrierException
@@ -16,7 +16,7 @@ class ApprovalTicket:
     reason: str
     payload: dict[str, Any] = field(default_factory=dict)
     status: str = "pending"
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     decided_by: str = ""
 
 
@@ -27,7 +27,9 @@ class ApprovalStore:
     def __init__(self) -> None:
         self._tickets: dict[str, ApprovalTicket] = {}
 
-    def request(self, *, scan_id: str, tool_name: str, reason: str, payload: dict[str, Any] | None = None) -> ApprovalTicket:
+    def request(
+        self, *, scan_id: str, tool_name: str, reason: str, payload: dict[str, Any] | None = None
+    ) -> ApprovalTicket:
         ticket = ApprovalTicket(
             id=f"APR-{uuid.uuid4().hex[:12]}",
             scan_id=scan_id,
@@ -39,7 +41,7 @@ class ApprovalStore:
         # Evict oldest resolved tickets when at capacity
         if len(self._tickets) > _MAX_TICKETS:
             resolved = [tid for tid, t in self._tickets.items() if t.status != "pending"]
-            for tid in resolved[:len(resolved) // 2]:
+            for tid in resolved[: len(resolved) // 2]:
                 self._tickets.pop(tid, None)
         return ticket
 
@@ -64,7 +66,8 @@ class ApprovalStore:
 
     def pending(self, scan_id: str | None = None) -> list[ApprovalTicket]:
         return [
-            ticket for ticket in self._tickets.values()
+            ticket
+            for ticket in self._tickets.values()
             if ticket.status == "pending" and (scan_id is None or ticket.scan_id == scan_id)
         ]
 

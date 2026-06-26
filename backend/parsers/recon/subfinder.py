@@ -4,11 +4,15 @@ Parser for Subfinder JSONL output.
 Subfinder emits one JSON object per line with fields like:
   {"host": "sub.example.com", "source": "certspotter", "ip": "1.2.3.4"}
 """
+
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from backend.parsers.recon.base import ParsedEntity, safe_json_lines, is_valid_domain, is_ip_address
+from backend.parsers.recon.base import ParsedEntity, is_ip_address, safe_json_lines
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def parse_subfinder_jsonl(path: Path | str) -> list[ParsedEntity]:
@@ -32,25 +36,29 @@ def parse_subfinder_jsonl(path: Path | str) -> list[ParsedEntity]:
         if ip and is_ip_address(ip):
             props["resolved_ip"] = ip
 
-        entities.append(ParsedEntity(
-            kind="subdomain",
-            label=host,
-            confidence=0.85,
-            properties=props,
-            source_tool="subfinder",
-            phase="passive_intelligence",
-        ))
+        entities.append(
+            ParsedEntity(
+                kind="subdomain",
+                label=host,
+                confidence=0.85,
+                properties=props,
+                source_tool="subfinder",
+                phase="passive_intelligence",
+            )
+        )
 
         # If we got an IP resolution, also emit an IP entity
         if ip and is_ip_address(ip) and ip not in seen:
             seen.add(ip)
-            entities.append(ParsedEntity(
-                kind="ip",
-                label=ip,
-                confidence=0.8,
-                properties={"resolved_from": host, "source_engine": source},
-                source_tool="subfinder",
-                phase="passive_intelligence",
-            ))
+            entities.append(
+                ParsedEntity(
+                    kind="ip",
+                    label=ip,
+                    confidence=0.8,
+                    properties={"resolved_from": host, "source_engine": source},
+                    source_tool="subfinder",
+                    phase="passive_intelligence",
+                )
+            )
 
     return entities

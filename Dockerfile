@@ -17,6 +17,16 @@ RUN python -m playwright install chromium --with-deps 2>/dev/null || true
 # Copy backend
 COPY backend/ backend/
 
+# Create writable data directories for non-root user
+RUN mkdir -p /app/data/scans /app/data/graphs /app/scan_states /app/logs \
+    && chmod -R 755 /app/data /app/scan_states /app/logs
+
+# Create non-root user
+RUN groupadd -r vigilagent && useradd -r -g vigilagent -d /app -s /sbin/nologin vigilagent \
+    && chown -R vigilagent:vigilagent /app
+
+USER vigilagent
+
 # Expose API port
 EXPOSE 8000
 

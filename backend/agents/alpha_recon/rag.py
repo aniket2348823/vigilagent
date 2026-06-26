@@ -39,7 +39,9 @@ class ReconRAGPipeline:
             f"type={endpoint.endpoint_type} risk={endpoint.risk_class} score={endpoint.priority_score} "
             f"auth_required={endpoint.auth_required} params={params} tech={','.join(endpoint.technologies)}"
         )
-        return await self._store("recon_endpoint", text, endpoint.model_dump(mode="json"), endpoint_pattern=endpoint.normalized_path)
+        return await self._store(
+            "recon_endpoint", text, endpoint.model_dump(mode="json"), endpoint_pattern=endpoint.normalized_path
+        )
 
     async def ingest_tool_summary(self, tool_name: str, summary: dict[str, Any]) -> str:
         text = f"tool {tool_name}: {json.dumps(summary, default=str)[:2000]}"

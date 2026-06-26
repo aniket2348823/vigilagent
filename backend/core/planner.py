@@ -1,25 +1,27 @@
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Dict, Any, List, Optional, Callable
-from backend.core.hive import BaseAgent, EventType, HiveEvent
-from backend.core.protocol import JobPacket, ModuleConfig, AgentID, TaskPriority, TaskTarget
+from enum import StrEnum
+from typing import Any
+
+from backend.ai.cortex import get_cortex_engine
 from backend.core.config import settings
-from backend.ai.cortex import CortexEngine, get_cortex_engine
+from backend.core.hive import BaseAgent, EventType, HiveEvent
+from backend.core.protocol import AgentID, JobPacket, ModuleConfig, TaskPriority, TaskTarget
 from backend.core.skill_library import skill_library
 from backend.core.unified_knowledge_graph import unified_knowledge_graph
 
 logger = logging.getLogger("MissionPlanner")
 
-class MissionState(str, Enum):
+class MissionState(StrEnum):
     RECON = "RECON"
     ASSESSMENT = "ASSESSMENT"
     EXPLOITATION = "EXPLOITATION"
     COMPLETED = "COMPLETED"
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     """Lifecycle of a single task node, mirroring Hermes's todo statuses
     (pending|in_progress|completed|cancelled) so the DAG can track progress and
     survive re-prioritization (Hermes tools/todo_tool.py)."""
@@ -32,7 +34,7 @@ class TaskStatus(str, Enum):
 # Architecture §16 phase lifecycle. The planner may only advance through these
 # gates in order; a task cannot be dispatched before the campaign reaches its
 # phase. MissionState maps onto the validation-bearing phases.
-PHASE_ORDER: List[MissionState] = [
+PHASE_ORDER: list[MissionState] = [
     MissionState.RECON,         # §16 passive/active recon, surface modeling
     MissionState.ASSESSMENT,    # §16 planning + controlled validation
     MissionState.EXPLOITATION,  # §16 verification + evidence capture
@@ -57,11 +59,11 @@ class TaskNode:
     status: TaskStatus = TaskStatus.PENDING
     priority: TaskPriority = TaskPriority.NORMAL
     value: float = 0.0  # attack-surface value, higher == do sooner
-    depends_on: List[str] = field(default_factory=list)
-    params: Dict[str, Any] = field(default_factory=dict)
-    job_id: Optional[str] = None
+    depends_on: list[str] = field(default_factory=list)
+    params: dict[str, Any] = field(default_factory=dict)
+    job_id: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "content": self.content,
@@ -85,16 +87,16 @@ class TaskGraph:
     dependencies are satisfied AND their phase gate is open (§16)."""
 
     def __init__(self):
-        self._tasks: Dict[str, TaskNode] = {}
+        self._tasks: dict[str, TaskNode] = {}
 
     def add(self, task: TaskNode) -> TaskNode:
         self._tasks[task.id] = task
         return task
 
-    def get(self, task_id: str) -> Optional[TaskNode]:
+    def get(self, task_id: str) -> TaskNode | None:
         return self._tasks.get(task_id)
 
-    def all(self) -> List[TaskNode]:
+    def all(self) -> list[TaskNode]:
         return list(self._tasks.values())
 
     def has(self, task_id: str) -> bool:
@@ -107,7 +109,7 @@ class TaskGraph:
                 return False
         return True
 
-    def ready(self, current_phase: MissionState) -> List[TaskNode]:
+    def ready(self, current_phase: MissionState) -> list[TaskNode]:
         """Pending tasks whose dependencies are met and whose phase gate is
         open, ordered by attack-surface value then priority (re-prioritized on
         every call so newly-arrived evidence reshapes the queue)."""
@@ -139,7 +141,7 @@ class TaskGraph:
             if task.status == TaskStatus.PENDING:
                 task.value = score_fn(task)
 
-    def snapshot(self) -> List[Dict[str, Any]]:
+    def snapshot(self) -> list[dict[str, Any]]:
         return [t.to_dict() for t in self.all()]
 
 
@@ -151,7 +153,6 @@ class TaskGraph:
         the entire phase finishes. This saves 15-30s per scan.
         """
         import asyncio as _aio
-        completed = {}
         pending = {}
         results = {}
 
@@ -198,7 +199,7 @@ class MissionPlanner(BaseAgent):
     """
     AGENT OMEGA-PLANNER: THE STRATEGIST
     Role: Hierarchical Mission Planning & Autonomous Chaining.
-    
+
     V6 Innovation: Instead of simple event reaction, the Planner generates
     structured 3-step offensive chains for every targets.
     """
@@ -216,13 +217,13 @@ class MissionPlanner(BaseAgent):
         # 3. Listen for job completions to trigger logical next steps
         self.bus.subscribe(EventType.JOB_COMPLETED, self.handle_job_completion)
 
-    def _pre_plan(self, target_url: str) -> Dict[str, Any]:
+    def _pre_plan(self, target_url: str) -> dict[str, Any]:
         """Query the SkillLibrary and unified knowledge graph before planning.
 
         Architecture §6.7 / §29.1: the planner consumes learned skills and graph
         evidence up front so plans are informed by prior outcomes, not formed in
         a vacuum. Failures here are non-fatal (planning proceeds without recs)."""
-        recs: Dict[str, Any] = {"skills": [], "graph_predictions": [], "chains": []}
+        recs: dict[str, Any] = {"skills": [], "graph_predictions": [], "chains": []}
         try:
             recs["skills"] = skill_library.get_recommendations(target_url=target_url, limit=10)
         except Exception as exc:
@@ -241,7 +242,7 @@ class MissionPlanner(BaseAgent):
     # Evidence-driven decomposition & prioritization (Hermes todo/curator
     # pattern adapted for a phase-gated attack DAG — §5.5 TaskGraph, §16).
     # ──────────────────────────────────────────────────────────────────────
-    def _score_task(self, task: TaskNode, recommendations: Dict[str, Any]) -> float:
+    def _score_task(self, task: TaskNode, recommendations: dict[str, Any]) -> float:
         """Attack-surface value for a task, blending skill confidence/success
         (§6.7/§29.1 skill recs) and knowledge-graph chain/prediction confidence
         (§5.5). Higher value == higher priority. Hermes's curator scores skills
@@ -265,7 +266,7 @@ class MissionPlanner(BaseAgent):
         return round(value, 4)
 
     def _decompose_campaign(self, target_url: str, scan_id: str,
-                            recommendations: Dict[str, Any]) -> TaskGraph:
+                            recommendations: dict[str, Any]) -> TaskGraph:
         """Decompose a campaign goal into an ordered, phase-gated task DAG.
 
         Mirrors Hermes's structured-todo decomposition (break a complex goal
@@ -306,10 +307,10 @@ class MissionPlanner(BaseAgent):
         graph.reprioritize(lambda t: self._score_task(t, recommendations))
         return graph
 
-    def _reprioritize_mission(self, mission: Dict[str, Any]) -> None:
+    def _reprioritize_mission(self, mission: dict[str, Any]) -> None:
         """Re-score the DAG from the latest recommendations so the queue reflects
         evidence gathered since planning began (§5.5 graph → planner loop)."""
-        graph: Optional[TaskGraph] = mission.get("task_graph")
+        graph: TaskGraph | None = mission.get("task_graph")
         if graph is None:
             return
         recs = mission.get("recommendations", {})
@@ -367,7 +368,7 @@ class MissionPlanner(BaseAgent):
                 },
             )
         )
-        
+
         self.job_to_target[recon_job.id] = target_url
         if recon_task is not None:
             recon_task.job_id = recon_job.id
@@ -440,7 +441,7 @@ class MissionPlanner(BaseAgent):
         payload = event.payload
         job_id = payload.get("job_id")
         target_url = self.job_to_target.get(job_id)
-        
+
         if not target_url or target_url not in self.active_missions:
             return
 
@@ -475,7 +476,7 @@ class MissionPlanner(BaseAgent):
                             params={"vuln_type": vuln.get("type"), "evidence": vuln.get("evidence")}
                         )
                     )
-                    
+
                     self.job_to_target[exploit_job.id] = target_url
                     if exploit_task is not None:
                         exploit_task.job_id = exploit_job.id
@@ -486,7 +487,7 @@ class MissionPlanner(BaseAgent):
                         scan_id=mission["scan_id"],
                         payload=exploit_job.model_dump()
                     ))
-        
+
         elif mission["state"] == MissionState.EXPLOITATION:
              # Mission Over
              logger.info(f"[{self.name}] [MISSION] '{target_url}' - Mission Successfully Completed.")

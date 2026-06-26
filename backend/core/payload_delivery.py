@@ -18,17 +18,21 @@ verification outcome from the MultiLayerVerifier — not a log line.
 Every delivery records request/response/timestamp/vector for evidence
 (Architecture §6 Phase 6).
 """
+
 from __future__ import annotations
 
 import logging
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from backend.core.proxy import network_interceptor
 from backend.core.scope import ScopePolicy, ScopeViolation, scope_guard
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 logger = logging.getLogger("vigilagent.payload_delivery")
 
@@ -126,11 +130,19 @@ class PayloadDeliveryEngine:
     def __init__(self, scope: ScopePolicy | None = None) -> None:
         self.scope = scope or scope_guard
 
-    async def deliver(self, target_url: str, payload: str, *, vectors: Iterable[str] = HTTP_VECTORS,
-                      param: str = "q", header_name: str = "X-Vigilagent-Test",
-                      cookie_name: str = "va_test", session=None,
-                      base_headers: dict[str, str] | None = None,
-                      action: str = "validate") -> list[DeliveryResult]:
+    async def deliver(
+        self,
+        target_url: str,
+        payload: str,
+        *,
+        vectors: Iterable[str] = HTTP_VECTORS,
+        param: str = "q",
+        header_name: str = "X-Vigilagent-Test",
+        cookie_name: str = "va_test",
+        session=None,
+        base_headers: dict[str, str] | None = None,
+        action: str = "validate",
+    ) -> list[DeliveryResult]:
         """Deliver ``payload`` to ``target_url`` over each requested vector.
 
         Every request is scope-checked first (Architecture §9). ``action`` of
@@ -145,16 +157,32 @@ class PayloadDeliveryEngine:
         results: list[DeliveryResult] = []
         for vector in vectors:
             res = await self._deliver_one(
-                target_url, payload, vector, family, param, header_name, cookie_name,
-                session, base_headers or {},
+                target_url,
+                payload,
+                vector,
+                family,
+                param,
+                header_name,
+                cookie_name,
+                session,
+                base_headers or {},
             )
             if res:
                 results.append(res)
         return results
 
-    async def _deliver_one(self, url: str, payload: str, vector: str, family: str,
-                           param: str, header_name: str, cookie_name: str,
-                           session, base_headers: dict[str, str]) -> DeliveryResult | None:
+    async def _deliver_one(
+        self,
+        url: str,
+        payload: str,
+        vector: str,
+        family: str,
+        param: str,
+        header_name: str,
+        cookie_name: str,
+        session,
+        base_headers: dict[str, str],
+    ) -> DeliveryResult | None:
         method = "GET"
         kwargs: dict[str, Any] = {"timeout": 10}
         if session is not None:
@@ -205,14 +233,24 @@ class PayloadDeliveryEngine:
             response = await network_interceptor.fetch(method, request_url, **kwargs)
             latency = (time.perf_counter() - start) * 1000
             return DeliveryResult(
-                vector=vector, payload=payload, family=family,
-                status=getattr(response, "status", 0), body=getattr(response, "body", ""),
-                latency_ms=latency, request_url=request_url,
+                vector=vector,
+                payload=payload,
+                family=family,
+                status=getattr(response, "status", 0),
+                body=getattr(response, "body", ""),
+                latency_ms=latency,
+                request_url=request_url,
             )
         except Exception as exc:
             return DeliveryResult(
-                vector=vector, payload=payload, family=family, status=0, body="",
-                latency_ms=0.0, request_url=request_url, error=str(exc),
+                vector=vector,
+                payload=payload,
+                family=family,
+                status=0,
+                body="",
+                latency_ms=0.0,
+                request_url=request_url,
+                error=str(exc),
             )
 
     async def baseline(self, target_url: str, *, session=None) -> DeliveryResult | None:
@@ -229,9 +267,13 @@ class PayloadDeliveryEngine:
             response = await network_interceptor.fetch("GET", target_url.split("?")[0], **kwargs)
             latency = (time.perf_counter() - start) * 1000
             return DeliveryResult(
-                vector="baseline", payload="", family="baseline",
-                status=getattr(response, "status", 0), body=getattr(response, "body", ""),
-                latency_ms=latency, request_url=target_url,
+                vector="baseline",
+                payload="",
+                family="baseline",
+                status=getattr(response, "status", 0),
+                body=getattr(response, "body", ""),
+                latency_ms=latency,
+                request_url=target_url,
             )
         except Exception as exc:
             return DeliveryResult("baseline", "", "baseline", 0, "", 0.0, target_url, error=str(exc))
@@ -246,10 +288,18 @@ class PayloadDeliveryEngine:
         "generic": "vigilagent_control_value",
     }
 
-    async def negative_control(self, target_url: str, payload: str, vector: str, *,
-                               param: str = "q", header_name: str = "X-Vigilagent-Test",
-                               cookie_name: str = "va_test", session=None,
-                               base_headers: dict[str, str] | None = None) -> DeliveryResult | None:
+    async def negative_control(
+        self,
+        target_url: str,
+        payload: str,
+        vector: str,
+        *,
+        param: str = "q",
+        header_name: str = "X-Vigilagent-Test",
+        cookie_name: str = "va_test",
+        session=None,
+        base_headers: dict[str, str] | None = None,
+    ) -> DeliveryResult | None:
         """Deliver a BENIGN value over the SAME vector as the test payload.
 
         If this benign request triggers the same divergence the malicious payload
@@ -262,13 +312,22 @@ class PayloadDeliveryEngine:
         except ScopeViolation:
             return None
         return await self._deliver_one(
-            target_url, control_value, vector, "control",
-            param, header_name, cookie_name, session, base_headers or {})
+            target_url, control_value, vector, "control", param, header_name, cookie_name, session, base_headers or {}
+        )
 
-    async def repeat(self, target_url: str, payload: str, vector: str, *, times: int = 2,
-                     param: str = "q", header_name: str = "X-Vigilagent-Test",
-                     cookie_name: str = "va_test", session=None,
-                     base_headers: dict[str, str] | None = None) -> list[DeliveryResult]:
+    async def repeat(
+        self,
+        target_url: str,
+        payload: str,
+        vector: str,
+        *,
+        times: int = 2,
+        param: str = "q",
+        header_name: str = "X-Vigilagent-Test",
+        cookie_name: str = "va_test",
+        session=None,
+        base_headers: dict[str, str] | None = None,
+    ) -> list[DeliveryResult]:
         """Re-deliver the SAME test payload N times for a repeatability check
         (Architecture §17). Stability across repeats raises confidence."""
         family = payload_family(payload)
@@ -279,8 +338,8 @@ class PayloadDeliveryEngine:
             return results
         for _ in range(max(1, times)):
             res = await self._deliver_one(
-                target_url, payload, vector, family,
-                param, header_name, cookie_name, session, base_headers or {})
+                target_url, payload, vector, family, param, header_name, cookie_name, session, base_headers or {}
+            )
             if res:
                 results.append(res)
         return results
@@ -297,16 +356,16 @@ class PayloadDeliveryEngine:
             return DeliveryResult("websocket", payload, family, 0, "", 0.0, ws_url, error=str(exc))
         try:
             import aiohttp
+
             start = time.perf_counter()
-            async with aiohttp.ClientSession() as s:
-                async with s.ws_connect(ws_url, timeout=timeout) as ws:
-                    await ws.send_str(payload)
-                    body = ""
-                    try:
-                        msg = await ws.receive(timeout=timeout)
-                        body = str(getattr(msg, "data", ""))
-                    except Exception as exc:
-                        logger.debug("[Delivery] WebSocket receive failed: %s", exc)
+            async with aiohttp.ClientSession() as s, s.ws_connect(ws_url, timeout=timeout) as ws:
+                await ws.send_str(payload)
+                body = ""
+                try:
+                    msg = await ws.receive(timeout=timeout)
+                    body = str(getattr(msg, "data", ""))
+                except Exception as exc:
+                    logger.debug("[Delivery] WebSocket receive failed: %s", exc)
             latency = (time.perf_counter() - start) * 1000
             return DeliveryResult("websocket", payload, family, 101, body, latency, ws_url)
         except Exception as exc:

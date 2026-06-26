@@ -58,7 +58,8 @@ class ObjectivePlan:
     def ready(self) -> list[ScanObjective]:
         completed = {obj.id for obj in self.objectives if obj.status == ObjectiveStatus.COMPLETED}
         return [
-            obj for obj in sorted(self.objectives, key=lambda item: item.priority)
+            obj
+            for obj in sorted(self.objectives, key=lambda item: item.priority)
             if obj.status == ObjectiveStatus.PENDING and all(dep in completed for dep in obj.blocked_by)
         ]
 
@@ -68,11 +69,15 @@ class ObjectivePlan:
             raise ObjectiveTransitionError(f"Unknown objective: {objective_id}")
         if status == ObjectiveStatus.COMPLETED:
             open_children = [
-                child.id for child in self.objectives
-                if child.parent_id == obj.id and child.status not in {ObjectiveStatus.COMPLETED, ObjectiveStatus.CANCELLED}
+                child.id
+                for child in self.objectives
+                if child.parent_id == obj.id
+                and child.status not in {ObjectiveStatus.COMPLETED, ObjectiveStatus.CANCELLED}
             ]
             if open_children:
-                raise ObjectiveTransitionError(f"Cannot complete {objective_id}; open children: {', '.join(open_children)}")
+                raise ObjectiveTransitionError(
+                    f"Cannot complete {objective_id}; open children: {', '.join(open_children)}"
+                )
             if obj.acceptance_criteria and not obj.findings and not obj.evidence:
                 raise ObjectiveTransitionError(f"Cannot complete {objective_id}; evidence or findings are required")
         if status not in VALID_TRANSITIONS[obj.status]:
@@ -86,17 +91,19 @@ class ObjectivePlan:
             raise ObjectiveTransitionError(f"Unknown parent objective: {parent_id}")
         created: list[ScanObjective] = []
         for index, child in enumerate(children, start=1):
-            created.append(self.add(
-                title=str(child["title"]),
-                phase=ObjectivePhase(child.get("phase", parent.phase.value)),
-                description=str(child.get("description", "")),
-                acceptance_criteria=list(child.get("acceptance_criteria") or []),
-                priority=int(child.get("priority", parent.priority + index)),
-                blocked_by=list(child.get("blocked_by") or []),
-                endpoint_group=child.get("endpoint_group", parent.endpoint_group),
-                parent_id=parent_id,
-                owner=child.get("owner", ""),
-            ))
+            created.append(
+                self.add(
+                    title=str(child["title"]),
+                    phase=ObjectivePhase(child.get("phase", parent.phase.value)),
+                    description=str(child.get("description", "")),
+                    acceptance_criteria=list(child.get("acceptance_criteria") or []),
+                    priority=int(child.get("priority", parent.priority + index)),
+                    blocked_by=list(child.get("blocked_by") or []),
+                    endpoint_group=child.get("endpoint_group", parent.endpoint_group),
+                    parent_id=parent_id,
+                    owner=child.get("owner", ""),
+                )
+            )
         return created
 
     def collapse(self, parent_id: str) -> list[str]:

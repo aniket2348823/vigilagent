@@ -4,6 +4,7 @@ Skill -> agent + tool mapper (Architecture §5.3.5)
 Maps a skill (by domain) to the agents that should receive it, following the
 agent skill routing rules in Architecture §5.3.5.
 """
+
 from __future__ import annotations
 
 # Domain -> agents (Architecture §5.3.5 routing rules).
@@ -35,8 +36,7 @@ AGENT_DOMAINS = {
     "Delta": ["mobile"],
     "Chi": [],
     "Prism": ["web_api_testing", "mobile"],
-    "Lambda": ["cloud", "container_kubernetes", "malware_re",
-               "detection_engineering", "hardening_remediation"],
+    "Lambda": ["cloud", "container_kubernetes", "malware_re", "detection_engineering", "hardening_remediation"],
 }
 
 
@@ -48,11 +48,44 @@ def map_required_tools(meta_text: str) -> list[str]:
     """Best-effort extraction of required tools mentioned in skill text."""
     text = meta_text.lower()
     known = [
-        "nmap", "naabu", "httpx", "katana", "ffuf", "feroxbuster", "dirsearch",
-        "gobuster", "nuclei", "tlsx", "subfinder", "amass", "gau", "waybackurls",
-        "gowitness", "sqlmap", "nikto", "masscan", "testssl", "sslyze",
-        "enum4linux", "smbclient", "ldapsearch", "impacket", "bloodhound",
-        "trivy", "grype", "kube-bench", "kubesec", "volatility", "wireshark",
-        "tshark", "zeek", "yara", "frida", "objection", "jadx", "mobsf", "ghidra",
+        "nmap",
+        "naabu",
+        "httpx",
+        "katana",
+        "ffuf",
+        "feroxbuster",
+        "dirsearch",
+        "gobuster",
+        "nuclei",
+        "tlsx",
+        "subfinder",
+        "amass",
+        "gau",
+        "waybackurls",
+        "gowitness",
+        "sqlmap",
+        "nikto",
+        "masscan",
+        "testssl",
+        "sslyze",
+        "enum4linux",
+        "smbclient",
+        "ldapsearch",
+        "impacket",
+        "bloodhound",
+        "trivy",
+        "grype",
+        "kube-bench",
+        "kubesec",
+        "volatility",
+        "wireshark",
+        "tshark",
+        "zeek",
+        "yara",
+        "frida",
+        "objection",
+        "jadx",
+        "mobsf",
+        "ghidra",
     ]
     return [t for t in known if t in text]

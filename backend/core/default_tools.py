@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from backend.core.sandbox import DockerSandbox
 from backend.core.approval import approval_store
+from backend.core.sandbox import DockerSandbox
 from backend.core.tool_registry import ToolDefinition, tool_registry
 from backend.core.tool_types import ToolType
 from backend.modules.tech.http_client import http_client
@@ -76,100 +76,114 @@ def register_default_tools() -> None:
     if tool_registry.exists("http_request"):
         return
 
-    tool_registry.register(ToolDefinition(
-        name="http_request",
-        description="Send a scoped HTTP request, record request/response evidence, and return the captured record.",
-        tool_type=ToolType.SEARCH_NETWORK,
-        handler=http_request_tool,
-        mutates_state=False,
-        requires_approval=False,
-        store_result=True,
-        parameters={
-            "type": "object",
-            "properties": {
-                "method": {"type": "string"},
-                "url": {"type": "string"},
-                "headers": {"type": "object", "additionalProperties": {"type": "string"}},
-                "json_body": {"type": "object"},
-                "data": {"type": "string"},
-                "approved_state_change": {"type": "boolean"},
+    tool_registry.register(
+        ToolDefinition(
+            name="http_request",
+            description="Send a scoped HTTP request, record request/response evidence, and return the captured record.",
+            tool_type=ToolType.SEARCH_NETWORK,
+            handler=http_request_tool,
+            mutates_state=False,
+            requires_approval=False,
+            store_result=True,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "method": {"type": "string"},
+                    "url": {"type": "string"},
+                    "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "json_body": {"type": "object"},
+                    "data": {"type": "string"},
+                    "approved_state_change": {"type": "boolean"},
+                },
             },
-        },
-    ))
-    tool_registry.register(ToolDefinition(
-        name="sandbox_run",
-        description="Run a command inside the scan Docker sandbox.",
-        tool_type=ToolType.ENVIRONMENT,
-        handler=sandbox_run_tool,
-        requires_approval=True,
-        summarize_result=True,
-        store_result=True,
-        parameters={
-            "type": "object",
-            "properties": {
-                "command": {"type": "string"},
-                "timeout": {"type": "integer"},
+        )
+    )
+    tool_registry.register(
+        ToolDefinition(
+            name="sandbox_run",
+            description="Run a command inside the scan Docker sandbox.",
+            tool_type=ToolType.ENVIRONMENT,
+            handler=sandbox_run_tool,
+            requires_approval=True,
+            summarize_result=True,
+            store_result=True,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "timeout": {"type": "integer"},
+                },
             },
-        },
-    ))
-    tool_registry.register(ToolDefinition(
-        name="jwt_parse",
-        description="Parse JWT header, payload, signature, and algorithm.",
-        tool_type=ToolType.ANALYSIS,
-        handler=jwt_parse_tool,
-        parameters={"type": "object", "properties": {"token": {"type": "string"}}},
-    ))
-    tool_registry.register(ToolDefinition(
-        name="jwt_forge_none",
-        description="Forge a JWT with alg=none for controlled verification.",
-        tool_type=ToolType.ANALYSIS,
-        handler=jwt_forge_none_tool,
-        requires_approval=True,
-        parameters={
-            "type": "object",
-            "properties": {
-                "token": {"type": "string"},
-                "claim_overrides": {"type": "object"},
+        )
+    )
+    tool_registry.register(
+        ToolDefinition(
+            name="jwt_parse",
+            description="Parse JWT header, payload, signature, and algorithm.",
+            tool_type=ToolType.ANALYSIS,
+            handler=jwt_parse_tool,
+            parameters={"type": "object", "properties": {"token": {"type": "string"}}},
+        )
+    )
+    tool_registry.register(
+        ToolDefinition(
+            name="jwt_forge_none",
+            description="Forge a JWT with alg=none for controlled verification.",
+            tool_type=ToolType.ANALYSIS,
+            handler=jwt_forge_none_tool,
+            requires_approval=True,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "token": {"type": "string"},
+                    "claim_overrides": {"type": "object"},
+                },
             },
-        },
-    ))
-    tool_registry.register(ToolDefinition(
-        name="jwt_forge_hs256",
-        description="Forge a JWT signed with an explicit HS256 secret for controlled verification.",
-        tool_type=ToolType.ANALYSIS,
-        handler=jwt_forge_hs256_tool,
-        requires_approval=True,
-        parameters={
-            "type": "object",
-            "properties": {
-                "token": {"type": "string"},
-                "secret": {"type": "string"},
-                "claim_overrides": {"type": "object"},
+        )
+    )
+    tool_registry.register(
+        ToolDefinition(
+            name="jwt_forge_hs256",
+            description="Forge a JWT signed with an explicit HS256 secret for controlled verification.",
+            tool_type=ToolType.ANALYSIS,
+            handler=jwt_forge_hs256_tool,
+            requires_approval=True,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "token": {"type": "string"},
+                    "secret": {"type": "string"},
+                    "claim_overrides": {"type": "object"},
+                },
             },
-        },
-    ))
-    tool_registry.register(ToolDefinition(
-        name="jwt_crack_hs256",
-        description="Try candidate secrets against an HS256 JWT signature.",
-        tool_type=ToolType.ANALYSIS,
-        handler=jwt_crack_hs256_tool,
-        parameters={
-            "type": "object",
-            "properties": {
-                "token": {"type": "string"},
-                "candidates": {"type": "array", "items": {"type": "string"}},
+        )
+    )
+    tool_registry.register(
+        ToolDefinition(
+            name="jwt_crack_hs256",
+            description="Try candidate secrets against an HS256 JWT signature.",
+            tool_type=ToolType.ANALYSIS,
+            handler=jwt_crack_hs256_tool,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "token": {"type": "string"},
+                    "candidates": {"type": "array", "items": {"type": "string"}},
+                },
             },
-        },
-    ))
-    tool_registry.register(ToolDefinition(
-        name="recon_tool_inventory",
-        description="List Alpha V6 recon tool capabilities, phases, modes, and local availability.",
-        tool_type=ToolType.ANALYSIS,
-        handler=recon_tool_inventory_tool,
-        summarize_result=True,
-        store_result=True,
-        parameters={"type": "object", "properties": {}},
-    ))
+        )
+    )
+    tool_registry.register(
+        ToolDefinition(
+            name="recon_tool_inventory",
+            description="List Alpha V6 recon tool capabilities, phases, modes, and local availability.",
+            tool_type=ToolType.ANALYSIS,
+            handler=recon_tool_inventory_tool,
+            summarize_result=True,
+            store_result=True,
+            parameters={"type": "object", "properties": {}},
+        )
+    )
 
 
 register_default_tools()

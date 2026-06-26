@@ -23,7 +23,19 @@ export const WS_BASE_URL = normalizeBaseUrl(
     wsBaseFromEnv || (import.meta.env.DEV ? '' : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${getDefaultBackendHost()}`)
 );
 
-export const getWsToken = () => localStorage.getItem('vulagent_ws_token') || '';
+export const getWsToken = () => {
+    const key = 'vigilagent_ws_token';
+    const legacy = 'vulagent_ws_token';
+    let token = localStorage.getItem(key);
+    if (!token) {
+        token = localStorage.getItem(legacy);
+        // Migrate old key to new key
+        if (token) {
+            try { localStorage.setItem(key, token); localStorage.removeItem(legacy); } catch { /* ignore */ }
+        }
+    }
+    return token || '';
+};
 
 export const apiUrl = (path) => `${API_BASE_URL}${normalizePath(path)}`;
 

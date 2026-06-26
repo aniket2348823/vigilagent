@@ -3,7 +3,10 @@ from __future__ import annotations
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @dataclass
@@ -31,7 +34,7 @@ class Telemetry:
     def span(self, name: str, *, kind: str = "span", **attrs: Any) -> Iterator[TelemetrySpan]:
         span = TelemetrySpan(name=name, kind=kind, attrs=attrs)
         self.spans.append(span)
-        self.spans = self.spans[-self.max_spans:]
+        self.spans = self.spans[-self.max_spans :]
         try:
             yield span
             span.status = "success"

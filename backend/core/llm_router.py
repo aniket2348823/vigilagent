@@ -3,13 +3,12 @@ import logging
 import os
 import random
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 logger = logging.getLogger("LLMRouter")
 
 
-class ModelTier(str, Enum):
+class ModelTier(StrEnum):
     HIGH = "high"
     MID = "mid"
     LOW = "low"
@@ -99,7 +98,7 @@ class LLMRouter:
             tier=tier,
         )
 
-    def get_temperature(self, agent_name: str, override: Optional[float] = None) -> float:
+    def get_temperature(self, agent_name: str, override: float | None = None) -> float:
         """Return the temperature for an agent, with optional runtime override.
 
         FIX: Previously temperature was hardcoded per agent name with no way
@@ -148,12 +147,16 @@ class LLMRouter:
                 except Exception as exc:
                     last_error = exc
                     self.record_model_error(model)
-                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    delay = min(base_delay * (2**attempt), max_delay)
                     # Add jitter to prevent thundering herd
-                    delay *= (0.5 + random.random())
+                    delay *= 0.5 + random.random()
                     logger.warning(
                         "LLM call to %s failed (attempt %d/%d): %s — retrying in %.1fs",
-                        model, attempt + 1, max_retries, exc, delay,
+                        model,
+                        attempt + 1,
+                        max_retries,
+                        exc,
+                        delay,
                     )
                     await asyncio.sleep(delay)
         # All models and retries exhausted

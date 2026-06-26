@@ -5,10 +5,15 @@ testssl emits a flat JSON array of findings:
 Only findings at MEDIUM or above become vulnerability candidates; everything
 else is captured as a TLS attribute on the host.
 """
+
 from __future__ import annotations
-from pathlib import Path
+
+from typing import TYPE_CHECKING
 
 from backend.parsers.recon.base import ParsedEntity, safe_json_file
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _RISK = {"CRITICAL", "HIGH", "MEDIUM"}
 
@@ -32,10 +37,20 @@ def parse_testssl_json(path: Path | str) -> list[ParsedEntity]:
             if key in seen:
                 continue
             seen.add(key)
-            entities.append(ParsedEntity(
-                kind="vulnerability_candidate", label=f"{fid} ({target})",
-                confidence=0.75,
-                properties={"tls_check": fid, "severity": sev, "finding": finding,
-                            "host": target, "source": "testssl"},
-                source_tool="testssl", phase="dns_infrastructure"))
+            entities.append(
+                ParsedEntity(
+                    kind="vulnerability_candidate",
+                    label=f"{fid} ({target})",
+                    confidence=0.75,
+                    properties={
+                        "tls_check": fid,
+                        "severity": sev,
+                        "finding": finding,
+                        "host": target,
+                        "source": "testssl",
+                    },
+                    source_tool="testssl",
+                    phase="dns_infrastructure",
+                )
+            )
     return entities

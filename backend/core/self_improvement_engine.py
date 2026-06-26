@@ -17,6 +17,7 @@ Automatic improvements that change runtime behavior are STAGED first, then
 promoted after successful shadow evaluation (Architecture §13.4, §14.1). Core
 code is never rewritten at runtime — only routing/prompt/skill/budget knobs.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -39,6 +40,7 @@ Stage = Literal["staged", "shadow", "promoted", "rejected", "rolled_back"]
 @dataclass
 class AgentProfile:
     """Per-agent improvement profile (Architecture §13.4 profile fields)."""
+
     agent_id: str
     capabilities: list[str] = field(default_factory=list)
     tool_allowlist: list[str] = field(default_factory=list)
@@ -76,6 +78,7 @@ class AgentProfile:
 @dataclass
 class ImprovementChange:
     """An auditable improvement record (Architecture §13.4)."""
+
     change_id: str
     agent_id: str
     kind: ChangeKind
@@ -127,8 +130,7 @@ class SelfImprovementEngine:
         if pf.exists():
             try:
                 for aid, d in json.loads(pf.read_text(encoding="utf-8")).items():
-                    self.profiles[aid] = AgentProfile(agent_id=aid, **{
-                        k: v for k, v in d.items() if k != "agent_id"})
+                    self.profiles[aid] = AgentProfile(agent_id=aid, **{k: v for k, v in d.items() if k != "agent_id"})
             except Exception as e:
                 logger.debug("[SelfImprovement] episode dedup skipped: %s", e)
 
@@ -136,11 +138,11 @@ class SelfImprovementEngine:
         """Synchronous persistence — called from __init__ (sync context)."""
         try:
             self._profiles_file().write_text(
-                json.dumps({a: p.to_dict() for a, p in self.profiles.items()}, indent=2),
-                encoding="utf-8")
+                json.dumps({a: p.to_dict() for a, p in self.profiles.items()}, indent=2), encoding="utf-8"
+            )
             self._changes_file().write_text(
-                json.dumps([c.to_dict() for c in self.changes[-500:]], indent=2),
-                encoding="utf-8")
+                json.dumps([c.to_dict() for c in self.changes[-500:]], indent=2), encoding="utf-8"
+            )
         except Exception as exc:
             logger.debug("[SelfImprovement] save failed: %s", exc)
 
@@ -183,7 +185,8 @@ class SelfImprovementEngine:
                 continue
             change = ImprovementChange(
                 change_id=f"chg-{uuid.uuid4().hex[:10]}",
-                agent_id=agent_id, kind="routing",
+                agent_id=agent_id,
+                kind="routing",
                 what=f"routing_weight {old:.2f} -> {new:.2f}",
                 why=f"agent success delta {delta:+.2f} on scan {scan_id}",
                 scan_id=scan_id,
@@ -203,10 +206,12 @@ class SelfImprovementEngine:
                 if tool in prof.tool_allowlist:
                     change = ImprovementChange(
                         change_id=f"chg-{uuid.uuid4().hex[:10]}",
-                        agent_id=prof.agent_id, kind="tool_preference",
+                        agent_id=prof.agent_id,
+                        kind="tool_preference",
                         what=f"prefer tool '{tool}'",
                         why=f"tool reliability delta {delta:+.2f} on scan {scan_id}",
-                        scan_id=scan_id, evidence={"tool": tool, "delta": delta},
+                        scan_id=scan_id,
+                        evidence={"tool": tool, "delta": delta},
                         expected_benefit="prefer historically reliable tools",
                         rollback={"note": "remove preference"},
                     )
@@ -216,10 +221,12 @@ class SelfImprovementEngine:
         for vclass, vector in vector_prefs.items():
             change = ImprovementChange(
                 change_id=f"chg-{uuid.uuid4().hex[:10]}",
-                agent_id="agent_beta", kind="skill_recommendation",
+                agent_id="agent_beta",
+                kind="skill_recommendation",
                 what=f"prefer '{vector}' vector for {vclass}",
                 why=f"successful delivery on scan {scan_id}",
-                scan_id=scan_id, evidence={"vuln_class": vclass, "vector": vector},
+                scan_id=scan_id,
+                evidence={"vuln_class": vclass, "vector": vector},
                 expected_benefit="faster confirmation via best-known vector",
                 rollback={"note": "drop vector preference"},
             )
@@ -256,8 +263,9 @@ class SelfImprovementEngine:
     def routing_weight(self, agent_id: str) -> float:
         return self.profile(agent_id).routing_weight
 
-    def record_false_positive(self, *, agent_id: str, vuln_class: str,
-                              scan_id: str = "GLOBAL", reason: str = "") -> ImprovementChange:
+    def record_false_positive(
+        self, *, agent_id: str, vuln_class: str, scan_id: str = "GLOBAL", reason: str = ""
+    ) -> ImprovementChange:
         """Record a Gamma false-positive rejection against the source agent
         (Architecture §15.1). Raises the agent's FP rate, nudges its routing
         weight down, and stages an auditable confidence-tuning change so the
@@ -272,7 +280,8 @@ class SelfImprovementEngine:
             prof.common_failure_modes.append(mode)
         change = ImprovementChange(
             change_id=f"chg-{uuid.uuid4().hex[:10]}",
-            agent_id=agent_id, kind="routing",
+            agent_id=agent_id,
+            kind="routing",
             what=f"confidence down for {vuln_class}; routing_weight {old_weight:.2f}->{prof.routing_weight:.2f}",
             why=f"Gamma rejected a {vuln_class} candidate as false positive: {reason[:120]}",
             scan_id=scan_id,
@@ -282,8 +291,9 @@ class SelfImprovementEngine:
         )
         self.changes.append(change)
         self._save()
-        logger.info("[SelfImprovement] FP recorded: %s %s (fp_rate=%.2f)",
-                    agent_id, vuln_class, prof.false_positive_rate)
+        logger.info(
+            "[SelfImprovement] FP recorded: %s %s (fp_rate=%.2f)", agent_id, vuln_class, prof.false_positive_rate
+        )
         return change
 
     def get_audit(self, limit: int = 50) -> list[dict[str, Any]]:

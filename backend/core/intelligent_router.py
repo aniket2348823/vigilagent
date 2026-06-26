@@ -38,7 +38,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger("IntelligentRouter")
 
@@ -70,7 +70,7 @@ METHOD_HYBRID = "hybrid"
 
 class IntelligentRouter:
     """Decision surface for HTTP-vs-browser routing and engine selection.
-    
+
     The router owns no persistent state. Every learned signal is written
     through ``learning_engine.patterns`` using
     ``pattern_type="method_effectiveness"`` rows, keyed by a stable
@@ -78,7 +78,7 @@ class IntelligentRouter:
     surface unified (§14: shared memory and knowledge stores) and avoids a
     second pattern store.
     """
-    
+
     def __init__(
         self,
         learning_engine: Any = None,
@@ -87,15 +87,15 @@ class IntelligentRouter:
         # Both deps may be ``None`` in Phase-1; methods degrade gracefully.
         self.learning_engine = learning_engine
         self.browser_orchestrator = browser_orchestrator
-    
+
     # ------------------------------------------------------------------
     # Task 9.2 / 13.2 — recommend_method
     # ------------------------------------------------------------------
-    def recommend_method(self, target: Dict[str, Any]) -> str:
+    def recommend_method(self, target: dict[str, Any]) -> str:
         """Recommend an execution method for ``target``.
-        
+
         Returns one of ``"http_only"``, ``"browser_only"``, ``"hybrid"``.
-        
+
         Decision matrix (first match wins):
           1. Learned ``method_effectiveness`` patterns with success_rate
              ≥ 0.7 and ≥ 3 observations override rules.
@@ -108,40 +108,40 @@ class IntelligentRouter:
         """
         if not isinstance(target, dict):
             return METHOD_HTTP_ONLY
-        
+
         chars = self._extract_target_characteristics(target)
-        
+
         # 1. Learned-pattern override.
         learned = self._lookup_learned_method(chars)
         if learned is not None:
             return learned
-        
+
         # 2. Pure HTTP signal: no JS, JSON API.
         if chars["no_js"]:
             return METHOD_HTTP_ONLY
         if chars["api_endpoint"] and chars["content_type_class"] == "http":
             return METHOD_HTTP_ONLY
-        
+
         # 3. Browser-leaning signals.
         framework_lower = (chars["framework"] or "").lower()
         if framework_lower in _BROWSER_LEANING_FRAMEWORKS:
             return METHOD_BROWSER_ONLY
         if chars["content_type_class"] == "browser":
             return METHOD_BROWSER_ONLY
-        
+
         # 4. Mixed signal — JS detected but no strong framework/content hint.
         if chars["has_js"]:
             return METHOD_HYBRID
-        
+
         # 5. No signal — default to the cheapest path.
         return METHOD_HTTP_ONLY
-    
+
     # ------------------------------------------------------------------
     # Task 9.4 / 13.4 — select_browser_engine
     # ------------------------------------------------------------------
-    def select_browser_engine(self, task: Dict[str, Any]) -> str:
+    def select_browser_engine(self, task: dict[str, Any]) -> str:
         """Return ``"openclaw"`` or ``"pinchtab"`` for a browser task.
-        
+
         Decision matrix (first match wins):
           1. ``stealth`` / ``stealth_required`` truthy   → ``openclaw``
           2. ``complexity`` ≥ 3                          → ``openclaw``
@@ -152,11 +152,11 @@ class IntelligentRouter:
         """
         if not isinstance(task, dict):
             return ENGINE_PINCHTAB
-        
+
         # 1. Stealth always wins — PinchTab has no stealth toolkit.
         if task.get("stealth") or task.get("stealth_required"):
             return ENGINE_OPENCLAW
-        
+
         # 2. Numeric complexity.
         try:
             complexity = int(task.get("complexity", 0) or 0)
@@ -164,14 +164,14 @@ class IntelligentRouter:
             complexity = 0
         if complexity >= _OPENCLAW_COMPLEXITY_THRESHOLD:
             return ENGINE_OPENCLAW
-        
+
         # 3. Multi-step workflows.
         if task.get("multi_step"):
             return ENGINE_OPENCLAW
         steps = task.get("steps")
         if isinstance(steps, (list, tuple)) and len(steps) > 1:
             return ENGINE_OPENCLAW
-        
+
         # 4 / 5. Simple navigation / token extraction → PinchTab.
         # We don't gate on the action whitelist explicitly — anything that
         # didn't trip the OpenClaw conditions above is by definition simple
@@ -179,19 +179,19 @@ class IntelligentRouter:
         action = task.get("action") or task.get("type") or "unknown"
         logger.debug("[Router] selecting PinchTab for simple action=%s", action)
         return ENGINE_PINCHTAB
-    
+
     # ------------------------------------------------------------------
     # Task 9.6 — learn_method_effectiveness
     # ------------------------------------------------------------------
     async def learn_method_effectiveness(
         self,
-        target_chars: Dict[str, Any],
+        target_chars: dict[str, Any],
         method: str,
         success: bool,
         scan_id: str,
     ) -> bool:
         """Record an outcome for ``(target_chars, method)`` in the learning engine.
-        
+
         Creates or reinforces a ``pattern_type="method_effectiveness"`` row
         keyed by a stable ``(framework, has_js, content_type_class)`` triple
         plus the method itself. Successive successes raise ``success_count``;
@@ -199,7 +199,7 @@ class IntelligentRouter:
         engine's ``update_confidence`` helper, so future
         ``recommend_method`` calls become evidence-driven once
         ``success_rate ≥ 0.7`` with ``success_count ≥ 3``.
-        
+
         Returns ``True`` if a row was written; ``False`` on invalid input or
         when no learning_engine is attached (Phase-1 default).
         """
@@ -209,7 +209,7 @@ class IntelligentRouter:
             return False
         if method not in (METHOD_HTTP_ONLY, METHOD_BROWSER_ONLY, METHOD_HYBRID):
             return False
-        
+
         # Lazy import — keeps the module importable when learning_engine
         # heavy deps (memory_store, knowledge_graph) are unavailable.
         try:
@@ -217,11 +217,11 @@ class IntelligentRouter:
         except Exception as e:  # pragma: no cover - import path issue
             logger.warning("[Router] LearningPattern import failed: %s", e)
             return False
-        
+
         patterns_store = getattr(self.learning_engine, "patterns", None)
         if not isinstance(patterns_store, dict):
             return False
-        
+
         chars = self._extract_target_characteristics(target_chars)
         key_triple = self._effectiveness_key(chars)
         pattern_data = {
@@ -241,7 +241,7 @@ class IntelligentRouter:
                 "method": method,
             },
         )
-        
+
         now = time.time()
         existing = patterns_store.get(pattern_id)
         if existing is not None:
@@ -269,7 +269,7 @@ class IntelligentRouter:
             if hasattr(pattern, "update_confidence"):
                 pattern.update_confidence()
             patterns_store[pattern_id] = pattern
-        
+
         # Persist off the event loop (§29.13). Failure is logged, not raised.
         saver = getattr(self.learning_engine, "_save_patterns", None)
         if callable(saver):
@@ -277,16 +277,16 @@ class IntelligentRouter:
                 await asyncio.wait_for(asyncio.to_thread(saver), timeout=15)
             except Exception as e:  # pragma: no cover - disk hiccup
                 logger.warning("[Router] persist failed: %s", e)
-        
+
         return True
-    
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _extract_target_characteristics(target: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_target_characteristics(target: dict[str, Any]) -> dict[str, Any]:
         """Normalise a target dict into the canonical characteristic shape.
-        
+
         Output keys (always present):
           framework            — Optional[str], original case preserved
           has_js               — bool
@@ -296,11 +296,11 @@ class IntelligentRouter:
         """
         if not isinstance(target, dict):
             target = {}
-        
+
         framework = target.get("framework")
         if framework is not None and not isinstance(framework, str):
             framework = str(framework)
-        
+
         # has_js handling: prefer explicit signal, else infer from framework.
         has_js_raw = target.get("has_js")
         no_js_raw = target.get("no_js")
@@ -313,7 +313,7 @@ class IntelligentRouter:
             # Reconcile when both supplied and contradict — explicit wins.
             if has_js_raw is not None:
                 no_js = not bool(has_js_raw)
-        
+
         # Content-Type classification.
         ct_raw = target.get("content_type") or target.get("Content-Type") or ""
         ct = ct_raw.lower() if isinstance(ct_raw, str) else ""
@@ -323,12 +323,12 @@ class IntelligentRouter:
             content_type_class = "http"
         else:
             content_type_class = "other"
-        
+
         api_endpoint = bool(target.get("api_endpoint") or target.get("is_api"))
         # Strong heuristic: JSON content-type → API endpoint.
         if content_type_class == "http" and "json" in ct:
             api_endpoint = True
-        
+
         return {
             "framework": framework,
             "has_js": has_js,
@@ -336,11 +336,11 @@ class IntelligentRouter:
             "content_type_class": content_type_class,
             "api_endpoint": api_endpoint,
         }
-    
+
     @staticmethod
-    def _effectiveness_key(chars: Dict[str, Any]) -> Tuple[str, bool, str]:
+    def _effectiveness_key(chars: dict[str, Any]) -> tuple[str, bool, str]:
         """Build the stable ``(framework, has_js, content_type)`` triple.
-        
+
         Framework is lower-cased and empty-string normalised so e.g. "React"
         and "react" collide on the same row. ``content_type_class`` is
         used (not raw Content-Type) so trivial drift in mime parameters
@@ -348,10 +348,10 @@ class IntelligentRouter:
         """
         fw = (chars.get("framework") or "").strip().lower()
         return (fw, bool(chars.get("has_js")), chars.get("content_type_class") or "other")
-    
-    def _lookup_learned_method(self, chars: Dict[str, Any]) -> Optional[str]:
+
+    def _lookup_learned_method(self, chars: dict[str, Any]) -> str | None:
         """Return the best-supported learned method for ``chars`` or None.
-        
+
         Selection rule:
           • Among ``method_effectiveness`` rows matching the characteristic
             triple, pick the one with the highest ``success_rate``.
@@ -364,10 +364,10 @@ class IntelligentRouter:
         patterns_store = getattr(self.learning_engine, "patterns", None)
         if not isinstance(patterns_store, dict):
             return None
-        
+
         target_triple = self._effectiveness_key(chars)
-        best: Optional[Tuple[float, int, str]] = None  # (success_rate, count, method)
-        
+        best: tuple[float, int, str] | None = None  # (success_rate, count, method)
+
         for pattern in patterns_store.values():
             if getattr(pattern, "pattern_type", None) != "method_effectiveness":
                 continue
@@ -389,14 +389,15 @@ class IntelligentRouter:
             candidate = (success_rate, success_count, method)
             if best is None or candidate > best:
                 best = candidate
-        
+
         return best[2] if best is not None else None
-    
+
     @staticmethod
-    def _generate_pattern_id(pattern_type: str, key_data: Dict[str, Any]) -> str:
+    def _generate_pattern_id(pattern_type: str, key_data: dict[str, Any]) -> str:
         """Deterministic SHA-256-based id matching learning_engine.py's scheme."""
         import hashlib
         import json
+
         data_str = json.dumps(key_data, sort_keys=True, default=str)
         digest = hashlib.sha256(f"{pattern_type}:{data_str}".encode()).hexdigest()[:16]
         return f"{pattern_type}_{digest}"

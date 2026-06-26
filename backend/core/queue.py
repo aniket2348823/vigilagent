@@ -2,19 +2,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Coroutine, Dict, Sequence
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import os
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
+
 
 class LanePriority(IntEnum):
     CRITICAL = 0
     HIGH = 1
     NORMAL = 2
     LOW = 3
+
 
 @dataclass
 class ProcessResult:
@@ -25,11 +30,13 @@ class ProcessResult:
     killed: bool
     duration_ms: int
 
+
 class ProcessRunner:
     """
     Wraps subprocess execution with strict timeouts, no-output watchdogs,
     and aggressive cleanup to prevent zombie processes.
     """
+
     @staticmethod
     async def run(
         command: str,
@@ -42,6 +49,7 @@ class ProcessRunner:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+
         return await ProcessRunner._run_spawned(
             _spawn_shell,
             display_command=command,
@@ -86,12 +94,13 @@ class ProcessRunner:
         no_output_timeout_ms: int = 30000,
         max_runtime_ms: int = 120000,
     ) -> ProcessResult:
-        from backend.core.task_manager import TaskManager
         import contextlib
-        
+
+        from backend.core.task_manager import TaskManager
+
         start_time = time.monotonic()
         task_manager = TaskManager("ProcessRunner")
-        
+
         try:
             proc = await spawn_coro()
         except Exception as e:
@@ -127,16 +136,10 @@ class ProcessRunner:
                 if not chunk:
                     break
                 last_output_at = time.monotonic()
-                chunks_list.append(chunk.decode('utf-8', errors='replace'))
+                chunks_list.append(chunk.decode("utf-8", errors="replace"))
 
-        stdout_task = task_manager.create_task(
-            _read_stream(proc.stdout, stdout_chunks),
-            name="stdout_reader"
-        )
-        stderr_task = task_manager.create_task(
-            _read_stream(proc.stderr, stderr_chunks),
-            name="stderr_reader"
-        )
+        stdout_task = task_manager.create_task(_read_stream(proc.stdout, stdout_chunks), name="stdout_reader")
+        stderr_task = task_manager.create_task(_read_stream(proc.stderr, stderr_chunks), name="stderr_reader")
 
         async def _write_stdin():
             if stdin is None or proc.stdin is None:
@@ -170,24 +173,20 @@ class ProcessRunner:
                     return
 
         stdin_task = task_manager.create_task(_write_stdin(), name="stdin_writer")
-        watchdog_task = task_manager.create_task(
-            _no_output_watchdog(),
-            name="watchdog"
-        )
-        
+        watchdog_task = task_manager.create_task(_no_output_watchdog(), name="watchdog")
+
         try:
             # Wait with max runtime timeout
             await asyncio.wait_for(
-                asyncio.gather(proc.wait(), stdout_task, stderr_task, stdin_task),
-                timeout=max_runtime_ms / 1000.0
+                asyncio.gather(proc.wait(), stdout_task, stderr_task, stdin_task), timeout=max_runtime_ms / 1000.0
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timed_out = True
             killed = True
             logger.warning(f"Process exceeded max_runtime_ms ({max_runtime_ms}ms). Killing.")
             with contextlib.suppress(ProcessLookupError, OSError):
                 proc.kill()
-            
+
             # Ensure tasks finish
             stdout_task.cancel()
             stderr_task.cancel()
@@ -237,8 +236,9 @@ class ProcessRunner:
             stderr=stderr_text,
             timed_out=timed_out,
             killed=killed,
-            duration_ms=duration_ms
+            duration_ms=duration_ms,
         )
+
 
 class CommandLane:
     """
@@ -246,18 +246,19 @@ class CommandLane:
     Prevents host network/OS resource exhaustion by limiting active threads.
     Mirrors OpenClaw's CommandLane in-process queue design.
     """
+
     def __init__(self, max_concurrent: int = 8):
         self.max_concurrent = max_concurrent
         self.semaphore = asyncio.Semaphore(max_concurrent)
-        
+
         # Telemetry
         self.active_count = 0
         self.waiting_count = 0
         self.total_executed = 0
         self.total_timed_out = 0
         self.total_failed = 0
-        
-        # Priority Queue for tracking (Actual scheduling done via asyncio.PriorityQueue if needed, 
+
+        # Priority Queue for tracking (Actual scheduling done via asyncio.PriorityQueue if needed,
         # but for simple concurrency limits, Semaphore with tracking is sufficient)
 
     class _SlotContextManager:
@@ -279,14 +280,14 @@ class CommandLane:
                 self.lane.total_failed += 1
             self.lane.semaphore.release()
 
-    def slot(self, priority: LanePriority = LanePriority.NORMAL) -> '_SlotContextManager':
+    def slot(self, priority: LanePriority = LanePriority.NORMAL) -> _SlotContextManager:
         """
         Context manager to acquire an execution slot.
         """
         return self._SlotContextManager(self, priority)
 
     @property
-    def telemetry(self) -> Dict[str, Any]:
+    def telemetry(self) -> dict[str, Any]:
         return {
             "max_concurrent": self.max_concurrent,
             "active_count": self.active_count,
@@ -295,6 +296,7 @@ class CommandLane:
             "total_timed_out": self.total_timed_out,
             "total_failed": self.total_failed,
         }
+
 
 # Global singleton
 command_lane = CommandLane(max_concurrent=8)

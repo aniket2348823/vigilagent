@@ -1,42 +1,42 @@
 import logging
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from pydantic import BaseModel
-from typing import Dict, Any, Optional, List
 import os
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks
+from pydantic import BaseModel
+
 from backend.ai.cortex import get_cortex_engine
 from backend.core.orchestrator import HiveOrchestrator
 
 # Initialize Router
 router = APIRouter()
 
+
 class MutationRequest(BaseModel):
     url: str
     method: str
-    headers: Dict[str, str] = {}
-    body: Optional[Any] = {} 
-    velocity: Optional[int] = 50
+    headers: dict[str, str] = {}
+    body: Any | None = {}
+    velocity: int | None = 50
     # New Config Fields matching Frontend
-    interception_filters: Optional[List[str]] = [] 
-    logic_vectors: Optional[List[Dict[str, Any]]] = []
+    interception_filters: list[str] | None = []
+    logic_vectors: list[dict[str, Any]] | None = []
+
 
 @router.post("/mutate")
 async def generate_mutations(payload: MutationRequest):
     """
     Trigger AI Payload suggestions manually.
     """
-    base_request = {
-        "url": payload.url,
-        "method": payload.method,
-        "body": payload.body
-    }
-    if os.getenv("VULAGENT_TEST_MODE", "false").lower() == "true":
+    base_request = {"url": payload.url, "method": payload.method, "body": payload.body}
+    if os.getenv("VIGILAGENT_TEST_MODE", "false").lower() == "true":
         seed = str(payload.body)[:80]
         return {
             "status": "success",
             "variants": [
                 {"type": "sqli", "payload": "' OR '1'='1", "target": payload.url},
                 {"type": "sqli", "payload": "admin'--", "target": payload.url},
-                {"type": "auth", "payload": {"username": "admin", "password": "admin"}, "target": payload.url},
+                {"type": "auth", "payload": {"username": "testuser", "password": "testpass"}, "target": payload.url},
                 {"type": "idor", "payload": {"id": 0}, "target": payload.url},
                 {"type": "xss", "payload": "<script>alert(1)</script>", "target": payload.url},
                 {"type": "json", "payload": {"$ne": seed}, "target": payload.url},
@@ -48,21 +48,19 @@ async def generate_mutations(payload: MutationRequest):
     variants = await brain.synthesize_payloads(base_request)
     return {"status": "success", "variants": variants}
 
+
 @router.post("/autonomous/engage")
 async def engage_autonomous(payload: MutationRequest, background_tasks: BackgroundTasks):
     """
     Full Auto Mode: Bootstraps the Hive Mind.
     """
     scan_id = "HIVE-" + payload.url.replace("https://", "").replace("http://", "")[:10]
-    
+
     # Pass full payload to the Hive Orchestrator
     background_tasks.add_task(HiveOrchestrator.bootstrap_hive, payload.model_dump(), scan_id)
-    
-    return {
-        "status": "launched", 
-        "message": "Hive Mind Swarm Activated",
-        "scan_id": scan_id 
-    }
+
+    return {"status": "launched", "message": "Hive Mind Swarm Activated", "scan_id": scan_id}
+
 
 @router.get("/status")
 async def get_ai_status():
@@ -72,21 +70,18 @@ async def get_ai_status():
     brain = get_cortex_engine()
     # Defensive access to telemetry
     telemetry = brain._telemetry if hasattr(brain, "_telemetry") else {}
-    nvidia = getattr(brain, "_nvidia", None)
     openrouter = getattr(brain, "_openrouter", None)
-    
+
     return {
         "core_status": {
             "gi5": "online" if getattr(brain, "_gi5_available", False) else "error",
-            "ollama": "standby",
             "openrouter": "active" if getattr(openrouter, "is_available", False) else "disabled",
-            "nvidia": "active" if getattr(nvidia, "is_available", False) else "dummy_key"
         },
         "llm_calls": telemetry.get("llm_calls", 0),
         "circuit_breaker_trips": telemetry.get("circuit_breaker_trips", 0),
         "circuit_breaker_tripped": telemetry.get("circuit_breaker_trips", 0) > 0,
         "agent_capabilities": ["singularity", "recon", "attack", "defense"],
-        "fallback": "OpenRouter" if getattr(brain, "_gi5_available", False) else "GI5_only"
+        "fallback": "OpenRouter" if getattr(openrouter, "is_available", False) else "GI5_only",
     }
 
 
@@ -94,12 +89,13 @@ async def get_ai_status():
 #  CORTEX CACHE MANAGEMENT ENDPOINTS
 # ──────────────────────────────────────────────────────────────────────
 
+
 @router.get("/health")
 async def cortex_health():
     """Return cortex cache stats, circuit breaker state, and Redis connectivity."""
     try:
-        from backend.ai.cortex import Cortex, get_cortex_engine
-        import asyncio
+        from backend.ai.cortex import get_cortex_engine
+
         # Try to get a cached instance or create a minimal one
         cortex = get_cortex_engine()
         stats = cortex.get_cache_stats()
@@ -116,7 +112,8 @@ async def cortex_cache_invalidate(
 ):
     """Invalidate LLM response cache entries by scan_id or pattern."""
     try:
-        from backend.ai.cortex import Cortex, get_cortex_engine
+        from backend.ai.cortex import get_cortex_engine
+
         cortex = get_cortex_engine()
         evicted, redis_flush_error = await cortex.invalidate_cache(scan_id=scan_id, pattern=pattern)
         result = {

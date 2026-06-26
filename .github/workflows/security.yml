@@ -1,0 +1,123 @@
+# Vigilagent Security CI Pipeline
+# Implements items #11 (SAST), #12 (dependency scanning), #13 (container scanning)
+
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, vul/main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly scan on Sundays at 00:00 UTC
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # ── #11: SAST with Bandit ──
+  bandit-sast:
+    name: Bandit SAST Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit (SARIF output)
+        run: |
+          bandit -r backend/ \
+            --severity-level medium \
+            --confidence-level medium \
+            -f sarif \
+            -o bandit-report.sarif \
+            --skip B101 \
+            || true
+
+      - name: Display Bandit Summary
+        run: |
+          bandit -r backend/ \
+            --severity-level high \
+            --confidence-level high \
+            --skip B101 \
+            || true
+
+      - name: Upload Bandit SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit-report.sarif
+          category: bandit
+
+  # ── #12: Dependency vulnerability scanning ──
+  dependency-audit:
+    name: Dependency Audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pip-audit
+
+      - name: Run pip-audit
+        run: |
+          pip-audit \
+            --requirement backend/requirements.txt \
+            --desc \
+            --output pip-audit-report.json \
+            --format json \
+            --strict \
+            || true
+
+      - name: Display vulnerabilities
+        run: |
+          pip-audit \
+            --requirement backend/requirements.txt \
+            --desc \
+            || true
+
+  # ── #13: Container image scanning with Trivy ──
+  trivy-container:
+    name: Trivy Container Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t vigilagent:security-scan .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'vigilagent:security-scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
+      - name: Display Trivy results
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'vigilagent:security-scan'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: trivy

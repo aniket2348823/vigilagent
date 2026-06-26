@@ -1,0 +1,99 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Vigilagent Alerts
+    folder: ""
+    interval: 1m
+    rules:
+      - uid: va-high-error-rate
+        title: High Scan Failure Rate
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: rate(vigilagent_scans_failed_total[5m]) > 0.5
+              instant: true
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High scan failure rate"
+          description: "More than 0.5 scans/sec are failing over the last 5 minutes."
+
+      - uid: va-scan-duration-high
+        title: Scan Duration Too High
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: histogram_quantile(0.95, rate(vigilagent_scan_duration_seconds_bucket[10m])) > 600
+              instant: true
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scan p95 duration exceeds 10 minutes"
+
+      - uid: va-redis-down
+        title: Redis Is Down
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: vigilagent_redis_connected == 0
+              instant: true
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is unreachable"
+          description: "The Vigilagent Redis connection has been down for over 2 minutes."
+
+      - uid: va-llm-errors-high
+        title: LLM Error Rate High
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: rate(vigilagent_llm_errors_total[5m]) > 0.5
+              instant: true
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High LLM API error rate"
+
+      - uid: va-critical-vuln
+        title: Critical Vulnerability Found
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: delta(vigilagent_vulns_critical_total[1h]) > 0
+              instant: true
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical vulnerability confirmed"

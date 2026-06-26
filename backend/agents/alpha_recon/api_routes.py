@@ -7,19 +7,17 @@ Provides REST + WebSocket endpoints for:
 - Live feed WebSocket for dashboard
 - Export endpoints (SARIF, STIX, Markdown)
 """
+
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from backend.agents.alpha_recon.live_feed import recon_live_feed
-from backend.agents.alpha_recon.models import ScanMode
 
 logger = logging.getLogger("alpha.api")
 
@@ -28,14 +26,14 @@ router = APIRouter(prefix="/api/v1/recon", tags=["recon"])
 
 # ── Request/Response Models ──────────────────────────────────
 
+
 class StartReconRequest(BaseModel):
     target_url: str
     mode: str = "STANDARD"
     scan_id: str = ""
     enable_pinchtab: bool = True
     enable_external_tools: bool = False
-    phases: list[str] = Field(default_factory=list,
-        description="Specific phases to run. Empty = all.")
+    phases: list[str] = Field(default_factory=list, description="Specific phases to run. Empty = all.")
 
 
 class ReconStatusResponse(BaseModel):
@@ -61,10 +59,10 @@ _active_scans: dict[str, asyncio.Task] = {}
 
 # ── REST Endpoints ───────────────────────────────────────────
 
+
 @router.post("/start")
 async def start_recon(req: StartReconRequest):
     """Start a new reconnaissance scan."""
-    from backend.agents.alpha_recon.alpha_orchestrator import AlphaOrchestrator as AlphaV6DeepOrchestrator
     from backend.core.hive import event_bus
 
     if req.scan_id in _active_scans and not _active_scans[req.scan_id].done():
@@ -84,8 +82,7 @@ async def start_recon(req: StartReconRequest):
     task = asyncio.create_task(_run())
     _active_scans[scan_id] = task
 
-    return {"scan_id": scan_id, "status": "started", "target": req.target_url,
-            "mode": req.mode}
+    return {"scan_id": scan_id, "status": "started", "target": req.target_url, "mode": req.mode}
 
 
 @router.get("/status/{scan_id}")
@@ -104,7 +101,8 @@ async def get_recon_status(scan_id: str) -> ReconStatusResponse:
     return ReconStatusResponse(
         scan_id=scan_id,
         status="running" if scan_id in _active_scans and not _active_scans[scan_id].done() else "completed",
-        **stats)
+        **stats,
+    )
 
 
 @router.post("/stop/{scan_id}")
@@ -121,6 +119,7 @@ async def stop_recon(scan_id: str):
 async def list_scans(limit: int = Query(20, le=100)):
     """List recent scans."""
     from backend.core.database import db_manager
+
     rows = await db_manager.list_recon_runs(limit=limit)
     return {"scans": rows}
 
@@ -129,6 +128,7 @@ async def list_scans(limit: int = Query(20, le=100)):
 async def get_entities(scan_id: str, kind: str = "", limit: int = Query(100, le=1000)):
     """Get entities discovered in a scan."""
     from backend.core.database import db_manager
+
     entities = await db_manager.get_recon_entities(scan_id=scan_id, kind=kind, limit=limit)
     return {"scan_id": scan_id, "count": len(entities), "entities": entities}
 
@@ -137,6 +137,7 @@ async def get_entities(scan_id: str, kind: str = "", limit: int = Query(100, le=
 async def get_relationships(scan_id: str, limit: int = Query(200, le=1000)):
     """Get entity relationships for a scan."""
     from backend.core.database import db_manager
+
     rels = await db_manager.get_recon_relationships(scan_id=scan_id, limit=limit)
     return {"scan_id": scan_id, "count": len(rels), "relationships": rels}
 
@@ -144,10 +145,8 @@ async def get_relationships(scan_id: str, limit: int = Query(200, le=1000)):
 @router.post("/export")
 async def export_results(req: ExportRequest):
     """Export scan results in various formats."""
-    from backend.agents.alpha_recon.exporters import (
-        HackerOneExporter, MarkdownReportExporter, SARIFExporter)
-    from backend.agents.alpha_recon.graph_exporters import (
-        MaltegoExporter, Neo4jExporter, STIXExporter)
+    from backend.agents.alpha_recon.exporters import HackerOneExporter, MarkdownReportExporter, SARIFExporter
+    from backend.agents.alpha_recon.graph_exporters import MaltegoExporter, Neo4jExporter, STIXExporter
     from backend.core.database import db_manager
 
     # Load entities from DB
@@ -156,17 +155,21 @@ async def export_results(req: ExportRequest):
 
     # Build ParsedEntity list from DB rows
     from backend.parsers.recon.base import ParsedEntity
+
     parsed = []
     for e in entities:
-        parsed.append(ParsedEntity(
-            kind=e.get("kind", ""),
-            label=e.get("label", ""),
-            confidence=e.get("confidence", 0.0),
-            source_tool=e.get("source_tool", ""),
-            phase=e.get("phase", ""),
-            scan_id=req.scan_id,
-            id=e.get("id", ""),
-            properties=e.get("properties", {})))
+        parsed.append(
+            ParsedEntity(
+                kind=e.get("kind", ""),
+                label=e.get("label", ""),
+                confidence=e.get("confidence", 0.0),
+                source_tool=e.get("source_tool", ""),
+                phase=e.get("phase", ""),
+                scan_id=req.scan_id,
+                id=e.get("id", ""),
+                properties=e.get("properties", {}),
+            )
+        )
 
     base_dir = Path("data/scans") / req.scan_id / "exports"
 
@@ -181,15 +184,14 @@ async def export_results(req: ExportRequest):
 
     handler = format_handlers.get(req.format)
     if not handler:
-        raise HTTPException(400, f"Unknown format: {req.format}. "
-                            f"Supported: {', '.join(format_handlers.keys())}")
+        raise HTTPException(400, f"Unknown format: {req.format}. Supported: {', '.join(format_handlers.keys())}")
 
     output_path = handler()
-    return {"scan_id": req.scan_id, "format": req.format,
-            "path": str(output_path), "status": "exported"}
+    return {"scan_id": req.scan_id, "format": req.format, "path": str(output_path), "status": "exported"}
 
 
 # ── WebSocket Live Feed ──────────────────────────────────────
+
 
 @router.websocket("/live/{scan_id}")
 async def live_feed(websocket: WebSocket, scan_id: str):
@@ -201,18 +203,15 @@ async def live_feed(websocket: WebSocket, scan_id: str):
         # Send initial stats if available
         stats = recon_live_feed.get_scan_stats(scan_id)
         if stats:
-            await websocket.send_json({
-                "type": "initial_stats", "scan_id": scan_id,
-                "data": stats})
+            await websocket.send_json({"type": "initial_stats", "scan_id": scan_id, "data": stats})
 
         while True:
             try:
                 message = await asyncio.wait_for(queue.get(), timeout=30.0)
                 await websocket.send_json(message)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send heartbeat
-                await websocket.send_json({
-                    "type": "heartbeat", "scan_id": scan_id})
+                await websocket.send_json({"type": "heartbeat", "scan_id": scan_id})
     except WebSocketDisconnect:
         logger.info(f"WebSocket client disconnected from scan {scan_id}")
     except Exception as exc:

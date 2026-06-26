@@ -19,13 +19,13 @@ This module orchestrates that pass using the components already built:
   - MemoryManager providers (tool/agent reliability)
 The system learns from both success and failure (Architecture §13.3).
 """
+
 from __future__ import annotations
 
 import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
 
 from backend.skills.creator import create_and_evaluate
 
@@ -33,29 +33,41 @@ logger = logging.getLogger("vigilagent.skills.learning_loop")
 
 # Mistake categories (Architecture §14.1).
 MISTAKE_CATEGORIES = {
-    "false_positive", "missed_vulnerability", "bad_tool_choice", "bad_payload_vector",
-    "bad_parser", "bad_timeout", "bad_rate_limit", "bad_browser_strategy",
-    "bad_auth_session", "bad_llm_assumption", "duplicate_work", "scope_block",
-    "worker_crash", "report_quality",
+    "false_positive",
+    "missed_vulnerability",
+    "bad_tool_choice",
+    "bad_payload_vector",
+    "bad_parser",
+    "bad_timeout",
+    "bad_rate_limit",
+    "bad_browser_strategy",
+    "bad_auth_session",
+    "bad_llm_assumption",
+    "duplicate_work",
+    "scope_block",
+    "worker_crash",
+    "report_quality",
 }
 
 
 @dataclass
 class ScanOutcome:
     """Inputs to the learning pass (Architecture §13.3)."""
+
     scan_id: str
     decisions: list[dict] = field(default_factory=list)
-    tool_runs: list[dict] = field(default_factory=list)      # {tool, success}
+    tool_runs: list[dict] = field(default_factory=list)  # {tool, success}
     findings: list[dict] = field(default_factory=list)
     false_positives: list[dict] = field(default_factory=list)
     failures: list[dict] = field(default_factory=list)
-    agent_runs: list[dict] = field(default_factory=list)     # {agent, success}
+    agent_runs: list[dict] = field(default_factory=list)  # {agent, success}
     successful_techniques: list[dict] = field(default_factory=list)
 
 
 @dataclass
 class LearningOutputs:
     """Results of the learning pass (Architecture §13.3 learning outputs)."""
+
     new_candidate_skills: list[str] = field(default_factory=list)
     tool_reliability_deltas: dict[str, float] = field(default_factory=dict)
     agent_routing_deltas: dict[str, float] = field(default_factory=dict)
@@ -74,6 +86,7 @@ class PerScanLearningLoop:
         if self._db is None:
             try:
                 from backend.core.scan_state_db import scan_state_db as _db
+
                 self._db = _db
             except Exception as exc:
                 logger.debug("[LearningLoop] scan_state_db unavailable: %s", exc)
@@ -81,6 +94,7 @@ class PerScanLearningLoop:
         if self._mm is None:
             try:
                 from backend.core.memory_manager import memory_manager as _mm
+
                 self._mm = _mm
             except Exception as exc:
                 logger.debug("[LearningLoop] memory_manager unavailable: %s", exc)
@@ -92,20 +106,24 @@ class PerScanLearningLoop:
         §14.1 mistake categories so they can drive routing/skill revision."""
         mistakes: list[dict] = []
         for fp in outcome.false_positives:
-            mistakes.append({
-                "category": "false_positive",
-                "agent": fp.get("agent", ""),
-                "detail": fp.get("reason", ""),
-            })
+            mistakes.append(
+                {
+                    "category": "false_positive",
+                    "agent": fp.get("agent", ""),
+                    "detail": fp.get("reason", ""),
+                }
+            )
         for fail in outcome.failures:
             cat = fail.get("category") or fail.get("type") or "bad_tool_choice"
             if cat not in MISTAKE_CATEGORIES:
                 cat = "bad_tool_choice"
-            mistakes.append({
-                "category": cat,
-                "agent": fail.get("agent", ""),
-                "detail": fail.get("detail") or fail.get("error", ""),
-            })
+            mistakes.append(
+                {
+                    "category": cat,
+                    "agent": fail.get("agent", ""),
+                    "detail": fail.get("detail") or fail.get("error", ""),
+                }
+            )
         return mistakes
 
     async def run(self, outcome: ScanOutcome) -> LearningOutputs:
@@ -178,6 +196,7 @@ class PerScanLearningLoop:
         #    shadow evaluation — not applied to runtime automatically here).
         try:
             from backend.core.self_improvement_engine import self_improvement_engine
+
             staged = self_improvement_engine.apply_learning(scan_id=outcome.scan_id, learning_outputs=out)
             if staged:
                 out.lessons.append(f"staged {len(staged)} self-improvement change(s)")
@@ -205,9 +224,13 @@ class PerScanLearningLoop:
             except Exception as exc:
                 logger.debug("[LearningLoop] could not persist learning update: %s", exc)
 
-        logger.info("[LearningLoop] scan %s: %d new skills, %d tool deltas, %d agent deltas",
-                    outcome.scan_id, len(out.new_candidate_skills),
-                    len(out.tool_reliability_deltas), len(out.agent_routing_deltas))
+        logger.info(
+            "[LearningLoop] scan %s: %d new skills, %d tool deltas, %d agent deltas",
+            outcome.scan_id,
+            len(out.new_candidate_skills),
+            len(out.tool_reliability_deltas),
+            len(out.agent_routing_deltas),
+        )
         return out
 
 

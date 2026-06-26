@@ -11,9 +11,9 @@ Usage:
     metrics.record_scan_duration(120.5)
 """
 
-import time
 import threading
-from typing import Dict, Any
+import time
+from typing import Any
 
 
 class _Counter:
@@ -92,15 +92,13 @@ class _Histogram:
                     return
             self._bucket_counts[-1] += 1
 
-    def get(self) -> Dict[str, Any]:
+    def get(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "count": self._count,
                 "sum": round(self._sum, 4),
-                "buckets": {
-                    f"le_{b}": c
-                    for b, c in zip(self.BUCKETS, self._bucket_counts[:-1])
-                } | {"le_inf": self._bucket_counts[-1]},
+                "buckets": {f"le_{b}": c for b, c in zip(self.BUCKETS, self._bucket_counts[:-1])}
+                | {"le_inf": self._bucket_counts[-1]},
             }
 
 
@@ -117,7 +115,9 @@ class VigilagentMetrics:
         self.redis_pool_active = _Gauge("vigilagent_redis_pool_active", "In-use Redis connections")
         self.redis_pool_idle = _Gauge("vigilagent_redis_pool_idle", "Idle Redis connections in pool")
         self.redis_pool_max = _Gauge("vigilagent_redis_pool_max", "Max Redis connections configured")
-        self.redis_pool_overflow_total = _Counter("vigilagent_redis_pool_overflow_total", "Pool overflow events (connections exceeded max)")
+        self.redis_pool_overflow_total = _Counter(
+            "vigilagent_redis_pool_overflow_total", "Pool overflow events (connections exceeded max)"
+        )
 
         # --- WebSocket ---
         self.ws_ui_connections = _Gauge("vigilagent_ws_ui_connections", "Active UI WebSocket connections")
@@ -136,13 +136,19 @@ class VigilagentMetrics:
         self.agents_active = _Gauge("vigilagent_agents_active", "Currently active agents")
         self.agent_tasks_total = _Counter("vigilagent_agent_tasks_total", "Total agent tasks executed")
         self.agent_task_errors_total = _Counter("vigilagent_agent_task_errors_total", "Agent task errors")
-        self.event_handler_errors_total = _Counter("vigilagent_event_handler_errors_total", "Event bus handler failures (dead letters)")
+        self.event_handler_errors_total = _Counter(
+            "vigilagent_event_handler_errors_total", "Event bus handler failures (dead letters)"
+        )
         self.agent_restart_total = _Counter("vigilagent_agent_restart_total", "Agent restart attempts (zombie sweep)")
 
         # --- Docker ---
-        self.docker_probe_duration_seconds = _Histogram("vigilagent_docker_probe_seconds", "Docker readiness probe duration")
+        self.docker_probe_duration_seconds = _Histogram(
+            "vigilagent_docker_probe_seconds", "Docker readiness probe duration"
+        )
         self.docker_ready = _Gauge("vigilagent_docker_ready", "1 if Docker daemon is reachable")
-        self.docker_tools_available = _Gauge("vigilagent_docker_tools_available", "Number of Docker recon tools available")
+        self.docker_tools_available = _Gauge(
+            "vigilagent_docker_tools_available", "Number of Docker recon tools available"
+        )
 
         # --- Vulnerabilities ---
         self.vulns_confirmed_total = _Counter("vigilagent_vulns_confirmed_total", "Total confirmed vulnerabilities")
@@ -187,20 +193,32 @@ class VigilagentMetrics:
 
         all_metrics = [
             # Gauges
-            self.redis_connected, self.redis_pool_size,
-            self.redis_pool_active, self.redis_pool_idle, self.redis_pool_max,
-            self.ws_ui_connections, self.ws_spy_connections,
-            self.scans_active, self.agents_active,
-            self.docker_ready, self.docker_tools_available,
+            self.redis_connected,
+            self.redis_pool_size,
+            self.redis_pool_active,
+            self.redis_pool_idle,
+            self.redis_pool_max,
+            self.ws_ui_connections,
+            self.ws_spy_connections,
+            self.scans_active,
+            self.agents_active,
+            self.docker_ready,
+            self.docker_tools_available,
             # Counters
-            self.redis_reconnect_total, self.redis_pool_overflow_total,
-            self.ws_messages_sent_total, self.ws_send_errors_total,
-            self.scans_started_total, self.scans_completed_total,
-            self.scans_failed_total, self.agent_tasks_total,
-            self.agent_task_errors_total, self.agent_restart_total,
+            self.redis_reconnect_total,
+            self.redis_pool_overflow_total,
+            self.ws_messages_sent_total,
+            self.ws_send_errors_total,
+            self.scans_started_total,
+            self.scans_completed_total,
+            self.scans_failed_total,
+            self.agent_tasks_total,
+            self.agent_task_errors_total,
+            self.agent_restart_total,
             self.vulns_confirmed_total,
             self.event_handler_errors_total,
-            self.llm_calls_total, self.llm_errors_total,
+            self.llm_calls_total,
+            self.llm_errors_total,
             self.circuit_breaker_trips_total,
         ] + list(self.vulns_by_severity.values())
 
@@ -221,8 +239,12 @@ class VigilagentMetrics:
                 lines.append("")
 
         # Histograms
-        for h in [self.scan_duration_seconds, self.redis_latency_ms,
-                   self.docker_probe_duration_seconds, self.llm_latency_seconds]:
+        for h in [
+            self.scan_duration_seconds,
+            self.redis_latency_ms,
+            self.docker_probe_duration_seconds,
+            self.llm_latency_seconds,
+        ]:
             lines.append(f"# HELP {h.name} {h.help}")
             lines.append(f"# TYPE {h.name} histogram")
             data = h.get()

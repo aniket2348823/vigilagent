@@ -7,15 +7,18 @@ These tools emit one URL per line. We extract:
 - Parameters from query strings
 - Path patterns for wordlist enrichment
 """
+
 from __future__ import annotations
 
 import re
 from collections import Counter
-from pathlib import Path
-from urllib.parse import urlparse, parse_qsl
+from typing import TYPE_CHECKING
+from urllib.parse import parse_qsl, urlparse
 
-from backend.parsers.recon.base import ParsedEntity, safe_lines, extract_host
+from backend.parsers.recon.base import ParsedEntity, extract_host, safe_lines
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Path classification patterns
 _SENSITIVE_PATTERNS = {
@@ -87,26 +90,30 @@ def parse_url_lines(path: Path | str) -> list[ParsedEntity]:
             props["parameters"] = [{"name": n, "value": v} for n, v in params]
             props["param_count"] = len(params)
 
-        entities.append(ParsedEntity(
-            kind="historical_url",
-            label=url,
-            confidence=0.7,
-            properties=props,
-            source_tool="url_lines",
-            phase="passive_intelligence",
-        ))
+        entities.append(
+            ParsedEntity(
+                kind="historical_url",
+                label=url,
+                confidence=0.7,
+                properties=props,
+                source_tool="url_lines",
+                phase="passive_intelligence",
+            )
+        )
 
         # Emit subdomain entity
         if host and host not in seen_hosts:
             seen_hosts.add(host)
-            entities.append(ParsedEntity(
-                kind="subdomain",
-                label=host,
-                confidence=0.6,
-                properties={"discovered_via": "historical_url"},
-                source_tool="url_lines",
-                phase="passive_intelligence",
-            ))
+            entities.append(
+                ParsedEntity(
+                    kind="subdomain",
+                    label=host,
+                    confidence=0.6,
+                    properties={"discovered_via": "historical_url"},
+                    source_tool="url_lines",
+                    phase="passive_intelligence",
+                )
+            )
 
     return entities
 
@@ -120,14 +127,16 @@ def extract_subdomains_from_urls(path: Path | str) -> list[ParsedEntity]:
         host = extract_host(line.strip())
         if host and host not in seen:
             seen.add(host)
-            entities.append(ParsedEntity(
-                kind="subdomain",
-                label=host,
-                confidence=0.6,
-                properties={"discovered_via": "historical_url"},
-                source_tool="url_extraction",
-                phase="passive_intelligence",
-            ))
+            entities.append(
+                ParsedEntity(
+                    kind="subdomain",
+                    label=host,
+                    confidence=0.6,
+                    properties={"discovered_via": "historical_url"},
+                    source_tool="url_extraction",
+                    phase="passive_intelligence",
+                )
+            )
 
     return entities
 
@@ -150,19 +159,21 @@ def extract_params_from_urls(path: Path | str) -> list[ParsedEntity]:
 
     entities: list[ParsedEntity] = []
     for name, hosts in param_hosts.items():
-        entities.append(ParsedEntity(
-            kind="parameter",
-            label=name,
-            confidence=0.65,
-            properties={
-                "hosts": sorted(hosts),
-                "host_count": len(hosts),
-                "sample_values": param_values.get(name, []),
-                "location": "query",
-            },
-            source_tool="param_extraction",
-            phase="passive_intelligence",
-        ))
+        entities.append(
+            ParsedEntity(
+                kind="parameter",
+                label=name,
+                confidence=0.65,
+                properties={
+                    "hosts": sorted(hosts),
+                    "host_count": len(hosts),
+                    "sample_values": param_values.get(name, []),
+                    "location": "query",
+                },
+                source_tool="param_extraction",
+                phase="passive_intelligence",
+            )
+        )
 
     return entities
 
@@ -186,19 +197,21 @@ def classify_historical_paths(path: Path | str) -> list[ParsedEntity]:
 
     entities: list[ParsedEntity] = []
     for category, count in path_categories.most_common():
-        entities.append(ParsedEntity(
-            kind="path_pattern",
-            label=f"historical_{category}",
-            confidence=0.6,
-            properties={
-                "category": category,
-                "count": count,
-                "risk": _RISK_MAP.get(category, "LOW"),
-                "sample_urls": category_urls.get(category, []),
-            },
-            source_tool="path_classification",
-            phase="passive_intelligence",
-        ))
+        entities.append(
+            ParsedEntity(
+                kind="path_pattern",
+                label=f"historical_{category}",
+                confidence=0.6,
+                properties={
+                    "category": category,
+                    "count": count,
+                    "risk": _RISK_MAP.get(category, "LOW"),
+                    "sample_urls": category_urls.get(category, []),
+                },
+                source_tool="path_classification",
+                phase="passive_intelligence",
+            )
+        )
 
     return entities
 

@@ -7,17 +7,19 @@ Polls for interactions and correlates them back to source payloads.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
 import time
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from backend.agents.alpha_recon.models import stable_id
-from backend.core.config import settings
 from backend.core.database import db_manager
 from backend.core.queue import command_lane
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger("alpha.interactsh")
 
@@ -89,10 +91,8 @@ class InteractshAdapter:
         self._running = False
         if self._poll_task:
             self._poll_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._poll_task
-            except asyncio.CancelledError:
-                pass
         return self._interactions
 
     async def _poll_interactions(self, proc):
@@ -109,7 +109,7 @@ class InteractshAdapter:
                     await self._process_interaction(interaction)
                 except json.JSONDecodeError:
                     continue
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except (TimeoutError, asyncio.CancelledError):
             pass
         except Exception as exc:
             logger.warning(f"[INTERACTSH] Poll error: {exc}")

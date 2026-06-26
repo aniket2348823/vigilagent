@@ -24,9 +24,11 @@ Scrapling features deeply integrated:
   - LinkExtractor            -> Link discovery
   - TextHandler              -> Enhanced text processing
 """
+
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -35,28 +37,38 @@ import shutil
 import tempfile
 import time
 import uuid
-import base64
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from urllib.parse import urlparse, parse_qsl, urljoin
+from typing import TYPE_CHECKING, Any, Union
+from urllib.parse import parse_qsl, urljoin, urlparse
 
 from backend.core.config import settings
-_CHROMIUM_PATH = os.getenv('OPENCLAW_CHROMIUM_PATH') or None
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+_CHROMIUM_PATH = os.getenv("OPENCLAW_CHROMIUM_PATH") or None
 
 logger = logging.getLogger(__name__)
 
 # --- Scrapling lazy imports ---
 try:
-    from scrapling.fetchers import (
-        Fetcher, AsyncFetcher, FetcherSession,
-        DynamicFetcher, StealthyFetcher,
-        AsyncDynamicSession, AsyncStealthySession, DynamicSession, StealthySession,
-    )
+    from scrapling.core.custom_types import AttributesHandler, TextHandler, TextHandlers
     from scrapling.engines.toolbelt import ProxyRotator
-    from scrapling.parser import Selector, Selectors, Adaptor, Adaptors, SequenceMatcher
-    from scrapling.core.custom_types import TextHandler, TextHandlers, AttributesHandler
+    from scrapling.fetchers import (
+        AsyncDynamicSession,
+        AsyncFetcher,
+        AsyncStealthySession,
+        DynamicFetcher,
+        DynamicSession,
+        Fetcher,
+        FetcherSession,
+        StealthyFetcher,
+        StealthySession,
+    )
+    from scrapling.parser import Adaptor, Adaptors, Selector, Selectors, SequenceMatcher
+
     _SCRAPLING_AVAILABLE = True
 except ImportError:
     _SCRAPLING_AVAILABLE = False
@@ -68,15 +80,30 @@ except ImportError:
 
 try:
     from scrapling.spiders import (
-        Spider as ScraplingBaseSpider,
         CrawlerEngine as ScraplingCrawlerEngine,
-        SessionManager as ScraplingSessionManager,
-        LinkExtractor as ScraplingLinkExtractor,
-        Request as ScraplingRequest,
+    )
+    from scrapling.spiders import (
         CrawlSpider as ScraplingCrawlSpider,
-        SitemapSpider as ScraplingSitemapSpider,
+    )
+    from scrapling.spiders import (
+        LinkExtractor as ScraplingLinkExtractor,
+    )
+    from scrapling.spiders import (
+        Request as ScraplingRequest,
+    )
+    from scrapling.spiders import (
         Scheduler as ScraplingScheduler,
     )
+    from scrapling.spiders import (
+        SessionManager as ScraplingSessionManager,
+    )
+    from scrapling.spiders import (
+        SitemapSpider as ScraplingSitemapSpider,
+    )
+    from scrapling.spiders import (
+        Spider as ScraplingBaseSpider,
+    )
+
     _SCRAPLING_SPIDERS_AVAILABLE = True
 except ImportError:
     _SCRAPLING_SPIDERS_AVAILABLE = False
@@ -121,19 +148,25 @@ _SECURITY_HEADERS = (
     "permissions-policy",
 )
 
+
 class ScrapplingUnavailable(RuntimeError):
     """Raised when no browser engine can serve the request."""
+
     pass
+
 
 class PinchTabUnavailable(RuntimeError):
     """Raised when the PinchTab control plane is offline."""
+
     pass
+
 
 # Backward compatibility
 class BrowserEngine(Enum):
     OPENCLAW = "openclaw"
     PINCHTAB = "pinchtab"
     AUTO = "auto"
+
 
 class ScrapplingEngine(Enum):
     PLAYWRIGHT = "playwright"
@@ -145,7 +178,7 @@ class ScrapplingEngine(Enum):
 
 class ScraplingSpider:
     """Pentest spider deeply integrated with Scrapling spider framework.
-    
+
     Uses Scrapling Spider, CrawlerEngine, Request, SessionManager for:
     - Concurrent crawling with throttling
     - Proxy rotation via ProxyRotator
@@ -153,17 +186,23 @@ class ScraplingSpider:
     - Per-domain rate limiting
     - robots.txt compliance
     """
-    def __init__(self, start_urls: List[str], parse_callback: Optional[Callable] = None,
-                 scan_id: str = "", crawl_dir: str = "./crawl_checkpoints",
-                 proxy_list: Optional[List[str]] = None,
-                 allowed_domains: Optional[List[str]] = None):
+
+    def __init__(
+        self,
+        start_urls: list[str],
+        parse_callback: Callable | None = None,
+        scan_id: str = "",
+        crawl_dir: str = "./crawl_checkpoints",
+        proxy_list: list[str] | None = None,
+        allowed_domains: list[str] | None = None,
+    ):
         self.start_urls = start_urls
         self.parse_callback = parse_callback
         self.scan_id = scan_id
         self.crawl_dir = crawl_dir
         self.proxy_list = proxy_list or []
         self.allowed_domains = allowed_domains or []
-        self._entities: List[Any] = []
+        self._entities: list[Any] = []
         self._spider: Any = None
         self._proxy_rotator: Any = None
 
@@ -186,6 +225,7 @@ class ScraplingSpider:
 
             def configure_sessions(self, manager):
                 from scrapling.fetchers import FetcherSession
+
                 session = FetcherSession(
                     impersonate="chrome",
                     retries=2,
@@ -195,6 +235,7 @@ class ScraplingSpider:
                 if parent.proxy_list:
                     try:
                         from scrapling.engines.toolbelt import ProxyRotator
+
                         parent._proxy_rotator = ProxyRotator(parent.proxy_list)
                         session.proxies = parent._proxy_rotator
                     except Exception as e:
@@ -219,7 +260,7 @@ class ScraplingSpider:
                         scripts = [s.attrib.get("src", "") for s in sel.css("script[src]")]
                     else:
                         text = response.text or ""
-                        links = [a.get('href', '') for a in re.findall(r'<a[^>]+', text)]
+                        links = [a.get("href", "") for a in re.findall(r"<a[^>]+", text)]
                         forms = [m.group(1) for m in re.finditer(r'action=([^">]+)', text)]
                         scripts = [m.group(1) for m in re.finditer(r'src=([^">]+)', text)]
 
@@ -267,6 +308,7 @@ class ScraplingSpider:
         """Fallback crawl mode when Scrapling is not available."""
         logger.info("[ScraplingSpider] Running lightweight fallback crawl")
         import aiohttp
+
         async with aiohttp.ClientSession() as session:
             for url in self.start_urls:
                 try:
@@ -275,8 +317,12 @@ class ScraplingSpider:
                         links = [m[1] for m in re.findall(r'href=["\']([^"\']+)["\']', text)]
                         parsed_url = urlparse(url)
                         base_uri = f"{parsed_url.scheme}://{parsed_url.netloc}"
-                        resolved_links = [urljoin(base_uri, l) if l.startswith("/") else l for l in links if l.startswith(("/", "http"))]
-                        
+                        resolved_links = [
+                            urljoin(base_uri, l) if l.startswith("/") else l
+                            for l in links
+                            if l.startswith(("/", "http"))
+                        ]
+
                         result_data = {
                             "url": url,
                             "status_code": resp.status,
@@ -308,8 +354,9 @@ class ScraplingSpider:
             await self._lightweight_crawl()
 
 
-JSONDict = Dict[str, Any]
-PinchTabPayload = Union[JSONDict, List[Any], str, bytes]
+JSONDict = dict[str, Any]
+PinchTabPayload = Union[JSONDict, list[Any], str, bytes]
+
 
 class ScrapplingPinchTabClient:
     """HTTP client for the PinchTab browser control plane.
@@ -327,10 +374,10 @@ class ScrapplingPinchTabClient:
     _logged_unavailable: bool = False
 
     def __init__(self, base_url: str | None = None, timeout: int = 30):
-        self.base_url = (base_url or getattr(settings, "PINCHTAB_BASE_URL",
-                                              "http://127.0.0.1:9867")).rstrip("/")
+        self.base_url = (base_url or getattr(settings, "PINCHTAB_BASE_URL", "http://127.0.0.1:9867")).rstrip("/")
         try:
             import aiohttp
+
             self.timeout = aiohttp.ClientTimeout(total=timeout)
             self._probe_timeout = aiohttp.ClientTimeout(total=2)
             self._aiohttp_available = True
@@ -366,6 +413,7 @@ class ScrapplingPinchTabClient:
             return False
         try:
             import aiohttp
+
             async with aiohttp.ClientSession(timeout=self._probe_timeout) as session:
                 async with session.get(f"{self.base_url}/health") as resp:
                     cls._available = 200 <= resp.status < 500
@@ -373,7 +421,8 @@ class ScrapplingPinchTabClient:
             cls._available = False
             logger.debug(
                 "[PinchTabClient] availability probe at %s failed (%s)",
-                self.base_url, type(exc).__name__,
+                self.base_url,
+                type(exc).__name__,
             )
             cls._logged_unavailable = True
         else:
@@ -391,11 +440,9 @@ class ScrapplingPinchTabClient:
         return await self._request_json("GET", "/health")
 
     async def create_profile(self, name: str, description: str = "") -> JSONDict:
-        return await self._request_json("POST", "/profiles",
-                                        json={"name": name, "description": description})
+        return await self._request_json("POST", "/profiles", json={"name": name, "description": description})
 
-    async def start_instance(self, profile_id: str | None = None,
-                             *, mode: str = "headless") -> JSONDict:
+    async def start_instance(self, profile_id: str | None = None, *, mode: str = "headless") -> JSONDict:
         payload: JSONDict = {"mode": mode}
         if profile_id:
             payload["profileId"] = profile_id
@@ -404,29 +451,26 @@ class ScrapplingPinchTabClient:
     async def stop_instance(self, instance_id: str) -> JSONDict:
         return await self._request_json("POST", f"/instances/{instance_id}/stop")
 
-    async def navigate(self, url: str, *, tab_id: str | None = None,
-                       wait_for: str = "networkidle") -> JSONDict:
+    async def navigate(self, url: str, *, tab_id: str | None = None, wait_for: str = "networkidle") -> JSONDict:
         payload: JSONDict = {"url": url, "waitFor": wait_for, "blockMedia": True}
         if tab_id:
             payload["tabId"] = tab_id
         return await self._request_json("POST", "/navigate", json=payload)
 
     async def snapshot(self, tab_id: str, *, max_tokens: int = 1200) -> PinchTabPayload:
-        return await self._request("GET",
-            f"/tabs/{tab_id}/snapshot?interactive=true&compact=true&maxTokens={max_tokens}")
+        return await self._request(
+            "GET", f"/tabs/{tab_id}/snapshot?interactive=true&compact=true&maxTokens={max_tokens}"
+        )
 
     async def text(self, tab_id: str, *, max_chars: int = 20000) -> PinchTabPayload:
-        return await self._request("GET",
-            f"/tabs/{tab_id}/text?format=text&maxChars={max_chars}")
+        return await self._request("GET", f"/tabs/{tab_id}/text?format=text&maxChars={max_chars}")
 
     async def network(self, tab_id: str, *, limit: int = 200) -> JSONDict:
         return await self._request_json("GET", f"/tabs/{tab_id}/network?limit={limit}")
 
-    async def network_detail(self, tab_id: str, request_id: str,
-                             *, body: bool = False) -> JSONDict:
+    async def network_detail(self, tab_id: str, request_id: str, *, body: bool = False) -> JSONDict:
         include_body = "true" if body else "false"
-        return await self._request_json("GET",
-            f"/tabs/{tab_id}/network/{request_id}?body={include_body}")
+        return await self._request_json("GET", f"/tabs/{tab_id}/network/{request_id}?body={include_body}")
 
     async def console(self, tab_id: str, *, limit: int = 100) -> JSONDict:
         return await self._request_json("GET", f"/console?tabId={tab_id}&limit={limit}")
@@ -438,8 +482,9 @@ class ScrapplingPinchTabClient:
         return await self._request_json("GET", f"/tabs/{tab_id}/cookies")
 
     async def wait_for_load(self, tab_id: str, *, timeout_ms: int = 30000) -> JSONDict:
-        return await self._request_json("POST", f"/tabs/{tab_id}/wait",
-                                        json={"load": "networkidle", "timeout": timeout_ms})
+        return await self._request_json(
+            "POST", f"/tabs/{tab_id}/wait", json={"load": "networkidle", "timeout": timeout_ms}
+        )
 
     async def action(
         self,
@@ -494,12 +539,12 @@ class ScrapplingPinchTabClient:
         if not self._aiohttp_available:
             raise PinchTabUnavailable("aiohttp not installed")
         import aiohttp
+
         cls = type(self)
         if cls._available is False:
             now = asyncio.get_event_loop().time()
             if (now - cls._last_check) < cls._recheck_interval:
-                raise PinchTabUnavailable(
-                    f"PinchTab control plane offline at {self.base_url}")
+                raise PinchTabUnavailable(f"PinchTab control plane offline at {self.base_url}")
 
         try:
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
@@ -509,8 +554,7 @@ class ScrapplingPinchTabClient:
                     content_type = resp.headers.get("content-type", "")
                     if "application/json" in content_type:
                         return await resp.json()
-                    if (content_type.startswith("image/") or
-                            content_type == "application/octet-stream"):
+                    if content_type.startswith("image/") or content_type == "application/octet-stream":
                         return await resp.read()
                     return await resp.text()
         except aiohttp.ClientConnectorError as exc:
@@ -520,23 +564,23 @@ class ScrapplingPinchTabClient:
                 logger.info(
                     "[PinchTabClient] control plane offline at %s (%s); "
                     "browser stack will use OpenClaw/Playwright instead",
-                    self.base_url, type(exc).__name__,
+                    self.base_url,
+                    type(exc).__name__,
                 )
                 cls._logged_unavailable = True
-            raise PinchTabUnavailable(
-                f"PinchTab control plane offline at {self.base_url}") from exc
-        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError) as exc:
+            raise PinchTabUnavailable(f"PinchTab control plane offline at {self.base_url}") from exc
+        except (TimeoutError, aiohttp.ServerTimeoutError) as exc:
             cls._available = False
             cls._last_check = asyncio.get_event_loop().time()
             if not cls._logged_unavailable:
                 logger.info(
                     "[PinchTabClient] control plane timed out at %s (%s); "
                     "browser stack will use OpenClaw/Playwright instead",
-                    self.base_url, type(exc).__name__,
+                    self.base_url,
+                    type(exc).__name__,
                 )
                 cls._logged_unavailable = True
-            raise PinchTabUnavailable(
-                f"PinchTab control plane timed out at {self.base_url}") from exc
+            raise PinchTabUnavailable(f"PinchTab control plane timed out at {self.base_url}") from exc
 
 
 class ScrapplingPinchTabEngine:
@@ -556,7 +600,8 @@ class ScrapplingPinchTabEngine:
         except Exception as exc:
             logger.info(
                 "[PinchTabEngine] availability probe failed: %s: %s",
-                type(exc).__name__, str(exc)[:120],
+                type(exc).__name__,
+                str(exc)[:120],
             )
             self._available = False
 
@@ -576,7 +621,7 @@ class ScrapplingPinchTabEngine:
         self._available = await self.client.is_available()
         return self._available
 
-    def _parse_with_scrapling(self, content: str) -> Optional[Selector]:
+    def _parse_with_scrapling(self, content: str) -> Selector | None:
         if _SCRAPLING_AVAILABLE and Selector is not None:
             try:
                 return Selector(content=content)
@@ -586,7 +631,7 @@ class ScrapplingPinchTabEngine:
 
     # ── public API ──────────────────────────────────────────────────────────
 
-    async def navigate(self, url: str) -> Dict[str, Any]:
+    async def navigate(self, url: str) -> dict[str, Any]:
         """Fast navigation to URL."""
         if not await self._ensure_available():
             return {"tab_id": None, "url": url, "success": False, "error": "pinchtab_offline"}
@@ -602,7 +647,7 @@ class ScrapplingPinchTabEngine:
             logger.debug("[PinchTabEngine] navigate(%s) failed: %s", url, exc)
             return {"tab_id": None, "url": url, "success": False, "error": str(exc)}
 
-    async def extract_endpoints_fast(self, url: str) -> List[str]:
+    async def extract_endpoints_fast(self, url: str) -> list[str]:
         """Fast endpoint extraction using Scrapling Selector with regex fallback."""
         if not await self._ensure_available():
             return []
@@ -647,7 +692,7 @@ class ScrapplingPinchTabEngine:
             logger.debug("[PinchTabEngine] extract_endpoints_fast failed: %s", exc)
             return []
 
-    async def extract_tokens(self, url: str) -> List[str]:
+    async def extract_tokens(self, url: str) -> list[str]:
         """Fast token extraction (JWT / Bearer / API keys)."""
         if not await self._ensure_available():
             return []
@@ -658,13 +703,11 @@ class ScrapplingPinchTabEngine:
             text = await self.client.text(self.last_tab_id)
             text_str = str(text)
             tokens: set[str] = set()
-            tokens.update(re.findall(
-                r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", text_str))
-            tokens.update(re.findall(
-                r"Bearer\s+([A-Za-z0-9_-]{20,})", text_str, re.IGNORECASE))
-            tokens.update(re.findall(
-                r"['\"]?api[_-]?key['\"]?\s*[:=]\s*['\"]([^'\"]{20,})['\"]",
-                text_str, re.IGNORECASE))
+            tokens.update(re.findall(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", text_str))
+            tokens.update(re.findall(r"Bearer\s+([A-Za-z0-9_-]{20,})", text_str, re.IGNORECASE))
+            tokens.update(
+                re.findall(r"['\"]?api[_-]?key['\"]?\s*[:=]\s*['\"]([^'\"]{20,})['\"]", text_str, re.IGNORECASE)
+            )
             return list(tokens)
         except PinchTabUnavailable:
             self._available = False
@@ -673,8 +716,7 @@ class ScrapplingPinchTabEngine:
             logger.debug("[PinchTabEngine] extract_tokens failed: %s", exc)
             return []
 
-    async def test_injection(self, url: str, payload: str,
-                             method: str = "GET") -> Dict[str, Any]:
+    async def test_injection(self, url: str, payload: str, method: str = "GET") -> dict[str, Any]:
         """Fast injection test — checks if payload is reflected in response."""
         if not await self._ensure_available():
             return {"reflected": False, "error": "pinchtab_offline"}
@@ -698,7 +740,7 @@ class ScrapplingPinchTabEngine:
         except Exception as exc:
             return {"reflected": False, "error": str(exc)}
 
-    async def analyze_dom(self, url: str) -> Dict[str, Any]:
+    async def analyze_dom(self, url: str) -> dict[str, Any]:
         """Analyze DOM structure using Scrapling Selector with regex fallback."""
         if not await self._ensure_available():
             return {}
@@ -726,13 +768,16 @@ class ScrapplingPinchTabEngine:
                 for b in sel.css("button"):
                     buttons.append({"text": b.text})
             else:
-                forms = [{"action": a} for a in re.findall(
-                    r'<form[^>]*action=["\']([^"\']+)["\']', text_str, re.IGNORECASE)]
-                inputs = [{"name": n, "type": t} for n, t in re.findall(
-                    r'<input[^>]*name=["\']([^"\']+)["\'][^>]*type=["\']([^"\']+)["\']',
-                    text_str, re.IGNORECASE)]
-                buttons = [{"text": b} for b in re.findall(
-                    r'<button[^>]*>([^<]+)</button>', text_str, re.IGNORECASE)]
+                forms = [
+                    {"action": a} for a in re.findall(r'<form[^>]*action=["\']([^"\']+)["\']', text_str, re.IGNORECASE)
+                ]
+                inputs = [
+                    {"name": n, "type": t}
+                    for n, t in re.findall(
+                        r'<input[^>]*name=["\']([^"\']+)["\'][^>]*type=["\']([^"\']+)["\']', text_str, re.IGNORECASE
+                    )
+                ]
+                buttons = [{"text": b} for b in re.findall(r"<button[^>]*>([^<]+)</button>", text_str, re.IGNORECASE)]
 
             return {
                 "forms": forms,
@@ -766,6 +811,7 @@ class ScrapplingPinchTabEngine:
         self.last_tab_id = None
         self.last_url = None
 
+
 PinchTabEngine = ScrapplingPinchTabEngine
 
 
@@ -775,13 +821,13 @@ class ScrapplingPlaywrightEngine:
     def __init__(self) -> None:
         self.client: Any = None
         self.workflow_engine: Any = None
-        self.active_contexts: Dict[str, Any] = {}
+        self.active_contexts: dict[str, Any] = {}
         self.current_page: Any = None
         self.current_context: Any = None
         self.last_init_error: str = ""
         self._playwright: Any = None
         self._browser: Any = None
-        self._network_log: List[Dict[str, Any]] = []
+        self._network_log: list[dict[str, Any]] = []
         self._init_lock = asyncio.Lock()
 
     async def initialize(self) -> bool:
@@ -792,10 +838,7 @@ class ScrapplingPlaywrightEngine:
             try:
                 from playwright.async_api import async_playwright
             except ImportError as exc:
-                self.last_init_error = (
-                    f"playwright_not_installed: {exc}. "
-                    "Install with: pip install playwright"
-                )
+                self.last_init_error = f"playwright_not_installed: {exc}. Install with: pip install playwright"
                 logger.warning(
                     "[ScrapplingPlaywrightEngine] Playwright Python package not installed: %s. "
                     "Run: pip install playwright",
@@ -806,14 +849,15 @@ class ScrapplingPlaywrightEngine:
                 self.last_init_error = f"playwright_import_failed: {type(exc).__name__}: {exc}"
                 logger.warning(
                     "[ScrapplingPlaywrightEngine] Playwright import failed (%s: %s); engine disabled",
-                    type(exc).__name__, exc,
+                    type(exc).__name__,
+                    exc,
                 )
                 return False
 
             try:
                 self._playwright = await async_playwright().start()
                 self._browser = await self._playwright.chromium.launch(
-            executable_path=_CHROMIUM_PATH,
+                    executable_path=_CHROMIUM_PATH,
                     headless=getattr(settings, "OPENCLAW_HEADLESS", True),
                     args=_STEALTH_LAUNCH_ARGS,
                 )
@@ -853,7 +897,8 @@ class ScrapplingPlaywrightEngine:
                     self.last_init_error = f"{type(exc).__name__}: {msg[:200]}"
                     logger.warning(
                         "[ScrapplingPlaywrightEngine] Chromium launch failed (%s: %s); engine disabled",
-                        type(exc).__name__, msg[:300],
+                        type(exc).__name__,
+                        msg[:300],
                     )
                 return False
 
@@ -868,7 +913,8 @@ class ScrapplingPlaywrightEngine:
         except Exception as exc:
             logger.info(
                 "[ScrapplingPlaywrightEngine] is_truly_available probe failed: %s: %s",
-                type(exc).__name__, str(exc)[:200],
+                type(exc).__name__,
+                str(exc)[:200],
             )
             return False
 
@@ -884,7 +930,7 @@ class ScrapplingPlaywrightEngine:
             "width": int(getattr(settings, "OPENCLAW_VIEWPORT_WIDTH", 1440) or 1440),
             "height": int(getattr(settings, "OPENCLAW_VIEWPORT_HEIGHT", 900) or 900),
         }
-        ctx_kwargs: Dict[str, Any] = {
+        ctx_kwargs: dict[str, Any] = {
             "viewport": viewport,
             "ignore_https_errors": True,
         }
@@ -904,13 +950,15 @@ class ScrapplingPlaywrightEngine:
 
         def _on_request(request):
             try:
-                self._network_log.append({
-                    "url": request.url,
-                    "method": request.method,
-                    "headers": dict(request.headers),
-                    "resource_type": request.resource_type,
-                    "post_data": request.post_data,
-                })
+                self._network_log.append(
+                    {
+                        "url": request.url,
+                        "method": request.method,
+                        "headers": dict(request.headers),
+                        "resource_type": request.resource_type,
+                        "post_data": request.post_data,
+                    }
+                )
             except Exception:
                 logger.debug("[_on_request] error", exc_info=True)
 
@@ -919,8 +967,7 @@ class ScrapplingPlaywrightEngine:
         self.current_page = page
         return context
 
-    async def navigate(self, url: str, *, stealth: bool = False,
-                       wait_for: str = "networkidle") -> Dict[str, Any]:
+    async def navigate(self, url: str, *, stealth: bool = False, wait_for: str = "networkidle") -> dict[str, Any]:
         """Navigate to URL, returning a structured result with success flag."""
         if not self._browser:
             raise RuntimeError("ScrapplingPlaywrightEngine not initialized")
@@ -941,8 +988,9 @@ class ScrapplingPlaywrightEngine:
                 "success": True,
             }
         except Exception as exc:
-            logger.info("[ScrapplingPlaywrightEngine] navigate(%s) failed: %s: %s",
-                        url, type(exc).__name__, str(exc)[:200])
+            logger.info(
+                "[ScrapplingPlaywrightEngine] navigate(%s) failed: %s: %s", url, type(exc).__name__, str(exc)[:200]
+            )
             return {
                 "context": self.current_context,
                 "page": page,
@@ -951,7 +999,7 @@ class ScrapplingPlaywrightEngine:
                 "error": f"{type(exc).__name__}: {exc}",
             }
 
-    async def extract_endpoints_deep(self, url: str) -> List[Dict[str, Any]]:
+    async def extract_endpoints_deep(self, url: str) -> list[dict[str, Any]]:
         """Deep endpoint extraction using Scrapling Selector DOM parsing and network interception."""
         result = await self.navigate(url)
         if not result.get("success"):
@@ -963,19 +1011,21 @@ class ScrapplingPlaywrightEngine:
         except Exception:
             logger.debug("[extract_endpoints_deep] error", exc_info=True)
 
-        endpoints: List[Dict[str, Any]] = []
+        endpoints: list[dict[str, Any]] = []
         seen: set[str] = set()
 
         for req in list(self._network_log):
             u = req.get("url") or ""
             if u and u not in seen:
                 seen.add(u)
-                endpoints.append({
-                    "url": u,
-                    "method": req.get("method", "GET"),
-                    "source": "network",
-                    "headers": req.get("headers", {}),
-                })
+                endpoints.append(
+                    {
+                        "url": u,
+                        "method": req.get("method", "GET"),
+                        "source": "network",
+                        "headers": req.get("headers", {}),
+                    }
+                )
 
         try:
             content = await page.content()
@@ -1031,12 +1081,12 @@ class ScrapplingPlaywrightEngine:
 
         return endpoints
 
-    async def execute_workflow(self, workflow: Dict[str, Any], scan_id: str) -> Dict[str, Any]:
+    async def execute_workflow(self, workflow: dict[str, Any], scan_id: str) -> dict[str, Any]:
         """Execute multi-step workflow."""
         if not self.current_page:
             await self._ensure_context()
         page = self.current_page
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         for step in workflow.get("steps", []):
             action = step.get("action")
@@ -1060,11 +1110,9 @@ class ScrapplingPlaywrightEngine:
                 elif action == "extract":
                     el = await page.query_selector(step["selector"])
                     text = await el.text_content() if el else None
-                    results.append({"step": action, "selector": step["selector"],
-                                    "data": text, "success": True})
+                    results.append({"step": action, "selector": step["selector"], "data": text, "success": True})
                 else:
-                    results.append({"step": action, "success": False,
-                                    "error": f"unknown_action:{action}"})
+                    results.append({"step": action, "success": False, "error": f"unknown_action:{action}"})
             except Exception as exc:
                 results.append({"step": action, "success": False, "error": str(exc)})
                 if not step.get("continue_on_error", False):
@@ -1072,12 +1120,17 @@ class ScrapplingPlaywrightEngine:
 
         return {"workflow": workflow.get("name", "unnamed"), "results": results}
 
-    async def test_xss_payload(self, url: str, payload: str) -> Dict[str, Any]:
+    async def test_xss_payload(self, url: str, payload: str) -> dict[str, Any]:
         """Test XSS payload in real browser context."""
         result = await self.navigate(url)
         if not result.get("success"):
-            return {"alert_triggered": False, "dom_modified": False, "exploited": False,
-                    "payload": payload, "error": result.get("error", "navigation_failed")}
+            return {
+                "alert_triggered": False,
+                "dom_modified": False,
+                "exploited": False,
+                "payload": payload,
+                "error": result.get("error", "navigation_failed"),
+            }
         page = result["page"]
 
         await page.evaluate("""() => {
@@ -1107,7 +1160,7 @@ class ScrapplingPlaywrightEngine:
             "payload": payload,
         }
 
-    async def detect_framework(self, url: str) -> Optional[str]:
+    async def detect_framework(self, url: str) -> str | None:
         """Detect JavaScript framework on the page."""
         result = await self.navigate(url)
         if not result.get("success"):
@@ -1126,7 +1179,7 @@ class ScrapplingPlaywrightEngine:
             logger.debug("[ScrapplingPlaywrightEngine] framework detection failed: %s", exc)
             return None
 
-    async def intercept_network(self, url: str) -> List[Dict[str, Any]]:
+    async def intercept_network(self, url: str) -> list[dict[str, Any]]:
         """Navigate and return the captured network log for the page."""
         result = await self.navigate(url)
         if not result.get("success"):
@@ -1137,7 +1190,7 @@ class ScrapplingPlaywrightEngine:
             logger.debug("[intercept_network] error", exc_info=True)
         return list(self._network_log)
 
-    async def find_websockets(self, url: str) -> List[str]:
+    async def find_websockets(self, url: str) -> list[str]:
         """Find WebSocket URLs initiated by the page."""
         await self._ensure_context()
         page = self.current_page
@@ -1166,7 +1219,7 @@ class ScrapplingPlaywrightEngine:
         except Exception:
             return []
 
-    async def extract_tokens(self, url: str) -> List[str]:
+    async def extract_tokens(self, url: str) -> list[str]:
         """Extract auth tokens from page content + localStorage."""
         result = await self.navigate(url)
         if not result.get("success"):
@@ -1188,7 +1241,7 @@ class ScrapplingPlaywrightEngine:
             logger.debug("[extract_tokens] error", exc_info=True)
         return list(tokens)
 
-    async def capture_screenshot(self, scan_id: str, label: str) -> Optional[Path]:
+    async def capture_screenshot(self, scan_id: str, label: str) -> Path | None:
         """Capture screenshot of the current page."""
         if not self.current_page:
             return None
@@ -1204,7 +1257,7 @@ class ScrapplingPlaywrightEngine:
             logger.debug("[ScrapplingPlaywrightEngine] screenshot failed: %s", exc)
             return None
 
-    async def capture_dom(self, scan_id: str, label: str) -> Optional[Path]:
+    async def capture_dom(self, scan_id: str, label: str) -> Path | None:
         """Capture DOM snapshot of the current page."""
         if not self.current_page:
             return None
@@ -1222,7 +1275,7 @@ class ScrapplingPlaywrightEngine:
             logger.debug("[ScrapplingPlaywrightEngine] capture_dom failed: %s", exc)
             return None
 
-    async def get_network_log(self) -> List[Dict[str, Any]]:
+    async def get_network_log(self) -> list[dict[str, Any]]:
         """Return captured network requests for the current page."""
         return list(self._network_log)
 
@@ -1267,6 +1320,7 @@ class ScrapplingPlaywrightEngine:
                 logger.debug("[close] error", exc_info=True)
             self._playwright = None
 
+
 OpenClawEngine = ScrapplingPlaywrightEngine
 PlaywrightFallback = ScrapplingPlaywrightEngine
 
@@ -1293,29 +1347,36 @@ class ScrapplingFuzzer:
         async with self._lifecycle_lock:
             try:
                 await self.client.health()
-                profile = await self.client.create_profile(f"worker-{self.worker_id}", "Vulagent worker browser profile")
+                profile = await self.client.create_profile(
+                    f"worker-{self.worker_id}", "Vigilagent worker browser profile"
+                )
                 self.profile_id = str(profile.get("id") or profile.get("profileId") or "")
                 instance = await self.client.start_instance(self.profile_id or None, mode="headless")
                 self.instance_id = str(instance.get("id") or instance.get("instanceId") or "")
                 self.using_control_plane = bool(self.instance_id)
                 if self.using_control_plane:
-                    print(f"PinchTab control-plane instance online (Worker: {self.worker_id}, Instance: {self.instance_id})")
+                    print(
+                        f"PinchTab control-plane instance online (Worker: {self.worker_id}, Instance: {self.instance_id})"
+                    )
                     return
             except Exception as e:
-                print(f"PinchTab control-plane unavailable for worker {self.worker_id}; using local Playwright fallback: {e}")
+                print(
+                    f"PinchTab control-plane unavailable for worker {self.worker_id}; using local Playwright fallback: {e}"
+                )
 
             try:
                 from playwright.async_api import async_playwright
+
                 self.playwright = await async_playwright().start()
                 self.browser = await self.playwright.chromium.launch(
-            executable_path=_CHROMIUM_PATH,
+                    executable_path=_CHROMIUM_PATH,
                     headless=True,
                     args=[
                         f"--user-data-dir={self.profile_path}",
                         f"--remote-debugging-port={self.port}",
                         "--no-sandbox",
-                        "--disable-dev-shm-usage"
-                    ]
+                        "--disable-dev-shm-usage",
+                    ],
                 )
                 self.context = await self.browser.new_context()
                 self.page = await self.context.new_page()
@@ -1323,7 +1384,7 @@ class ScrapplingFuzzer:
             except Exception as e:
                 print(f"PinchTab failed to initialize: {e}")
 
-    async def execute_flow(self, flow_config: Dict) -> Dict:
+    async def execute_flow(self, flow_config: dict) -> dict:
         results = {"steps": [], "findings": []}
         try:
             for step in flow_config.get("actions_mapped", []):
@@ -1339,7 +1400,7 @@ class ScrapplingFuzzer:
             results["error"] = str(e)
         return results
 
-    async def _execute_semantic_step(self, step: Dict, target_url: str) -> Optional[Dict]:
+    async def _execute_semantic_step(self, step: dict, target_url: str) -> dict | None:
         result = {"action": step["type"], "target": step["target"], "success": False}
         try:
             if self.using_control_plane:
@@ -1367,7 +1428,9 @@ class ScrapplingFuzzer:
 
                 if step["type"] == "input":
                     if not selector:
-                        selector = f"input[name='{target_str}'], input[id='{target_str}'], *[placeholder*='{target_str}' i]"
+                        selector = (
+                            f"input[name='{target_str}'], input[id='{target_str}'], *[placeholder*='{target_str}' i]"
+                        )
                     await self.client.action(self.tab_id, "fill", selector=selector, value="xytherion_fuzz_payload")
                     result["success"] = True
                 elif step["type"] == "click":
@@ -1390,7 +1453,7 @@ class ScrapplingFuzzer:
             result["error"] = str(e)
         return result
 
-    async def _extract_state(self) -> Dict:
+    async def _extract_state(self) -> dict:
         state = {"cookies": [], "tokens": {}}
         try:
             if self.using_control_plane and self.tab_id:
@@ -1408,7 +1471,7 @@ class ScrapplingFuzzer:
             logger.debug("[_extract_state] error", exc_info=True)
         return state
 
-    async def _check_vulnerabilities(self, step_result: Dict) -> List[Dict]:
+    async def _check_vulnerabilities(self, step_result: dict) -> list[dict]:
         vulns = []
         if self.using_control_plane and self.tab_id:
             content = str(await self.client.text(self.tab_id))
@@ -1431,12 +1494,13 @@ class ScrapplingFuzzer:
 
                 if self.browser:
                     await self.browser.close()
-                if hasattr(self, 'playwright'):
+                if hasattr(self, "playwright"):
                     await self.playwright.stop()
                 if os.path.exists(self.profile_path):
                     shutil.rmtree(self.profile_path, ignore_errors=True)
             except Exception:
                 logger.debug("[stop] error", exc_info=True)
+
 
 PinchTabInstance = ScrapplingFuzzer
 
@@ -1461,8 +1525,9 @@ class ScraplingIntel:
             return True, ""
         return False, "pinchtab_daemon_not_running"
 
-    async def full_capture(self, targets: list[str], *, max_targets: int = 20,
-                            profile_name: str = "") -> dict[str, Any]:
+    async def full_capture(
+        self, targets: list[str], *, max_targets: int = 20, profile_name: str = ""
+    ) -> dict[str, Any]:
         """Run full browser intelligence on target URLs."""
         available, reason = await self.is_available()
         if not available:
@@ -1484,8 +1549,7 @@ class ScraplingIntel:
             instance = await self.client.start_instance(profile_id or None, mode="headless")
             instance_id = str(instance.get("id", instance.get("instanceId", "")))
         except Exception as exc:
-            return {"used": False, "reason": f"instance_failed:{exc}",
-                    "profile_id": profile_id, "entities": []}
+            return {"used": False, "reason": f"instance_failed:{exc}", "profile_id": profile_id, "entities": []}
 
         try:
             for url in targets[:max_targets]:
@@ -1535,14 +1599,16 @@ class ScraplingIntel:
             screenshot_path = screenshot_dir / f"{prefix}.png"
             try:
                 await self.client.screenshot(tab_id, screenshot_path)
-                entities.append({
-                    "kind": "visual_artifact",
-                    "label": url,
-                    "confidence": 0.95,
-                    "properties": {"screenshot_path": str(screenshot_path)},
-                    "source_tool": "pinchtab",
-                    "phase": "http_browser_intelligence"
-                })
+                entities.append(
+                    {
+                        "kind": "visual_artifact",
+                        "label": url,
+                        "confidence": 0.95,
+                        "properties": {"screenshot_path": str(screenshot_path)},
+                        "source_tool": "pinchtab",
+                        "phase": "http_browser_intelligence",
+                    }
+                )
             except Exception:
                 logger.debug("[] error", exc_info=True)
 
@@ -1633,13 +1699,17 @@ class ScraplingIntel:
             if any(url.lower().endswith(ext) for ext in [".png", ".jpg", ".gif", ".css", ".woff", ".ico", ".svg"]):
                 continue
 
-            is_api = bool(re.search(r'/api/|/rest/|/v[0-9]+/|/graphql', url, re.I))
+            is_api = bool(re.search(r"/api/|/rest/|/v[0-9]+/|/graphql", url, re.I))
             is_xhr = resource_type in ("XHR", "Fetch", "xmlhttprequest", "fetch")
 
             props = {
-                "full_url": url, "method": method, "status_code": status,
-                "mime_type": mime, "resource_type": resource_type,
-                "path": parsed.path or "/", "host": (parsed.hostname or "").lower(),
+                "full_url": url,
+                "method": method,
+                "status_code": status,
+                "mime_type": mime,
+                "resource_type": resource_type,
+                "path": parsed.path or "/",
+                "host": (parsed.hostname or "").lower(),
                 "parameters": [{"name": n, "value": v} for n, v in parse_qsl(parsed.query, keep_blank_values=True)],
                 "discovered_from": parent_url,
                 "is_api_call": is_api or is_xhr,
@@ -1647,10 +1717,16 @@ class ScraplingIntel:
 
             kind = "browser_endpoint"
             conf = 0.9 if (is_api or is_xhr) else 0.75
-            entities.append({
-                "kind": kind, "label": url, "confidence": conf, "properties": props,
-                "source_tool": "pinchtab", "phase": "http_browser_intelligence"
-            })
+            entities.append(
+                {
+                    "kind": kind,
+                    "label": url,
+                    "confidence": conf,
+                    "properties": props,
+                    "source_tool": "pinchtab",
+                    "phase": "http_browser_intelligence",
+                }
+            )
 
         return entities
 
@@ -1664,11 +1740,16 @@ class ScraplingIntel:
                 key = f"form:{action}"
                 if key not in self._seen:
                     self._seen.add(key)
-                    entities.append({
-                        "kind": "form_action", "label": action, "confidence": 0.8,
-                        "properties": {"parent_url": parent_url, "type": "form"},
-                        "source_tool": "pinchtab", "phase": "http_browser_intelligence"
-                    })
+                    entities.append(
+                        {
+                            "kind": "form_action",
+                            "label": action,
+                            "confidence": 0.8,
+                            "properties": {"parent_url": parent_url, "type": "form"},
+                            "source_tool": "pinchtab",
+                            "phase": "http_browser_intelligence",
+                        }
+                    )
         return entities
 
     def _extract_from_text(self, text: str, parent_url: str) -> list[dict[str, Any]]:
@@ -1676,8 +1757,8 @@ class ScraplingIntel:
         entities: list[dict[str, Any]] = []
         patterns = {
             "api_key_in_page": re.compile(r'(?:api[_-]?key|apikey)\s*[:=]\s*["\']?([A-Za-z0-9]{20,})', re.I),
-            "bearer_token": re.compile(r'Bearer\s+([A-Za-z0-9._-]{20,})', re.I),
-            "jwt_in_page": re.compile(r'eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+'),
+            "bearer_token": re.compile(r"Bearer\s+([A-Za-z0-9._-]{20,})", re.I),
+            "jwt_in_page": re.compile(r"eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+"),
         }
         for stype, pattern in patterns.items():
             matches = pattern.findall(text[:10000])
@@ -1685,11 +1766,20 @@ class ScraplingIntel:
                 key = f"text_secret:{stype}:{str(match)[:20]}"
                 if key not in self._seen:
                     self._seen.add(key)
-                    entities.append({
-                        "kind": "secret", "label": f"page_secret:{stype}", "confidence": 0.7,
-                        "properties": {"secret_type": stype, "redacted_value": str(match)[:4] + "****", "source_url": parent_url},
-                        "source_tool": "pinchtab", "phase": "http_browser_intelligence"
-                    })
+                    entities.append(
+                        {
+                            "kind": "secret",
+                            "label": f"page_secret:{stype}",
+                            "confidence": 0.7,
+                            "properties": {
+                                "secret_type": stype,
+                                "redacted_value": str(match)[:4] + "****",
+                                "source_url": parent_url,
+                            },
+                            "source_tool": "pinchtab",
+                            "phase": "http_browser_intelligence",
+                        }
+                    )
         return entities
 
     def _extract_from_console(self, console: Any, parent_url: str) -> list[dict[str, Any]]:
@@ -1712,11 +1802,16 @@ class ScraplingIntel:
                 key = f"console_err:{text[:50]}"
                 if key not in self._seen:
                     self._seen.add(key)
-                    entities.append({
-                        "kind": "browser_error", "label": f"console_error:{parent_url}", "confidence": 0.6,
-                        "properties": {"message": text[:500], "level": level, "source_url": parent_url},
-                        "source_tool": "pinchtab", "phase": "http_browser_intelligence"
-                    })
+                    entities.append(
+                        {
+                            "kind": "browser_error",
+                            "label": f"console_error:{parent_url}",
+                            "confidence": 0.6,
+                            "properties": {"message": text[:500], "level": level, "source_url": parent_url},
+                            "source_tool": "pinchtab",
+                            "phase": "http_browser_intelligence",
+                        }
+                    )
         return entities
 
     def _extract_from_cookies(self, cookies: Any, parent_url: str) -> list[dict[str, Any]]:
@@ -1742,8 +1837,10 @@ class ScraplingIntel:
             is_session = any(kw in name.lower() for kw in ["session", "token", "auth", "jwt", "csrf"])
             if is_session:
                 issues = []
-                if not secure: issues.append("missing_secure_flag")
-                if not httponly: issues.append("missing_httponly_flag")
+                if not secure:
+                    issues.append("missing_secure_flag")
+                if not httponly:
+                    issues.append("missing_httponly_flag")
                 if not samesite or samesite.lower() == "none":
                     issues.append("weak_samesite")
 
@@ -1751,14 +1848,27 @@ class ScraplingIntel:
                     key = f"cookie:{name}:{domain}"
                     if key not in self._seen:
                         self._seen.add(key)
-                        entities.append({
-                            "kind": "vulnerability_candidate", "label": f"insecure_cookie:{name}", "confidence": 0.7,
-                            "properties": {"cookie_name": name, "domain": domain, "issues": issues, "secure": secure,
-                                           "httponly": httponly, "samesite": samesite, "source_url": parent_url,
-                                           "vuln_type": "insecure_cookie"},
-                            "source_tool": "pinchtab", "phase": "http_browser_intelligence"
-                        })
+                        entities.append(
+                            {
+                                "kind": "vulnerability_candidate",
+                                "label": f"insecure_cookie:{name}",
+                                "confidence": 0.7,
+                                "properties": {
+                                    "cookie_name": name,
+                                    "domain": domain,
+                                    "issues": issues,
+                                    "secure": secure,
+                                    "httponly": httponly,
+                                    "samesite": samesite,
+                                    "source_url": parent_url,
+                                    "vuln_type": "insecure_cookie",
+                                },
+                                "source_tool": "pinchtab",
+                                "phase": "http_browser_intelligence",
+                            }
+                        )
         return entities
+
 
 PinchTabIntelligence = ScraplingIntel
 
@@ -1783,8 +1893,7 @@ class ScraplingRecon:
             result = await self.browser.navigate(url, stealth=False, wait_for="networkidle")
             nav_ok = bool(result.get("success"))
         except Exception as exc:
-            logger.info("[BrowserRecon] navigate(%s) failed: %s: %s",
-                         url, type(exc).__name__, str(exc)[:200])
+            logger.info("[BrowserRecon] navigate(%s) failed: %s: %s", url, type(exc).__name__, str(exc)[:200])
 
         if nav_ok:
             try:
@@ -1806,24 +1915,29 @@ class ScraplingRecon:
                 kind = "websocket"
             elif "router" in src:
                 kind = "javascript_route"
-            entities.append({
-                "kind": kind,
-                "label": str(ep.get("url", "")),
-                "confidence": 0.7,
-                "source_tool": src,
-                "phase": "http_browser_intelligence",
-                "properties": {"method": ep.get("method", "GET"), "source": src,
-                            "spa": is_spa, "headers": ep.get("headers", {}),
-                            "scan_id": self.scan_id},
-            })
+            entities.append(
+                {
+                    "kind": kind,
+                    "label": str(ep.get("url", "")),
+                    "confidence": 0.7,
+                    "source_tool": src,
+                    "phase": "http_browser_intelligence",
+                    "properties": {
+                        "method": ep.get("method", "GET"),
+                        "source": src,
+                        "spa": is_spa,
+                        "headers": ep.get("headers", {}),
+                        "scan_id": self.scan_id,
+                    },
+                }
+            )
 
         if nav_ok:
             entities.extend(await self._extract_forms(url))
             entities.extend(await self._extract_cookies(url))
             entities.extend(await self._extract_security_headers(url))
 
-        logger.info("[BrowserRecon] %s: %d browser entities (spa=%s, nav_ok=%s)",
-                     url, len(entities), is_spa, nav_ok)
+        logger.info("[BrowserRecon] %s: %d browser entities (spa=%s, nav_ok=%s)", url, len(entities), is_spa, nav_ok)
         return entities
 
     # ── Browser primitives (delegated to the shared orchestrator) ─────────────
@@ -1831,9 +1945,11 @@ class ScraplingRecon:
     async def _extract_endpoints(self, url: str) -> list[dict[str, Any]]:
         try:
             eps = await self.browser.extract_endpoints(url, deep=True)
-            return [{"url": e.get("url"), "method": e.get("method", "GET"),
-                     "source": e.get("source", "browser")} for e in (eps or [])
-                    if isinstance(e, dict) and e.get("url")]
+            return [
+                {"url": e.get("url"), "method": e.get("method", "GET"), "source": e.get("source", "browser")}
+                for e in (eps or [])
+                if isinstance(e, dict) and e.get("url")
+            ]
         except Exception as exc:
             logger.debug("[BrowserRecon] _extract_endpoints failed: %s", exc)
             return []
@@ -1842,18 +1958,20 @@ class ScraplingRecon:
         try:
             evts = await self.browser.intercept_network(url)
             out: list[dict[str, Any]] = []
-            for e in (evts or []):
+            for e in evts or []:
                 if not isinstance(e, dict):
                     continue
                 u = e.get("url")
                 if not u:
                     continue
-                out.append({
-                    "url": u,
-                    "method": e.get("method", "GET"),
-                    "source": "network_intercept",
-                    "headers": e.get("headers", {}),
-                })
+                out.append(
+                    {
+                        "url": u,
+                        "method": e.get("method", "GET"),
+                        "source": "network_intercept",
+                        "headers": e.get("headers", {}),
+                    }
+                )
             return out
         except Exception as exc:
             logger.debug("[BrowserRecon] _intercept_network failed: %s", exc)
@@ -1862,8 +1980,7 @@ class ScraplingRecon:
     async def _find_websockets(self, url: str) -> list[dict[str, Any]]:
         try:
             ws_urls = await self.browser.find_websockets(url)
-            return [{"url": w, "method": "WS", "source": "websocket_monitor"}
-                    for w in (ws_urls or []) if w]
+            return [{"url": w, "method": "WS", "source": "websocket_monitor"} for w in (ws_urls or []) if w]
         except Exception:
             return []
 
@@ -1915,20 +2032,22 @@ class ScraplingRecon:
             if not isinstance(form, dict):
                 continue
             action = form.get("action", "") or url
-            entities.append({
-                "kind": "form",
-                "label": action or url,
-                "confidence": 0.85,
-                "source_tool": "openclaw",
-                "phase": "http_browser_intelligence",
-                "properties": {
-                    "action": action,
-                    "method": form.get("method", "GET"),
-                    "inputs": form.get("inputs", []),
-                    "source_url": url,
-                    "scan_id": self.scan_id,
-                },
-            })
+            entities.append(
+                {
+                    "kind": "form",
+                    "label": action or url,
+                    "confidence": 0.85,
+                    "source_tool": "openclaw",
+                    "phase": "http_browser_intelligence",
+                    "properties": {
+                        "action": action,
+                        "method": form.get("method", "GET"),
+                        "inputs": form.get("inputs", []),
+                        "source_url": url,
+                        "scan_id": self.scan_id,
+                    },
+                }
+            )
         return entities
 
     async def _extract_cookies(self, url: str) -> list[dict[str, Any]]:
@@ -1955,23 +2074,25 @@ class ScraplingRecon:
             if not httponly or not secure:
                 kind = "insecure_cookie"
                 confidence = 0.8
-            entities.append({
-                "kind": kind,
-                "label": f"{name}@{c.get('domain', '')}",
-                "confidence": confidence,
-                "source_tool": "openclaw_cookies",
-                "phase": "http_browser_intelligence",
-                "properties": {
-                    "name": name,
-                    "domain": c.get("domain", ""),
-                    "path": c.get("path", "/"),
-                    "httpOnly": httponly,
-                    "secure": secure,
-                    "sameSite": samesite,
-                    "source_url": url,
-                    "scan_id": self.scan_id,
-                },
-            })
+            entities.append(
+                {
+                    "kind": kind,
+                    "label": f"{name}@{c.get('domain', '')}",
+                    "confidence": confidence,
+                    "source_tool": "openclaw_cookies",
+                    "phase": "http_browser_intelligence",
+                    "properties": {
+                        "name": name,
+                        "domain": c.get("domain", ""),
+                        "path": c.get("path", "/"),
+                        "httpOnly": httponly,
+                        "secure": secure,
+                        "sameSite": samesite,
+                        "source_url": url,
+                        "scan_id": self.scan_id,
+                    },
+                }
+            )
         return entities
 
     async def _extract_security_headers(self, url: str) -> list[dict[str, Any]]:
@@ -2005,20 +2126,22 @@ class ScraplingRecon:
         missing = [h for h in _SECURITY_HEADERS if h not in headers]
 
         if present or missing:
-            entities.append({
-                "kind": "security_headers",
-                "label": url,
-                "confidence": 0.8,
-                "source_tool": "openclaw",
-                "phase": "http_browser_intelligence",
-                "properties": {
-                    "url": url,
-                    "present": present,
-                    "missing": missing,
-                    "all_headers": headers,
-                    "scan_id": self.scan_id,
-                },
-            })
+            entities.append(
+                {
+                    "kind": "security_headers",
+                    "label": url,
+                    "confidence": 0.8,
+                    "source_tool": "openclaw",
+                    "phase": "http_browser_intelligence",
+                    "properties": {
+                        "url": url,
+                        "present": present,
+                        "missing": missing,
+                        "all_headers": headers,
+                        "scan_id": self.scan_id,
+                    },
+                }
+            )
         return entities
 
     @staticmethod
@@ -2033,8 +2156,8 @@ class ScraplingRecon:
                     merged.append(ep)
         return merged
 
-BrowserReconModule = ScraplingRecon
 
+BrowserReconModule = ScraplingRecon
 
 
 # --- Scrapling CrawlSpider Integration ---
@@ -2043,8 +2166,7 @@ BrowserReconModule = ScraplingRecon
 class PentestCrawlSpider:
     """CrawlSpider specialized for pentest crawling with rule-based link following."""
 
-    def __init__(self, start_urls=None, allowed_domains=None,
-                 concurrent_requests=5, download_delay=1.0):
+    def __init__(self, start_urls=None, allowed_domains=None, concurrent_requests=5, download_delay=1.0):
         self.start_urls_list = start_urls or []
         self.allowed_domains = allowed_domains or []
         self.concurrent_requests = concurrent_requests
@@ -2063,7 +2185,7 @@ class PentestCrawlSpider:
             try:
                 self._spider.start()
             except Exception as exc:
-                logger.debug('[PentestCrawlSpider] start failed: %s', exc)
+                logger.debug("[PentestCrawlSpider] start failed: %s", exc)
 
     def on_start(self):
         """Called when crawl starts."""
@@ -2102,7 +2224,7 @@ class PentestSitemapSpider:
             try:
                 self._spider.start()
             except Exception as exc:
-                logger.debug('[PentestSitemapSpider] start failed: %s', exc)
+                logger.debug("[PentestSitemapSpider] start failed: %s", exc)
 
     def get_discovered_urls(self):
         """Return discovered URLs from sitemaps."""
@@ -2164,7 +2286,7 @@ class PentestDynamicSession:
             try:
                 await self._session.start()
             except Exception as exc:
-                logger.debug('[PentestDynamicSession] start failed: %s', exc)
+                logger.debug("[PentestDynamicSession] start failed: %s", exc)
 
     async def fetch(self, url, **kwargs):
         if self._session:
@@ -2196,7 +2318,7 @@ class PentestStealthySession:
             try:
                 await self._session.start()
             except Exception as exc:
-                logger.debug('[PentestStealthySession] start failed: %s', exc)
+                logger.debug("[PentestStealthySession] start failed: %s", exc)
 
     async def fetch(self, url, **kwargs):
         if self._session:
@@ -2228,7 +2350,7 @@ class PentestAsyncDynamicSession:
             try:
                 await self._session.start()
             except Exception as exc:
-                logger.debug('[PentestAsyncDynamicSession] start failed: %s', exc)
+                logger.debug("[PentestAsyncDynamicSession] start failed: %s", exc)
 
     async def fetch(self, url, **kwargs):
         if self._session:
@@ -2260,7 +2382,7 @@ class PentestAsyncStealthySession:
             try:
                 await self._session.start()
             except Exception as exc:
-                logger.debug('[PentestAsyncStealthySession] start failed: %s', exc)
+                logger.debug("[PentestAsyncStealthySession] start failed: %s", exc)
 
     async def fetch(self, url, **kwargs):
         if self._session:
@@ -2316,13 +2438,13 @@ class PentestSequenceMatcher:
             try:
                 matcher = SequenceMatcher(None, seq1, seq2)
                 return {
-                    'ratio': matcher.ratio(),
-                    'opcodes': matcher.get_opcodes() if hasattr(matcher, 'get_opcodes') else [],
-                    'matching_blocks': matcher.get_matching_blocks() if hasattr(matcher, 'get_matching_blocks') else [],
+                    "ratio": matcher.ratio(),
+                    "opcodes": matcher.get_opcodes() if hasattr(matcher, "get_opcodes") else [],
+                    "matching_blocks": matcher.get_matching_blocks() if hasattr(matcher, "get_matching_blocks") else [],
                 }
             except Exception:
                 logger.debug("[match] error", exc_info=True)
-        return {'ratio': 0.0, 'opcodes': [], 'matching_blocks': []}
+        return {"ratio": 0.0, "opcodes": [], "matching_blocks": []}
 
     @staticmethod
     def find_longest_match(alo, ahi, blo, bhi, seq1, seq2):
@@ -2336,36 +2458,35 @@ class PentestSequenceMatcher:
         return None
 
 
-
 class Scrappling:
     """
     Unified browser interface that routes between OpenClaw and PinchTab.
     Provides a single API for all agents to use browser capabilities.
     Includes context isolation for security between scans.
     """
-    
+
     def __init__(self):
         self.openclaw = None
         self.pinchtab = None
         self.session_manager = None
         self.forensics = None
         self._initialized = False
-        
+
         # Context isolation tracking
-        self._active_contexts: Dict[str, Dict[str, Any]] = {}
+        self._active_contexts: dict[str, dict[str, Any]] = {}
         self._context_lock = asyncio.Lock()
         self._max_contexts = 10
-        
+
         # Resource management
-        self._context_pool: List[str] = []
+        self._context_pool: list[str] = []
         self._pool_lock = asyncio.Lock()
         self._max_pool_size = 5
-        
+
         # Memory monitoring
         self._memory_threshold_mb = 500
         self._last_memory_check = 0
         self._memory_check_interval = 60
-        
+
         # Lazy initialization flags
         self._openclaw_initialized = False
         self._pinchtab_initialized = False
@@ -2411,13 +2532,11 @@ class Scrappling:
 
     def create_crawl_spider(self, start_urls=None, allowed_domains=None, **kwargs):
         """Create a CrawlSpider for rule-based pentest crawling."""
-        return PentestCrawlSpider(
-            start_urls=start_urls, allowed_domains=allowed_domains, **kwargs)
+        return PentestCrawlSpider(start_urls=start_urls, allowed_domains=allowed_domains, **kwargs)
 
     def create_sitemap_spider(self, start_urls=None, sitemap_urls=None, **kwargs):
         """Create a SitemapSpider for sitemap-based endpoint discovery."""
-        return PentestSitemapSpider(
-            start_urls=start_urls, sitemap_urls=sitemap_urls)
+        return PentestSitemapSpider(start_urls=start_urls, sitemap_urls=sitemap_urls)
 
     def create_scheduler(self, **kwargs):
         """Create a Scheduler for crawl rate control."""
@@ -2443,109 +2562,117 @@ class Scrappling:
         """Initialize both browser engines."""
         if self._initialized:
             return
-            
+
         logger.info("[Scrappling] Initializing hybrid browser stack...")
-        
+
         if lazy:
             logger.info("[Scrappling] Lazy initialization mode enabled")
         else:
             await self._lazy_init_openclaw()
             await self._lazy_init_pinchtab()
-        
+
         from backend.core.hybrid_session_manager import HybridSessionManager
+
         self.session_manager = HybridSessionManager()
-        
+
         from backend.core.forensic_collector import ForensicCollector
+
         self.forensics = ForensicCollector()
-        
+
         await self._init_scrapling_proxy_rotator()
 
         self._initialized = True
         logger.info("[Scrappling] Hybrid browser stack ready")
-    
-    async def create_isolated_context(self, scan_id: str, context_name: Optional[str] = None) -> str:
+
+    async def create_isolated_context(self, scan_id: str, context_name: str | None = None) -> str:
         """Create an isolated browser context for a scan."""
         async with self._context_lock:
             if len(self._active_contexts) >= self._max_contexts:
                 logger.warning(f"[Scrappling] Context limit reached ({self._max_contexts}), cleaning up old contexts")
                 await self._cleanup_idle_contexts()
-            
+
             context_id = context_name or f"{scan_id}_{uuid.uuid4().hex[:8]}"
-            
+
             context_data = {
                 "scan_id": scan_id,
                 "context_id": context_id,
                 "created_at": asyncio.get_event_loop().time(),
                 "last_activity": asyncio.get_event_loop().time(),
                 "engine": None,
-                "context_handle": None
+                "context_handle": None,
             }
-            
+
             self._active_contexts[context_id] = context_data
             logger.info(f"[Scrappling] Created isolated context: {context_id} for scan: {scan_id}")
             return context_id
-    
-    async def get_context(self, context_id: str) -> Optional[Dict[str, Any]]:
+
+    async def get_context(self, context_id: str) -> dict[str, Any] | None:
         """Get context data by ID."""
         async with self._context_lock:
             context = self._active_contexts.get(context_id)
             if context:
                 context["last_activity"] = asyncio.get_event_loop().time()
             return context
-    
+
     async def close_context(self, context_id: str):
         """Close and cleanup an isolated context."""
         async with self._context_lock:
             context = self._active_contexts.get(context_id)
             if not context:
                 return
-            
+
             if context.get("context_handle"):
                 try:
                     pass
                 except Exception as e:
                     logger.error(f"[Scrappling] Failed to close context {context_id}: {e}")
-            
+
             del self._active_contexts[context_id]
             logger.info(f"[Scrappling] Closed isolated context: {context_id}")
-    
+
     async def _cleanup_idle_contexts(self, max_idle_seconds: int = 300):
         """Cleanup contexts that have been idle for too long."""
         current_time = asyncio.get_event_loop().time()
         idle_contexts = []
-        
+
         for context_id, context in self._active_contexts.items():
             idle_time = current_time - context["last_activity"]
             if idle_time > max_idle_seconds:
                 idle_contexts.append(context_id)
-        
+
         for context_id in idle_contexts:
             await self.close_context(context_id)
-        
+
         logger.info(f"[Scrappling] Cleaned up {len(idle_contexts)} idle contexts")
-    
+
     def get_active_context_count(self) -> int:
         return len(self._active_contexts)
-    
-    def get_context_stats(self) -> Dict[str, Any]:
+
+    def get_context_stats(self) -> dict[str, Any]:
         current_time = asyncio.get_event_loop().time()
         stats = {
             "total_contexts": len(self._active_contexts),
             "max_contexts": self._max_contexts,
             "contexts_by_scan": {},
-            "idle_contexts": 0
+            "idle_contexts": 0,
         }
-        for context_id, context in self._active_contexts.items():
+        for _context_id, context in self._active_contexts.items():
             scan_id = context["scan_id"]
             stats["contexts_by_scan"][scan_id] = stats["contexts_by_scan"].get(scan_id, 0) + 1
             idle_time = current_time - context["last_activity"]
             if idle_time > 60:
                 stats["idle_contexts"] += 1
         return stats
-        
-    async def navigate(self, url: str, engine: ScrapplingEngine = ScrapplingEngine.AUTO,
-                      stealth: bool = False, wait_for: str = "networkidle",
-                      scan_id: Optional[str] = None, context_id: Optional[str] = None):
+
+    async def navigate(
+        self,
+        url: str,
+        engine: ScrapplingEngine = ScrapplingEngine.AUTO,
+        stealth: bool = False,
+        wait_for: str = "networkidle",
+        scan_id: str | None = None,
+        context_id: str | None = None,
+    ):
         """Navigate to URL using best engine for the task with context isolation."""
         await self._ensure_initialized()
         if scan_id and not context_id:
@@ -2557,7 +2684,9 @@ class Scrappling:
         selected_engine = self._select_engine(engine, stealth, url)
         logger.info(
             "[Scrappling] Navigating to %s via %s (context: %s)",
-            url, selected_engine.value, context_id,
+            url,
+            selected_engine.value,
+            context_id,
         )
 
         if selected_engine == ScrapplingEngine.PINCHTAB:
@@ -2565,7 +2694,7 @@ class Scrappling:
         else:
             candidates = [ScrapplingEngine.PLAYWRIGHT, ScrapplingEngine.PINCHTAB]
 
-        last_error: Optional[str] = None
+        last_error: str | None = None
         for candidate in candidates:
             try:
                 if candidate == ScrapplingEngine.PINCHTAB:
@@ -2583,15 +2712,15 @@ class Scrappling:
                 last_error = f"{type(exc).__name__}: {exc}"
                 logger.warning(
                     "[Scrappling] %s navigation failed: %s",
-                    candidate.value, last_error,
+                    candidate.value,
+                    last_error,
                 )
 
         raise ScrapplingUnavailable(
-            f"No browser engine could navigate to {url}: "
-            f"{last_error or 'OpenClaw and PinchTab both offline'}"
+            f"No browser engine could navigate to {url}: {last_error or 'OpenClaw and PinchTab both offline'}"
         )
-                
-    async def extract_endpoints(self, url: str, deep: bool = False, scan_id: Optional[str] = None):
+
+    async def extract_endpoints(self, url: str, deep: bool = False, scan_id: str | None = None):
         """Extract API endpoints from page."""
         await self._ensure_initialized()
         await self._lazy_init_openclaw()
@@ -2606,7 +2735,8 @@ class Scrappling:
                 return eps or []
             except Exception as exc:
                 logger.warning(
-                    "[Scrappling] Deep extraction failed, trying fast mode: %s", exc,
+                    "[Scrappling] Deep extraction failed, trying fast mode: %s",
+                    exc,
                 )
 
         if self.pinchtab and self.pinchtab.is_available():
@@ -2615,16 +2745,16 @@ class Scrappling:
             return [{"url": u, "method": "GET", "source": "pinchtab"} for u in (urls or [])]
 
         return []
-            
-    async def execute_workflow(self, workflow: Dict, scan_id: str):
+
+    async def execute_workflow(self, workflow: dict, scan_id: str):
         """Execute multi-step workflow (OpenClaw only)."""
         await self._ensure_initialized()
         if not self.openclaw:
             raise RuntimeError("ScrapplingPlaywrightEngine required for workflow execution")
         logger.info(f"[Scrappling] Executing workflow: {workflow.get('name', 'unnamed')}")
         return await self.openclaw.execute_workflow(workflow, scan_id)
-        
-    async def extract_tokens(self, url: str, scan_id: Optional[str] = None):
+
+    async def extract_tokens(self, url: str, scan_id: str | None = None):
         """Extract auth tokens."""
         await self._ensure_initialized()
         await self._lazy_init_openclaw()
@@ -2637,9 +2767,8 @@ class Scrappling:
             return await self.openclaw.extract_tokens(url)
         else:
             return []
-            
-    async def test_payload(self, url: str, payload: str, method: str = "GET",
-                          scan_id: Optional[str] = None):
+
+    async def test_payload(self, url: str, payload: str, method: str = "GET", scan_id: str | None = None):
         """Test payload in browser context."""
         await self._ensure_initialized()
         await self._lazy_init_openclaw()
@@ -2649,7 +2778,7 @@ class Scrappling:
             if self.openclaw:
                 logger.info("[Scrappling] Testing XSS payload in OpenClaw")
                 return await self.openclaw.test_xss_payload(url, payload)
-                
+
         if self._pinchtab_ready():
             logger.info("[Scrappling] Testing injection in PinchTab")
             return await self.pinchtab.test_injection(url, payload, method)
@@ -2657,7 +2786,7 @@ class Scrappling:
             return await self.openclaw.test_xss_payload(url, payload)
         else:
             return {"tested": False, "error": "No engines available"}
-            
+
     async def detect_framework(self, url: str):
         """Detect JavaScript framework."""
         await self._ensure_initialized()
@@ -2668,7 +2797,7 @@ class Scrappling:
             except Exception as exc:
                 logger.warning("[Scrappling] Framework detection failed: %s", exc)
         return None
-        
+
     async def intercept_network(self, url: str):
         """Intercept network requests."""
         await self._ensure_initialized()
@@ -2676,7 +2805,7 @@ class Scrappling:
         if self.openclaw:
             return await self.openclaw.intercept_network(url)
         return []
-        
+
     async def find_websockets(self, url: str):
         """Find WebSocket connections."""
         await self._ensure_initialized()
@@ -2684,7 +2813,7 @@ class Scrappling:
         if self.openclaw:
             return await self.openclaw.find_websockets(url)
         return []
-        
+
     async def capture_screenshot(self, scan_id: str, label: str = "screenshot"):
         """Capture screenshot."""
         await self._ensure_initialized()
@@ -2692,7 +2821,7 @@ class Scrappling:
         if self.openclaw:
             return await self.openclaw.capture_screenshot(scan_id, label)
         return None
-        
+
     async def capture_dom(self, scan_id: str, label: str = "dom"):
         """Capture DOM snapshot."""
         await self._ensure_initialized()
@@ -2700,7 +2829,7 @@ class Scrappling:
         if self.openclaw:
             return await self.openclaw.capture_dom(scan_id, label)
         return None
-        
+
     async def get_network_log(self):
         """Get network request log."""
         await self._ensure_initialized()
@@ -2708,7 +2837,7 @@ class Scrappling:
         if self.openclaw:
             return await self.openclaw.get_network_log()
         return []
-        
+
     async def analyze_dom(self, url: str):
         """Analyze DOM structure."""
         await self._ensure_initialized()
@@ -2716,7 +2845,7 @@ class Scrappling:
         if self._pinchtab_ready():
             return await self.pinchtab.analyze_dom(url)
         return {}
-        
+
     async def get_page_text(self):
         """Get page text content."""
         await self._ensure_initialized()
@@ -2727,7 +2856,7 @@ class Scrappling:
         elif self.openclaw:
             return await self.openclaw.get_page_text()
         return ""
-        
+
     def _pinchtab_ready(self) -> bool:
         if self.pinchtab is None:
             return False
@@ -2743,28 +2872,28 @@ class Scrappling:
                 return ScrapplingEngine.PLAYWRIGHT
             elif requested in (ScrapplingEngine.PINCHTAB, ScrapplingEngine.PINCHTAB.value) and pinch_ready:
                 return ScrapplingEngine.PINCHTAB
-                
+
         if stealth:
             return ScrapplingEngine.PLAYWRIGHT if self.openclaw else ScrapplingEngine.PINCHTAB
-            
+
         if any(keyword in url.lower() for keyword in ["login", "auth", "signin", "oauth"]):
             return ScrapplingEngine.PLAYWRIGHT if self.openclaw else ScrapplingEngine.PINCHTAB
-            
+
         prefer_speed = getattr(settings, "BROWSER_PREFER_SPEED", False)
         if prefer_speed and pinch_ready:
             return ScrapplingEngine.PINCHTAB
-            
+
         if self.openclaw:
             return ScrapplingEngine.PLAYWRIGHT
         elif pinch_ready:
             return ScrapplingEngine.PINCHTAB
         else:
             return ScrapplingEngine.PLAYWRIGHT
-            
+
     async def _ensure_initialized(self):
         if not self._initialized:
             await self.initialize()
-            
+
     async def get_pooled_context(self, scan_id: str) -> str:
         """Get context from pool."""
         async with self._pool_lock:
@@ -2777,7 +2906,7 @@ class Scrappling:
                         self._active_contexts[context_id]["last_activity"] = asyncio.get_event_loop().time()
                 return context_id
         return await self.create_isolated_context(scan_id)
-    
+
     async def return_context_to_pool(self, context_id: str):
         """Return context to pool."""
         async with self._pool_lock:
@@ -2787,27 +2916,27 @@ class Scrappling:
                 return True
         await self.close_context(context_id)
         return False
-    
-    async def monitor_memory(self) -> Dict[str, Any]:
+
+    async def monitor_memory(self) -> dict[str, Any]:
         """Monitor memory usage."""
-        import time
         current_time = time.time()
         if current_time - self._last_memory_check < self._memory_check_interval:
             return {"skipped": True, "reason": "rate_limited"}
-        
+
         self._last_memory_check = current_time
         try:
             import psutil
+
             process = psutil.Process()
             memory_info = process.memory_info()
             memory_mb = memory_info.rss / 1024 / 1024
-            
+
             stats = {
                 "memory_mb": round(memory_mb, 2),
                 "threshold_mb": self._memory_threshold_mb,
                 "threshold_exceeded": memory_mb > self._memory_threshold_mb,
                 "active_contexts": len(self._active_contexts),
-                "pooled_contexts": len(self._context_pool)
+                "pooled_contexts": len(self._context_pool),
             }
             if stats["threshold_exceeded"]:
                 logger.warning(
@@ -2823,7 +2952,7 @@ class Scrappling:
         except Exception as e:
             logger.error(f"[Scrappling] Memory monitoring failed: {e}")
             return {"error": str(e)}
-    
+
     async def _lazy_init_openclaw(self):
         if self._openclaw_initialized or self.openclaw:
             return
@@ -2839,7 +2968,9 @@ class Scrappling:
                     if await self._install_playwright_chromium():
                         ok = await engine.initialize()
                 else:
-                    logger.warning("[Scrappling] Chromium binary missing. Set ALPHA_AUTO_INSTALL_BROWSERS=true or install manually.")
+                    logger.warning(
+                        "[Scrappling] Chromium binary missing. Set ALPHA_AUTO_INSTALL_BROWSERS=true or install manually."
+                    )
 
             self._openclaw_initialized = True
             if ok:
@@ -2866,9 +2997,14 @@ class Scrappling:
     @staticmethod
     async def _install_playwright_chromium() -> bool:
         import sys
+
         try:
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "playwright", "install", "chromium",
+                sys.executable,
+                "-m",
+                "playwright",
+                "install",
+                "chromium",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -2916,10 +3052,12 @@ class Scrappling:
             self.pinchtab = None
             self._pinchtab_initialized = True
             self._pinchtab_last_reason = f"{type(exc).__name__}: {exc}"
-            self._pinchtab_last_hint = "Inspect backend.integrations.pinchtab_client; set ALPHA_ENABLE_PINCHTAB=false to silence"
+            self._pinchtab_last_hint = (
+                "Inspect backend.integrations.pinchtab_client; set ALPHA_ENABLE_PINCHTAB=false to silence"
+            )
             logger.warning("[Scrappling] PinchTab lazy-init crashed (%s: %s)", type(exc).__name__, exc, exc_info=True)
-    
-    def get_resource_stats(self) -> Dict[str, Any]:
+
+    def get_resource_stats(self) -> dict[str, Any]:
         return {
             "active_contexts": len(self._active_contexts),
             "pooled_contexts": len(self._context_pool),
@@ -2927,7 +3065,7 @@ class Scrappling:
             "max_pool_size": self._max_pool_size,
             "openclaw_initialized": self._openclaw_initialized,
             "pinchtab_initialized": self._pinchtab_initialized,
-            "memory_threshold_mb": self._memory_threshold_mb
+            "memory_threshold_mb": self._memory_threshold_mb,
         }
 
     def is_ready(self) -> bool:
@@ -2937,7 +3075,7 @@ class Scrappling:
             return True
         return self.pinchtab is not None and self._pinchtab_ready()
 
-    def get_engine_status(self) -> Dict[str, Any]:
+    def get_engine_status(self) -> dict[str, Any]:
         openclaw_status = {"available": self.openclaw is not None, "initialized": self._openclaw_initialized}
         if self.openclaw is None and self._openclaw_initialized:
             openclaw_status["reason"] = "see warning log"
@@ -2946,13 +3084,16 @@ class Scrappling:
             if err:
                 openclaw_status["last_init_error"] = err
 
-        pinchtab_status = {"available": self.pinchtab is not None and self._pinchtab_ready(), "initialized": self._pinchtab_initialized}
+        pinchtab_status = {
+            "available": self.pinchtab is not None and self._pinchtab_ready(),
+            "initialized": self._pinchtab_initialized,
+        }
         if self.pinchtab is None and self._pinchtab_initialized:
             pinchtab_status["reason"] = "pinchtab_daemon_not_running"
 
         return {"openclaw": openclaw_status, "pinchtab": pinchtab_status}
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         if not self._openclaw_initialized:
             await self._lazy_init_openclaw()
         if not self._pinchtab_initialized:
@@ -2981,7 +3122,7 @@ class Scrappling:
                 reasons["pinchtab_hint"] = self._pinchtab_last_hint
 
         return {"openclaw": openclaw_state, "pinchtab": pinchtab_state, "reasons": reasons}
-    
+
     async def cleanup_all_resources(self):
         logger.info("[Scrappling] Starting comprehensive resource cleanup...")
         async with self._context_lock:
@@ -2996,7 +3137,7 @@ class Scrappling:
             self._context_pool.clear()
             logger.info(f"[Scrappling] Cleared {pool_size} pooled contexts")
         logger.info("[Scrappling] Resource cleanup complete")
-    
+
     async def close(self):
         logger.info("[Scrappling] Closing browser engines...")
         await self.cleanup_all_resources()
@@ -3018,12 +3159,18 @@ class Scrappling:
             fetcher = StealthyFetcher()
             response = fetcher.fetch(url, **kwargs)
             sel = Selector(content=response.text, url=str(response.url)) if Selector is not None else None
-            return {"success": True, "status_code": response.status, "text": response.text, "selector": sel, "url": response.url}
+            return {
+                "success": True,
+                "status_code": response.status,
+                "text": response.text,
+                "selector": sel,
+                "url": response.url,
+            }
         except Exception as e:
             logger.error("[Scrappling] stealth_fetch failed for %s: %s", url, e)
             return {"success": False, "error": str(e)}
 
-    async def fast_fetch(self, url, impersonate='chrome', **kwargs):
+    async def fast_fetch(self, url, impersonate="chrome", **kwargs):
         """Fetch using Scrapling Fetcher with TLS impersonation."""
         if not _SCRAPLING_AVAILABLE or Fetcher is None:
             raise ScrapplingUnavailable("Scrapling Fetcher is not available")
@@ -3033,7 +3180,13 @@ class Scrappling:
             fetcher = Fetcher()
             response = fetcher.get(url, impersonate=impersonate, **kwargs)
             sel = Selector(content=response.text, url=str(response.url)) if Selector is not None else None
-            return {"success": True, "status_code": response.status, "text": response.text, "selector": sel, "url": response.url}
+            return {
+                "success": True,
+                "status_code": response.status,
+                "text": response.text,
+                "selector": sel,
+                "url": response.url,
+            }
         except Exception as e:
             logger.error("[Scrappling] fast_fetch failed for %s: %s", url, e)
             return {"success": False, "error": str(e)}
@@ -3048,7 +3201,13 @@ class Scrappling:
             fetcher = DynamicFetcher()
             response = fetcher.fetch(url, **kwargs)
             sel = Selector(content=response.text, url=str(response.url)) if Selector is not None else None
-            return {"success": True, "status_code": response.status, "text": response.text, "selector": sel, "url": response.url}
+            return {
+                "success": True,
+                "status_code": response.status,
+                "text": response.text,
+                "selector": sel,
+                "url": response.url,
+            }
         except Exception as e:
             logger.error("[Scrappling] dynamic_fetch failed for %s: %s", url, e)
             return {"success": False, "error": str(e)}
@@ -3058,6 +3217,7 @@ class Scrappling:
         if not _SCRAPLING_AVAILABLE or AsyncFetcher is None:
             raise ScrapplingUnavailable("Scrapling AsyncFetcher is not available")
         sem = asyncio.Semaphore(max_concurrent)
+
         async def _fetch(url):
             async with sem:
                 try:
@@ -3066,6 +3226,7 @@ class Scrappling:
                     return {"url": url, "success": True, "status_code": response.status, "text": response.text}
                 except Exception as e:
                     return {"url": url, "success": False, "error": str(e)}
+
         tasks = [_fetch(u) for u in urls]
         return await asyncio.gather(*tasks)
 
@@ -3078,12 +3239,14 @@ class Scrappling:
         results = []
         try:
             for elem in sel.css(css_selector):
-                results.append({
-                    "tag": getattr(elem, "tag", ""),
-                    "text": elem.text,
-                    "attributes": elem.attrib,
-                    "html": getattr(elem, "html", "")
-                })
+                results.append(
+                    {
+                        "tag": getattr(elem, "tag", ""),
+                        "text": elem.text,
+                        "attributes": elem.attrib,
+                        "html": getattr(elem, "html", ""),
+                    }
+                )
         except Exception as e:
             logger.error("[Scrappling] scrape_with_selector failed: %s", e)
         return results
@@ -3099,11 +3262,10 @@ BrowserOrchestrator = Scrappling
 
 _browser_orchestrator = None
 
+
 def get_browser_orchestrator() -> Scrappling:
     """Get global BrowserOrchestrator instance"""
     global _browser_orchestrator
     if _browser_orchestrator is None:
         _browser_orchestrator = Scrappling()
     return _browser_orchestrator
-
-

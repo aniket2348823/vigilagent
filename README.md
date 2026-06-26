@@ -8,7 +8,7 @@
 
 # Vigilagent — Autonomous AI-Powered Penetration Testing Platform
 
-> A multi-agent swarm intelligence system for automated security reconnaissance, vulnerability assessment, and attack simulation — driven by LLM-powered decision making, 35+ parsers, 25+ tool integrations, and a real-time React dashboard.
+> A multi-agent swarm intelligence system for automated security reconnaissance, vulnerability assessment, and attack simulation — driven by LLM-powered decision making, 39 recon tools, 35+ parsers, and a real-time React dashboard.
 
 ---
 
@@ -30,22 +30,27 @@
 - [Configuration](#configuration)
 - [Testing](#testing)
 - [Project Structure](#project-structure)
+- [Documentation](#documentation)
 - [License](#license)
 
 ---
 
 ## Overview
 
-Vigilagent (codename **Vigilagent**) is a full-stack autonomous penetration testing platform that coordinates a swarm of specialized AI agents to perform end-to-end security assessments. Each agent operates with a distinct role — from reconnaissance and exploitation to forensic analysis and governance — orchestrated by a central Hive system with event-driven communication, phase-gated scan pipelines, and self-healing capabilities.
+Vigilagent is a full-stack autonomous penetration testing platform that coordinates a swarm of specialized AI agents to perform end-to-end security assessments. Each agent operates with a distinct role — from reconnaissance and exploitation to forensic analysis and governance — orchestrated by a central Hive system with event-driven communication, phase-gated scan pipelines, and self-healing capabilities.
+
+It models itself as a "digital organism": a **Hive Orchestrator** (`backend/core/orchestrator.py`) wakes the agents, feeds them a typed event vocabulary via the **EventBus** (`backend/core/hive.py`), and lets them collaborate to take a target from `TARGET_ACQUIRED` to `REPORT_READY`.
 
 The platform combines:
-- **Multi-agent AI orchestration** with 11 specialized agents
-- **25+ external security tools** integrated via Docker-containerized runtimes
-- **35+ output parsers** for structured finding extraction
+
+- **Multi-agent AI orchestration** with 12 specialized agents (including a Network Service Commander for OSI L3–L7 assessment) and bounded delegation via `DelegationManager`
+- **39 external security tools** integrated via Docker-containerized or local PATH runtimes
+- **35+ output parsers** for structured finding extraction with CVSS scoring
 - **Dual browser automation engines** (OpenClaw/Playwright + PinchTab) with hybrid session management
-- **LLM-powered decision making** via OpenRouter (Gemini, GPT, Claude, etc.)
-- **Real-time React dashboard** with WebSocket live feeds
+- **Two-LLM architecture** — strategic (GPT) + tactical (Gemini) models via OpenRouter
+- **Real-time React dashboard** with WebSocket live feeds at ~50 FPS broadcast batching
 - **Enterprise export** in SARIF, STIX 2.1, Neo4j Cypher, Maltego CSV, HackerOne, Markdown, and PDF
+- **Graceful degradation** — runs fully local (SQLite + in-process EventBus) or distributed (Redis + Supabase)
 
 ---
 
@@ -54,13 +59,14 @@ The platform combines:
 | Category | Capabilities |
 |----------|-------------|
 | **Reconnaissance** | 9-phase automated pipeline, subdomain enumeration, DNS resolution, port scanning, HTTP probing, web crawling, JS analysis, directory bruteforcing, API schema discovery |
-| **Attack Simulation** | Vulnerability validation via Nuclei, out-of-band testing with Interactsh, CVSS scoring, exploit chain analysis |
-| **Browser Automation** | Stealth Playwright with anti-bot bypass, headless Chrome/Firefox, session sharing, SPA-aware rendering, forensic evidence capture |
-| **AI Intelligence** | LLM-powered command planning, cognitive routing, attack surface analysis, skill extraction and learning, self-improvement engine |
-| **Governance** | Scope enforcement at API + tool level, rate limiting, CSRF protection, approval hooks for destructive actions, credential vault with encryption |
-| **Observability** | Real-time WebSocket dashboard, structured logging, telemetry, performance tracking, decision audit trails |
-| **Distributed** | Master/Worker cluster mode via Redis, distributed event bus, sharded scan state persistence |
-| **Self-Healing** | Agent health monitoring, automatic restart callbacks, recovery engine with forensic learning bridge |
+| **Attack Simulation** | Vulnerability validation via Nuclei, out-of-band testing with Interactsh, CVSS scoring, exploit chain analysis, Bayesian evidence fusion |
+| **Browser Automation** | Stealth Playwright with anti-bot bypass, headless Chrome/Firefox, session sharing, SPA-aware rendering, forensic evidence capture (HAR, DOM snapshots, screenshots) |
+| **AI Intelligence** | Two-LLM exclusivity (strategic + tactical), cognitive routing, attack surface analysis, skill extraction and learning, self-improvement engine |
+| **Governance** | `ScopePolicy.assert_allowed()` at every tool invocation, ≥2-signal evidence requirement for confirmed vulns, rate limiting, CSRF protection, approval hooks for destructive actions |
+| **Observability** | Real-time WebSocket dashboard, 4 operator dashboards (Integration Health, Learning, Skills, Browser Health), 7 alert rules, structured logging, decision audit trails |
+| **Distributed** | Master/Worker cluster mode via Redis pub/sub, `DistributedEventBus`, sharded scan state, durable task leases with crash recovery |
+| **Self-Healing** | Agent health monitoring, browser memory leak detection, circuit-breaker-protected cross-system learning, automatic restart with forensic learning bridge |
+| **Persistence** | Dual-tier storage — SQLite WAL (durable execution state + FTS5 search) and Supabase (vulnerabilities, recon entities, HTTP exchanges) |
 
 ---
 
@@ -71,65 +77,96 @@ The platform combines:
 │  React / Vite Dashboard (:5173)                                  │
 │  Dashboard │ New Scan │ Scans │ Live Monitor │ Library │ Settings │
 └───────────────────────────┬──────────────────────────────────────┘
-                            │ REST + WebSocket (/ws/live)
+                            │ REST + WebSocket (/ws/live, /stream)
 ┌───────────────────────────▼──────────────────────────────────────┐
 │  FastAPI Backend (:8000)                                         │
 │  Middleware: CORS · Rate Limiter · Scope Guard · API Key Auth    │
 │                                                                  │
-│  /api/health  /api/recon  /api/attack  /api/reports  /api/ai     │
+│  /api/health  /api/scans  /api/recon  /api/attack  /api/reports  │
 │  /api/v1/recon/* (Alpha V6)  /api/defense  /api/skills           │
-│  /api/scans  /api/data  /api/self-awareness  /bridge             │
+│  /api/ai  /api/data  /api/self-awareness  /api/integration       │
+│  /api/runtime/health  /bridge                                    │
 └───────────────────────────┬──────────────────────────────────────┘
                             │
 ┌───────────────────────────▼──────────────────────────────────────┐
-│  Hive Orchestrator                                               │
-│  EventBus (pub/sub) │ PhaseGate │ BroadcastThrottle              │
-│  ScanLifecycleManager │ CognitiveRouter │ EndpointTracker        │
+│  Hive Orchestrator (backend/core/orchestrator.py)                │
+│  EventBus (pub/sub) │ PhaseGate │ GuardLayer │ DelegationManager │
+│  MissionPlanner │ CognitiveRouter │ IntegrationCoordinator       │
 │                                                                  │
-│  ┌──────────── Agent Swarm (11 Agents) ────────────┐             │
-│  │ Alpha    │ Beta     │ Gamma   │ Delta   │ Omega  │             │
-│  │ (Recon)  │ (Attack) │ (Fuzz)  │ (Hybrid)│ (Orch) │             │
-│  │ Sigma    │ Kappa    │ Zeta    │ Chi     │ Prism  │             │
-│  │ (Score)  │ (Memory) │ (Gov)   │ (Audit) │ (Def)  │             │
-│  │ Lambda   │          │         │         │        │             │
-│  │ (Learn)  │          │         │         │        │             │
-│  └──────────────────────────────────────────────────┘             │
+│  ┌────────────── Agent Swarm (12 Agents) ──────────────┐          │
+│  │ Alpha    │ Beta     │ Gamma    │ Delta   │ Omega    │          │
+│  │ (Recon)  │ (Attack) │ (Audit)  │ (DOM)   │ (Strat)  │          │
+│  │ Sigma    │ Kappa    │ Zeta     │ Chi     │ Prism    │          │
+│  │ (Payload)│ (Memory) │ (Gov)    │ (Insp)  │ (Def)    │          │
+│  │ Lambda   │ NetworkServiceCommander (L3-L7)          │          │
+│  │ (Learn)  │ Port scan → Service ID → TLS analysis    │          │
+│  └─────────────────────────────────────────────────────┘          │
+│                              │                                    │
+│  ┌─── Recon Plane ───────────▼───────────────────┐               │
+│  │ TerminalEngine → Docker sandbox / Local PATH  │               │
+│  │ 39 tools: nmap, nuclei, amass, katana, ...    │               │
+│  └───────────────────────────────────────────────┘               │
 └───────────────────────────┬──────────────────────────────────────┘
                             │
      ┌──────────────────────┼──────────────────────┐
      ▼                      ▼                      ▼
-  Supabase              Redis                  Neo4j
-  (Postgres)          (Cache +              (Knowledge
-  + Scan DB         Distributed Bus)          Graph)
+  SQLite WAL            Redis               Supabase
+  (scan_state.db     (Distributed        (Vulnerabilities,
+   + FTS5 search)     EventBus +          recon entities,
+                      work queues)        HTTP exchanges)
+                                              │
+                                    ┌─────────▼─────────┐
+                                    │  OpenRouter LLMs   │
+                                    │  Strategic + Tact. │
+                                    └───────────────────┘
 ```
+
+The same binary degrades gracefully:
+- **Local mode**: in-process `EventBus`, no Redis, all state in `scan_state.db` and `stats.json`
+- **Distributed mode**: `DistributedEventBus` overlays Redis pub/sub for fan-out + work queues
 
 ---
 
 ## Agent Swarm
 
-The platform operates 11 specialized agents, each with a distinct security role:
+The platform operates 12 specialized agents, all inheriting from `BaseAgent` (`backend/core/hive.py`) and following a fixed `start → setup → lifecycle → think → execute_task → stop` shape:
 
-| Agent | Role | Responsibility |
-|-------|------|----------------|
-| **Alpha** | Recon Scout | Full reconnaissance pipeline — subdomain discovery, DNS, ports, HTTP probing, crawling, JS analysis, API schema discovery |
-| **Beta** | Attack Breaker | Vulnerability exploitation, payload delivery, exploit chain construction |
-| **Gamma** | Forensic Analyst | Fuzzing campaigns, evidence collection, deep content analysis |
-| **Delta** | Hybrid Controller | Browser engine orchestration, hybrid session management between OpenClaw and PinchTab |
-| **Omega** | Campaign Strategist | High-level scan strategy, agent coordination, objective planning |
-| **Sigma** | Payload Smith | Vulnerability scoring (CVSS), finding normalization, severity assessment |
-| **Kappa** | Memory Librarian | Knowledge persistence, skill cataloging, learning loop management |
-| **Zeta** | Governance Governor | Scope enforcement, policy compliance, engagement authorization |
-| **Chi** | Inspector | Code analysis, audit trail verification, scan integrity checks |
-| **Prism** | Defense Sentinel | Defensive posture analysis, WAF detection, security header evaluation |
-| **Lambda** | Learner | Self-improvement engine, skill extraction, performance optimization learning |
+| Agent | Code | Role | Responsibility |
+|-------|------|------|----------------|
+| **Alpha** | `backend/agents/alpha.py` | Recon Scout | Drives the 39-tool recon registry; runs the 9-phase pipeline |
+| **Beta** | `backend/agents/beta.py` | Attack Breaker | Fires payloads against confirmed targets for exploit validation |
+| **Gamma** | `backend/agents/gamma.py` | Forensic Auditor | Promotes candidates to confirmed findings; evidence collection |
+| **Delta** | `backend/agents/delta.py` | DOM Controller | Hybrid Playwright-backed browser controller |
+| **Omega** | `backend/agents/omega.py` | Campaign Strategist | Picks campaign profile (Blitzkrieg, Low-and-Slow, Browser-Deep, …) |
+| **Sigma** | `backend/agents/sigma.py` | Payload Smith | Constructs payloads via `aiohttp` session with `SessionLifecycleMixin` |
+| **Kappa** | `backend/agents/kappa.py` | Memory Librarian | Broadcasts learned patterns across scans |
+| **Zeta** | `backend/agents/zeta.py` | Governor | Emits `CONTROL_SIGNAL` for THROTTLE / RESUME / STEALTH |
+| **Chi** | `backend/agents/chi.py` | Inspector | Traffic and response analysis |
+| **Prism** | `backend/agents/prism.py` | DOM Sentinel | Defensive posture analysis |
+| **Lambda** | `backend/agents/lambda_agent.py` | Learner | Self-improvement engine, skill extraction, performance optimization |
+| **NetworkServiceCommander** | `backend/agents/commanders/network_commander.py` | Network Service Commander | OSI L3–L7 network assessment — port scanning (naabu/nmap), service fingerprinting (nmap `-sV`), TLS/cipher analysis (tlsx), knowledge graph ingestion. Runs scope-checked via `TerminalEngine`, budgeted via `IterationBudget`, and delegates bounded child tasks through `DelegationManager.register_runner("NetworkChild")`. Subscribes to `TARGET_ACQUIRED` events and auto-assesses every in-scope host |
 
-All agents communicate through a **distributed EventBus** (`backend/core/hive.py`) with typed events, priority queuing, and broadcast throttling.
+### Shared Behaviours (`backend/agents/_shared/agent_mixins.py`)
+
+- **SkillRecallMixin** — per-target skill cache
+- **SessionLifecycleMixin** — lazy `aiohttp.ClientSession` lifecycle
+- **ControlSignalMixin** — uniform Zeta THROTTLE/RESUME/STEALTH handler
+- **ScanContextRecorderMixin** — `ctx.append_event(event)` boilerplate
+
+### Commander Delegation (`backend/agents/commanders/`)
+
+Commander agents like `NetworkServiceCommander` can spawn **bounded child workers** through the `DelegationManager` (Architecture §5.1.2). Children receive:
+- A sanitised tool allowlist (no `delegate`, `clarify`, or `memory` tools)
+- An isolated `IterationBudget` (max depth 3, max concurrent 8)
+- A context COPY (not a reference) for isolation
+
+The `NetworkChild` runner is registered at module import time and executes host assessments (port scan → service fingerprint → TLS analysis) as a bounded subtask.
 
 ---
 
 ## Alpha V6 Recon Engine
 
-The flagship reconnaissance engine runs a **9-phase pipeline** with 25+ integrated tools:
+The flagship reconnaissance engine runs a **9-phase pipeline** with 39 integrated tools:
 
 ```
 Phase 1: Passive Recon       → subfinder, amass, gau, waybackurls, cloudlist, spiderfoot
@@ -144,12 +181,14 @@ Phase 9: Validation          → nuclei (templates), interactsh (OOB), gowitness
 ```
 
 ### Pipeline Features
-- **Phase Gate** — Each phase must complete before the next begins; gates enforce ordering and can be overridden
-- **Scope Gate** — URL/domain validation at every tool invocation prevents out-of-scope scanning
+
+- **Phase Gate** — Each phase must complete before the next begins (180 s hard upper bound prevents deadlocks)
+- **Scope Gate** — `ScopePolicy.allows()` validation at every tool invocation prevents out-of-scope scanning
 - **Deduplication** — Cross-tool finding deduplication with configurable similarity thresholds
-- **Live Feed** — Real-time WebSocket events for every finding, phase transition, and agent action
+- **Live Feed** — Real-time WebSocket events for every finding, phase transition, and agent action (~50 FPS batched broadcast)
 - **Approval Hooks** — Human-in-the-loop confirmation for destructive or high-risk actions
-- **Entity Engine** — Extracted entities (IPs, domains, emails, secrets) are linked into a knowledge graph
+- **Entity Engine** — Extracted entities (IPs, domains, emails, secrets) are linked into a unified knowledge graph
+- **Replay Buffer** — 50-entry ring of recent broadcasts replayed on WebSocket reconnect
 
 ---
 
@@ -172,7 +211,7 @@ Phase 9: Validation          → nuclei (templates), interactsh (OOB), gowitness
 
 **35 dedicated parsers** in `backend/parsers/recon/` transform raw tool output into normalized findings with severity, confidence, and CVSS scores.
 
-All tools run inside **Docker containers** via the `DockerToolRuntime` (`backend/tools/recon/docker_runtime.py`), with configurable timeouts, guardrails, and scope validation.
+All tools run via the **TerminalEngine** (`backend/core/terminal_engine.py`) with selectable backends — `TerminalBackend.LOCAL` (PATH binaries) or `TerminalBackend.DOCKER` (containerized) — with configurable timeouts, guardrails, and scope validation.
 
 ---
 
@@ -186,27 +225,42 @@ Vigilagent includes a sophisticated **dual-engine browser automation** system:
 | **PinchTab** | Headless browser intelligence, parallel crawling | Remote browser control, cluster-aware fuzzing, screenshot capture |
 
 ### Hybrid Session Manager
+
 The `HybridSessionManager` (`backend/core/hybrid_session_manager.py`) provides:
 - Automatic engine selection based on target characteristics
 - Session sharing between OpenClaw and PinchTab
 - Fallback cascading when one engine is unavailable
 - Forensic evidence capture (HAR files, screenshots, DOM snapshots)
 
-### Unified Browser Engine
-The `browser_engine.py` consolidates all browser capabilities into a single module with Scrapling integration for advanced anti-detection, proxy rotation, and adaptive CSS/XPath parsing.
+### Browser Health Monitoring
+
+The `BrowserHealthMonitorExtension` tracks per-agent browser health scores, memory usage, error rates, and triggers automatic recovery via the `RecoveryEngine` when scores drop below threshold.
 
 ---
 
 ## AI & LLM Integration
+
+### Two-LLM Architecture
+
+Vigilagent enforces **Two-LLM exclusivity** — only two model slots are permitted:
+
+| Slot | Default Model | Use Case |
+|------|---------------|----------|
+| **Strategic** | `openai/gpt-oss-20b` | High-level campaign planning, attack strategy, complex reasoning |
+| **Tactical** | `gemini-2.5-flash` | Per-tool command generation, quick classification, parse verification |
+
+Both are configured in `backend/core/config.py` and routed through the **Cognitive Router** (`backend/core/cognitive_router.py`).
+
+### AI Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
 | **AI Cortex** | `backend/ai/cortex.py` | Central LLM interface — prompt construction, response parsing, context management |
 | **Gemini Adapter** | `backend/ai/gemini.py` | Google Gemini model integration |
 | **GI5 Engine** | `backend/ai/gi5.py` | Multi-model AI orchestration layer |
-| **OpenRouter** | `backend/ai/openrouter.py` | OpenRouter API for model routing (GPT-4, Claude, Gemini, etc.) |
+| **OpenRouter** | `backend/ai/openrouter.py` | OpenRouter API for model routing |
 | **Cognitive Router** | `backend/core/cognitive_router.py` | Intelligent request routing to the optimal LLM based on task type |
-| **Skill Library** | `backend/core/skill_library.py` | AI-extracted reusable pentest skills with learning loop |
+| **Skill Library** | `backend/core/skill_library.py` | AI-extracted reusable pentest skills with capability/context/framework indexes |
 | **Self-Improvement** | `backend/core/self_improvement_engine.py` | Performance-driven optimization of agent strategies |
 | **Learning Engine** | `backend/core/learning_engine.py` | Cross-scan pattern learning and technique refinement |
 
@@ -227,11 +281,13 @@ Built with **React 18 + Vite**, the dashboard provides:
 | **Login** | `Login.jsx` | Session-based authentication with TOTP support |
 
 ### UI Features
-- Framer Motion animations
+
+- Framer Motion animations with micro-interactions
 - Lenis smooth scrolling
 - Dark mode with glassmorphism aesthetics
-- Responsive layout
+- Responsive layout across devices
 - Real-time severity badges and status indicators
+- Toast notifications via `useReconLiveFeed` WebSocket hook
 
 ---
 
@@ -243,12 +299,15 @@ Built with **React 18 + Vite**, the dashboard provides:
 |--------|------|-------------|
 | `GET` | `/api/health` | Infrastructure health check (Supabase, Redis, Alpha status) |
 | `GET` | `/api/tools` | List all integrated recon tools with availability status |
+| `POST` | `/api/scans` | Create a new scan (returns HTTP 202 with `scan_id`) |
+| `GET` | `/api/scans/{id}` | Get scan status and progress |
+| `DELETE` | `/api/scans/{id}` | Cancel a running scan |
 | `POST` | `/api/v1/recon/start` | Start a new reconnaissance scan |
 | `GET` | `/api/v1/recon/status/{id}` | Get scan status and progress |
 | `POST` | `/api/v1/recon/stop/{id}` | Cancel a running scan |
-| `GET` | `/api/v1/recon/scans` | List all scan history |
 | `POST` | `/api/v1/recon/export` | Export findings (SARIF/STIX/Neo4j/Markdown/PDF) |
-| `WS` | `/api/v1/recon/live/{id}` | Real-time scan event stream |
+| `WS` | `/ws/live` | Global real-time event stream (multiplexed WebSocket) |
+| `WS` | `/stream` | Per-scan event stream |
 
 ### Additional API Groups
 
@@ -261,11 +320,13 @@ Built with **React 18 + Vite**, the dashboard provides:
 | `/api/dashboard` | Dashboard | UI data aggregation |
 | `/api/ai` | AI | Direct LLM interaction and prompt management |
 | `/api/data` | Data | Raw scan data access |
-| `/api/scans` | Scans | Scan management and lifecycle |
 | `/api/skills` | Skills | Skill library CRUD |
 | `/api/self-awareness` | Self-Awareness | Agent introspection and performance metrics |
+| `/api/integration/metrics` | Integration | Coordinator health, circuit breaker status, feature flags |
+| `/api/runtime/health` | Runtime | Browser stack health, agent health scores |
 | `/bridge` | Extension Bridge | Browser extension communication |
-| `WS /ws/live` | WebSocket | Global real-time event stream |
+
+> **Full API documentation:** [`docs/API.md`](docs/API.md) · **Changelog:** [`docs/API_CHANGELOG.md`](docs/API_CHANGELOG.md)
 
 ---
 
@@ -289,8 +350,8 @@ Built with **React 18 + Vite**, the dashboard provides:
 
 - **Python 3.11+**
 - **Node.js 18+**
-- **Redis** (optional — enables distributed caching and cluster mode)
-- **Supabase** account (for persistent scan storage)
+- **Redis** (optional — enables distributed caching, cluster mode, and `DistributedEventBus`)
+- **Supabase** account (optional — for cloud-persisted vulnerabilities and recon entities)
 - **Docker** (optional — for containerized security tool execution)
 
 ### Backend Setup
@@ -302,7 +363,12 @@ cd vigilagent
 
 # Create environment configuration
 cp .env.example .env
-# Edit .env with your Supabase URL/Key, OpenRouter API key, and other settings
+# Edit .env with your API keys and settings
+
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate   # Linux/macOS
+# .venv\Scripts\activate    # Windows
 
 # Install Python dependencies
 pip install -r backend/requirements.txt
@@ -326,16 +392,26 @@ npm run dev
 
 The dashboard will be available at `http://localhost:5173` and the API at `http://localhost:8000`.
 
-### Cluster Mode
+### CLI Modes
 
 ```bash
-# Start a full cluster (1 master + N workers)
+# Default: API + Hive in-process (no Redis required)
+python -m backend.main --mode serve
+
+# Start a full cluster (1 master + N workers, requires Redis)
 python -m backend.main --mode cluster --num-workers 5
 
 # Or start components individually
 python -m backend.main --mode master
 python -m backend.main --mode worker --worker-id worker-1
 ```
+
+| Mode | Entry | Purpose |
+|------|-------|---------|
+| `serve` (default) | `uvicorn.Server` | API + Hive in-process |
+| `master` | `DistributedAttackCluster.start_master` | Just the Master node |
+| `worker` | `DistributedAttackCluster.start_worker` | Just a Worker |
+| `cluster` | `DistributedAttackCluster.start_cluster` | Master + N workers |
 
 ---
 
@@ -352,10 +428,9 @@ This starts three services:
 - **Redis** on port `6379`
 
 ```yaml
-# docker-compose.yml services:
-# - backend: FastAPI app with scan data volume
-# - frontend: Nginx-served Vite build
-# - redis: Redis 7 Alpine with health checks
+# docker-compose.yml profiles:
+# default:    backend + frontend + redis
+# monitoring: + prometheus + grafana + alertmanager
 ```
 
 ---
@@ -371,12 +446,14 @@ All configuration is managed through environment variables. See [`.env.example`]
 | `SUPABASE_URL` | Your Supabase project URL |
 | `SUPABASE_KEY` | Your Supabase anonymous key |
 | `OPENROUTER_API_KEY` | OpenRouter API key for LLM access |
+| `GEMINI_API_KEY` | Google Gemini API key |
+| `API_AUTH_KEY` | API authentication key (min 32 chars) |
 
 ### Key Optional Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
+| `REDIS_URL` | `redis://localhost:6379` | Redis connection URL (enables distributed mode) |
 | `ALPHA_ENABLE_V6` | `true` | Enable the V6 recon engine |
 | `ALPHA_DEFAULT_MODE` | `STANDARD` | Default scan mode |
 | `ALPHA_DEFAULT_RPS` | `50` | Requests per second limit |
@@ -388,16 +465,18 @@ All configuration is managed through environment variables. See [`.env.example`]
 
 ### Feature Flags & Rollout
 
-The platform supports gradual rollout of advanced features:
+Advanced features ship behind flags with gradual rollout via `config/integration.yaml`:
 
-| Feature | Flag | Rollout % |
-|---------|------|-----------|
-| Browser Learning | `ENABLE_BROWSER_LEARNING` | 10% |
-| Skill Library V2 | `ENABLE_SKILL_LIBRARY_V2` | 25% |
-| Browser Health Monitoring | `ENABLE_BROWSER_HEALTH_MONITORING` | 50% |
-| Self-Healing Engine | `ENABLE_SELF_HEALING` | 75% |
-| Unified Knowledge Graph | `ENABLE_UNIFIED_GRAPH` | 100% |
-| Intelligent Routing | `ENABLE_INTELLIGENT_ROUTING` | 100% |
+| Feature | Flag | Rollout % | Stage |
+|---------|------|-----------|-------|
+| Browser Learning | `ENABLE_BROWSER_LEARNING` | 10% | 1 |
+| Skill Library V2 | `ENABLE_SKILL_LIBRARY_V2` | 25% | 2 |
+| Browser Health Monitoring | `ENABLE_BROWSER_HEALTH_MONITORING` | 50% | 3 |
+| Self-Healing Engine | `ENABLE_SELF_HEALING` | 75% | 4 |
+| Unified Knowledge Graph | `ENABLE_UNIFIED_GRAPH` | 100% | 5 |
+| Intelligent Routing + Forensic Learning | `ENABLE_INTELLIGENT_ROUTING` | 100% | 5 |
+
+Per-scan cohort decisions use consistent hashing over `scan_id` for reproducible A/B testing.
 
 ---
 
@@ -437,80 +516,73 @@ python -m pytest tests/phase7_reports.py -v          # Report generation tests
 ```
 vigilagent/
 ├── backend/
-│   ├── agents/                    # 11 AI agents
+│   ├── agents/                    # 12 AI agents
 │   │   ├── alpha.py               # Recon Scout
 │   │   ├── beta.py                # Attack Breaker
-│   │   ├── gamma.py               # Forensic Analyst
-│   │   ├── delta.py               # Hybrid Controller
+│   │   ├── gamma.py               # Forensic Auditor
+│   │   ├── delta.py               # DOM Controller
 │   │   ├── omega.py               # Campaign Strategist
 │   │   ├── sigma.py               # Payload Smith
 │   │   ├── kappa.py               # Memory Librarian
-│   │   ├── zeta.py                # Governance Governor
+│   │   ├── zeta.py                # Governor
 │   │   ├── chi.py                 # Inspector
-│   │   ├── prism.py               # Defense Sentinel
+│   │   ├── prism.py               # DOM Sentinel
 │   │   ├── lambda_agent.py        # Learner
-│   │   ├── alpha_recon/           # Alpha V6 recon subsystem (21 modules)
-│   │   │   ├── alpha_orchestrator.py
-│   │   │   ├── phase_controller.py
-│   │   │   ├── scope_gate.py
-│   │   │   ├── scoring.py
-│   │   │   ├── exporters.py
-│   │   │   ├── live_feed.py
-│   │   │   └── ...
-│   │   └── commanders/            # Delegation child runners
+│   │   ├── factory.py             # Agent factory
+│   │   ├── _shared/               # Shared mixins (Skill, Session, Control, Recorder)
+│   │   ├── alpha_recon/           # Alpha V6 recon subsystem
+│   │   └── commanders/            # Commander agents with bounded delegation
+│   │       ├── __init__.py        # Registers NetworkChild runner with DelegationManager
+│   │       └── network_commander.py  # L3-L7 network assessment (naabu, nmap -sV, tlsx)
 │   ├── ai/                        # LLM integration layer
-│   │   ├── cortex.py              # Central AI cortex (113KB)
+│   │   ├── cortex.py              # Central AI cortex
 │   │   ├── gemini.py              # Google Gemini adapter
 │   │   ├── gi5.py                 # Multi-model orchestration
 │   │   └── openrouter.py          # OpenRouter API client
 │   ├── api/                       # REST + WebSocket endpoints
 │   │   ├── endpoints/             # Route handlers
-│   │   ├── socket_manager.py      # WebSocket connection manager
-│   │   └── defense.py             # Defense API
-│   ├── core/                      # Core engine (89 modules)
-│   │   ├── orchestrator.py        # Hive orchestrator (1337 lines)
-│   │   ├── hive.py                # EventBus + distributed pub/sub
-│   │   ├── browser_engine.py      # Unified browser engine (Scrapling)
-│   │   ├── browser_orchestrator.py # Browser session orchestration
-│   │   ├── learning_engine.py     # Cross-scan learning (102KB)
-│   │   ├── recovery_engine.py     # Self-healing + recovery (84KB)
-│   │   ├── terminal_engine.py     # Tool execution engine
-│   │   ├── skill_library.py       # AI skill catalog
-│   │   ├── state.py               # Scan state management
+│   │   └── socket_manager.py      # WebSocket connection manager (batched broadcast)
+│   ├── core/                      # Core engine
+│   │   ├── orchestrator.py        # Hive orchestrator (scan lifecycle)
+│   │   ├── hive.py                # EventBus + DistributedEventBus
+│   │   ├── scope.py               # ScopePolicy (authorization enforcement)
+│   │   ├── scan_state_db.py       # ScanStateDB (SQLite WAL + FTS5)
+│   │   ├── database.py            # EliteDBManager (Supabase client)
+│   │   ├── terminal_engine.py     # Tool execution engine (Local + Docker)
 │   │   ├── config.py              # Configuration management
-│   │   ├── scope.py               # Scope enforcement
-│   │   ├── phase_gate.py          # Phase gate controller
+│   │   ├── context.py             # ScanContext (per-scan execution arena)
+│   │   ├── planner.py             # MissionPlanner (task DAG)
+│   │   ├── delegation_manager.py  # Bounded child agent delegation
+│   │   ├── integration_coordinator.py  # Cross-system event routing + circuit breakers
+│   │   ├── learning_engine.py     # Cross-scan pattern learning
+│   │   ├── recovery_engine.py     # Self-healing + browser recovery
+│   │   ├── skill_library.py       # AI skill catalog
 │   │   ├── cognitive_router.py    # LLM request routing
-│   │   ├── scan_lifecycle_manager.py
+│   │   ├── phase_gate.py          # Phase gate controller
 │   │   └── ...
 │   ├── parsers/recon/             # 35 tool output parsers
 │   ├── reporting/                 # Report generators (PDF, SARIF, STIX)
 │   ├── skills/                    # Skill library framework
 │   ├── tools/recon/               # Tool execution layer
+│   │   ├── registry.py            # 39-tool registry (RECON_TOOLS)
 │   │   ├── commands.py            # Tool command builders
-│   │   ├── docker_runtime.py      # Docker container runtime
-│   │   ├── registry.py            # Tool registry
 │   │   └── guardrails.py          # Execution guardrails
 │   ├── integrations/              # External service clients
 │   ├── modules/                   # Attack modules
-│   └── main.py                   # Application entry point
-├── src/                           # React frontend
-│   ├── components/                # UI components
-│   │   ├── Dashboard.jsx
-│   │   ├── NewScan.jsx
-│   │   ├── Scans.jsx
-│   │   ├── LiveMonitor.jsx
-│   │   ├── Library.jsx
-│   │   ├── Settings.jsx
-│   │   └── Login.jsx
+│   └── main.py                    # Application entry point (4 CLI modes)
+├── src/                           # React 18 + Vite frontend
+│   ├── components/                # UI components (Dashboard, NewScan, Scans, ...)
+│   ├── lib/                       # API client (apiUrl + websocketUrl)
+│   ├── hooks/                     # Custom hooks (useReconLiveFeed, ...)
 │   ├── App.jsx                    # Root component with routing
-│   └── index.css                  # Global styles
-├── tests/                         # Test suite
-├── config/                        # Build + tool configuration
+│   └── index.css                  # Global styles (dark mode, glassmorphism)
+├── config/                        # Runtime configuration
+│   ├── scope.yaml                 # Default scope policy
+│   └── integration.yaml           # Feature flags + rollout percentages
+├── docs/                          # Documentation (13 files)
+├── tests/                         # Test suite (unit, e2e, integration, chaos, property)
 ├── docker/                        # Docker build assets
-├── docs/                          # Documentation
-├── scripts/                       # Development scripts
-├── docker-compose.yml             # Production deployment
+├── docker-compose.yml             # Production deployment (backend + frontend + redis)
 ├── Dockerfile                     # Backend container
 ├── Dockerfile.frontend            # Frontend container
 ├── nginx.conf                     # Frontend reverse proxy
@@ -525,11 +597,19 @@ vigilagent/
 
 | Document | Description |
 |----------|-------------|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture and design principles |
-| [`docs/PROJECT.md`](docs/PROJECT.md) | Project description and goals |
-| [`docs/VUL_AGENT_MANIFEST.md`](docs/VUL_AGENT_MANIFEST.md) | Agent capabilities and specifications |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution guidelines |
-| [`.env.example`](.env.example) | Complete environment variable reference |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture blueprint with code citations — agents, event bus, concurrency model, scan lifecycle, integration coordinator |
+| [`docs/API.md`](docs/API.md) | REST & WebSocket API reference — all public endpoints, request/response schemas, auth |
+| [`docs/API_CHANGELOG.md`](docs/API_CHANGELOG.md) | API version history and breaking change log |
+| [`docs/INTERNAL_API.md`](docs/INTERNAL_API.md) | Internal Python class reference — `StateManager`, `BrowserOrchestrator`, `EventBus`, etc. |
+| [`docs/DB_SCHEMA.md`](docs/DB_SCHEMA.md) | SQLite + Supabase schema — tables, columns, indexes, migration versioning |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Full deployment guide — prerequisites, installation, systemd, Nginx, Docker, topology, scaling |
+| [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) | Environment variables, YAML config, feature flags, and tuning knobs |
+| [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Operator dashboards, alert rules, and metrics reference |
+| [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Performance benchmarks, profiling results, and optimization recommendations |
+| [`docs/SECURITY_BEST_PRACTICES.md`](docs/SECURITY_BEST_PRACTICES.md) | Security guidelines — scope policy, encryption, credential management |
+| [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Common issues, diagnostic commands, and resolution steps |
+| [`docs/USAGE_EXAMPLES.md`](docs/USAGE_EXAMPLES.md) | End-to-end usage examples — creating scans, interpreting results, reports |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution guidelines and PR process |
 
 ---
 

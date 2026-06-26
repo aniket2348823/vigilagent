@@ -1,7 +1,7 @@
 """
-Vigilagent Scanner PDF Builder
+Vigilagent PDF Builder
 ================================================================================
-Builds the per-scan PDF report in the exact "Vigilagent Scanner" layout
+Builds the per-scan PDF report in the exact "Vigilagent" layout
 (Executive Summary → Detailed Findings (one per finding) → Scan Timeline).
 
 Public entry point:
@@ -14,34 +14,38 @@ Design rules (enforced):
     prose (description, impact, explanation, remediation, code-fix).
   * Never display "N/A" — degrade to a concrete neutral value.
   * No new heavy dependencies — uses fpdf2 (already in requirements).
-  * Branding stays "Vigilagent Scanner".
+  * Branding stays "Vigilagent".
   * Output path: <REPORTS_DIR>/Scan_Report_<scan_id>.pdf  (preserves the
     existing /api/reports/download/<file> endpoint).
 """
+
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from fpdf import FPDF
 
-import logging
 from backend.core.config import settings
 from backend.reporting.cvss_engine import score_for_vuln_class, severity_band
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 logger = logging.getLogger("ScanPDF")
 
-# ── Color palette (Vigilagent Scanner specimen) ─────────────────────────────
+# ── Color palette (Vigilagent specimen) ─────────────────────────────
 BRAND_BLACK = (15, 15, 15)
-BRAND_RULE = (44, 62, 80)         # Header/footer underline
-TITLE_RED = (192, 57, 43)         # Big section titles
-FILTER_PURPLE = (118, 77, 220)    # Filter category underline
+BRAND_RULE = (44, 62, 80)  # Header/footer underline
+TITLE_RED = (192, 57, 43)  # Big section titles
+FILTER_PURPLE = (118, 77, 220)  # Filter category underline
 TEXT_BLACK = (20, 20, 20)
 META_GREY = (110, 110, 110)
 TERMINAL_BG = (245, 245, 248)
@@ -51,41 +55,41 @@ TABLE_HEADER_BG = (240, 240, 246)
 PROGRESS_BG = (230, 230, 235)
 
 SEVERITY_COLORS = {
-    "CRITICAL": (192, 57, 43),    # #C0392B
-    "HIGH":     (230, 126, 34),   # #E67E22
-    "MEDIUM":   (241, 196, 15),   # #F1C40F
-    "LOW":      (39, 174, 96),    # #27AE60
-    "INFO":     (52, 152, 219),   # #3498DB
-    "NONE":     (149, 165, 166),  # #95A5A6
+    "CRITICAL": (192, 57, 43),  # #C0392B
+    "HIGH": (230, 126, 34),  # #E67E22
+    "MEDIUM": (241, 196, 15),  # #F1C40F
+    "LOW": (39, 174, 96),  # #27AE60
+    "INFO": (52, 152, 219),  # #3498DB
+    "NONE": (149, 165, 166),  # #95A5A6
 }
 
 # CWE map for fallback lookups (kept aligned with reporting.py legacy map).
-CWE_MAP: Dict[str, Dict[str, Any]] = {
-    "SQL_INJECTION":             {"cwe": "CWE-89",  "name": "SQL Injection"},
-    "SQLI":                      {"cwe": "CWE-89",  "name": "SQL Injection"},
-    "CROSS_SITE_SCRIPTING":      {"cwe": "CWE-79",  "name": "Cross-Site Scripting (XSS)"},
-    "XSS":                       {"cwe": "CWE-79",  "name": "Cross-Site Scripting (XSS)"},
-    "XSS_BROWSER_VERIFIED":      {"cwe": "CWE-79",  "name": "Cross-Site Scripting (XSS)"},
-    "UNAUTHORIZED_ACCESS":       {"cwe": "CWE-284", "name": "Unauthorized Access"},
-    "IDOR":                      {"cwe": "CWE-639", "name": "Insecure Direct Object Reference (IDOR)"},
-    "LOGIC_IDOR":                {"cwe": "CWE-639", "name": "Insecure Direct Object Reference (IDOR)"},
-    "COMMAND_INJECTION":         {"cwe": "CWE-78",  "name": "OS Command Injection"},
-    "RCE":                       {"cwe": "CWE-78",  "name": "Remote Code Execution"},
-    "PATH_TRAVERSAL":            {"cwe": "CWE-22",  "name": "Path Traversal"},
-    "SSRF":                      {"cwe": "CWE-918", "name": "Server-Side Request Forgery"},
-    "OPEN_REDIRECT":             {"cwe": "CWE-601", "name": "Open Redirect"},
-    "INFORMATION_DISCLOSURE":    {"cwe": "CWE-200", "name": "Information Disclosure"},
-    "DATA_LEAK":                 {"cwe": "CWE-200", "name": "Information Disclosure"},
-    "BROKEN_AUTH":               {"cwe": "CWE-287", "name": "Broken Authentication"},
-    "AUTH_BYPASS":               {"cwe": "CWE-287", "name": "Broken Authentication"},
-    "JWT_BYPASS":                {"cwe": "CWE-287", "name": "JWT Authentication Bypass"},
-    "CSRF":                      {"cwe": "CWE-352", "name": "Cross-Site Request Forgery"},
-    "CSRF_BYPASS":               {"cwe": "CWE-352", "name": "CSRF Bypass"},
-    "PROMPT_INJECTION":          {"cwe": "CWE-77",  "name": "AI Prompt Injection"},
-    "HIDDEN_TEXT":               {"cwe": "CWE-116", "name": "Hidden Content Injection"},
-    "ARITHMETIC_OVERFLOW":       {"cwe": "CWE-190", "name": "Integer Overflow"},
-    "RACE_CONDITION":            {"cwe": "CWE-362", "name": "Race Condition"},
-    "FINANCIAL_MANIPULATION":    {"cwe": "CWE-840", "name": "Business Logic Errors"},
+CWE_MAP: dict[str, dict[str, Any]] = {
+    "SQL_INJECTION": {"cwe": "CWE-89", "name": "SQL Injection"},
+    "SQLI": {"cwe": "CWE-89", "name": "SQL Injection"},
+    "CROSS_SITE_SCRIPTING": {"cwe": "CWE-79", "name": "Cross-Site Scripting (XSS)"},
+    "XSS": {"cwe": "CWE-79", "name": "Cross-Site Scripting (XSS)"},
+    "XSS_BROWSER_VERIFIED": {"cwe": "CWE-79", "name": "Cross-Site Scripting (XSS)"},
+    "UNAUTHORIZED_ACCESS": {"cwe": "CWE-284", "name": "Unauthorized Access"},
+    "IDOR": {"cwe": "CWE-639", "name": "Insecure Direct Object Reference (IDOR)"},
+    "LOGIC_IDOR": {"cwe": "CWE-639", "name": "Insecure Direct Object Reference (IDOR)"},
+    "COMMAND_INJECTION": {"cwe": "CWE-78", "name": "OS Command Injection"},
+    "RCE": {"cwe": "CWE-78", "name": "Remote Code Execution"},
+    "PATH_TRAVERSAL": {"cwe": "CWE-22", "name": "Path Traversal"},
+    "SSRF": {"cwe": "CWE-918", "name": "Server-Side Request Forgery"},
+    "OPEN_REDIRECT": {"cwe": "CWE-601", "name": "Open Redirect"},
+    "INFORMATION_DISCLOSURE": {"cwe": "CWE-200", "name": "Information Disclosure"},
+    "DATA_LEAK": {"cwe": "CWE-200", "name": "Information Disclosure"},
+    "BROKEN_AUTH": {"cwe": "CWE-287", "name": "Broken Authentication"},
+    "AUTH_BYPASS": {"cwe": "CWE-287", "name": "Broken Authentication"},
+    "JWT_BYPASS": {"cwe": "CWE-287", "name": "JWT Authentication Bypass"},
+    "CSRF": {"cwe": "CWE-352", "name": "Cross-Site Request Forgery"},
+    "CSRF_BYPASS": {"cwe": "CWE-352", "name": "CSRF Bypass"},
+    "PROMPT_INJECTION": {"cwe": "CWE-77", "name": "AI Prompt Injection"},
+    "HIDDEN_TEXT": {"cwe": "CWE-116", "name": "Hidden Content Injection"},
+    "ARITHMETIC_OVERFLOW": {"cwe": "CWE-190", "name": "Integer Overflow"},
+    "RACE_CONDITION": {"cwe": "CWE-362", "name": "Race Condition"},
+    "FINANCIAL_MANIPULATION": {"cwe": "CWE-840", "name": "Business Logic Errors"},
     "SUSPICIOUS_NETWORK_ACTIVITY": {"cwe": "CWE-200", "name": "Suspicious Network Activity"},
 }
 
@@ -93,12 +97,18 @@ CWE_MAP: Dict[str, Dict[str, Any]] = {
 # ── Sanitisation helpers ─────────────────────────────────────────────────────
 
 _LATIN1_REPLACEMENTS = {
-    "\u2018": "'", "\u2019": "'",
-    "\u201c": '"', "\u201d": '"',
-    "\u2013": "-", "\u2014": "--",
-    "\u2026": "...", "\u2022": "-",
-    "\u00a0": " ", "\u2192": "->",
-    "\u00bb": ">>", "\u00ab": "<<",
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2013": "-",
+    "\u2014": "--",
+    "\u2026": "...",
+    "\u2022": "-",
+    "\u00a0": " ",
+    "\u2192": "->",
+    "\u00bb": ">>",
+    "\u00ab": "<<",
 }
 
 
@@ -138,8 +148,9 @@ def _first_meaningful(*values: Any, default: str = "") -> str:
 
 # ── PDF document class ───────────────────────────────────────────────────────
 
+
 class _VigilagentPDF(FPDF):
-    """fpdf2 document with the Vigilagent Scanner header + footer."""
+    """fpdf2 document with the Vigilagent header + footer."""
 
     LEFT_MARGIN = 15
     RIGHT_MARGIN = 15
@@ -157,7 +168,7 @@ class _VigilagentPDF(FPDF):
         self.set_y(8)
         self.set_text_color(*BRAND_BLACK)
         self.set_font("Helvetica", "B", 11)
-        self.cell(0, 6, "Vigilagent Scanner", align="L", new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 6, "Vigilagent", align="L", new_x="LMARGIN", new_y="NEXT")
         # Horizontal rule
         self.set_draw_color(*BRAND_RULE)
         self.set_line_width(0.5)
@@ -217,7 +228,7 @@ class _VigilagentPDF(FPDF):
         self.set_text_color(*TEXT_BLACK)
         prefix = _sanitize(f"{key}: ")
         prefix_w = self.get_string_width(prefix) + 1.0
-        x_start = self.get_x()
+        self.get_x()
         y_start = self.get_y()
         self.cell(prefix_w, 6, prefix)
         self.set_font("Helvetica", "", 10.5)
@@ -249,7 +260,7 @@ class _VigilagentPDF(FPDF):
             )
             self.ln(0.5)
 
-    def section_label(self, label: str, color: Tuple[int, int, int] = BRAND_RULE) -> None:
+    def section_label(self, label: str, color: tuple[int, int, int] = BRAND_RULE) -> None:
         self.ln(1)
         self.set_text_color(*color)
         self.set_font("Helvetica", "B", 11.5)
@@ -306,14 +317,14 @@ class _VigilagentPDF(FPDF):
         self.multi_cell(self.usable_width, 5.5, _sanitize(text), new_x="LMARGIN", new_y="NEXT")
         self.ln(0.5)
 
-    def code_block(self, lines: List[str]) -> None:
+    def code_block(self, lines: list[str]) -> None:
         self.set_font("Courier", "", 8.5)
         self.set_text_color(*TEXT_BLACK)
         self.set_fill_color(*TERMINAL_BG)
         self.set_draw_color(*TERMINAL_BORDER)
         self.set_line_width(0.3)
         # Pre-process lines: normalise tabs and strip code fences
-        flat: List[str] = []
+        flat: list[str] = []
         for raw in lines:
             s = _sanitize(raw)
             s = s.replace("\t", "    ")
@@ -338,14 +349,13 @@ class _VigilagentPDF(FPDF):
             self.cell(self.usable_width - 4, 4.4, line, new_x="LMARGIN", new_y="NEXT")
         self.set_y(y + height + 2)
 
-    def labelled_box(self, label: str, lines: List[str]) -> None:
+    def labelled_box(self, label: str, lines: list[str]) -> None:
         self.set_font("Helvetica", "B", 10)
         self.set_text_color(*BRAND_RULE)
         self.cell(0, 5, _sanitize(label), new_x="LMARGIN", new_y="NEXT")
         self.code_block(lines)
 
-    def simple_table(self, title: str, headers: List[str], rows: List[List[str]],
-                     col_widths: List[float]) -> None:
+    def simple_table(self, title: str, headers: list[str], rows: list[list[str]], col_widths: list[float]) -> None:
         # Page-break safety
         approx_h = 9 + (len(rows) + 1) * 7 + 6
         if self.get_y() + min(approx_h, 60) > self.h - 25:
@@ -367,13 +377,13 @@ class _VigilagentPDF(FPDF):
         for row in rows:
             # Compute the tallest cell so multi-line content stays inside its border
             line_h = 5
-            cell_lines: List[List[str]] = []
+            cell_lines: list[list[str]] = []
             max_lines = 1
             for i, value in enumerate(row):
                 txt = _sanitize(value)
                 # rough char-per-mm at 9pt ~ 2
                 max_chars = max(8, int(col_widths[i] * 2.0))
-                wrapped: List[str] = []
+                wrapped: list[str] = []
                 for paragraph in txt.split("\n"):
                     while len(paragraph) > max_chars:
                         wrapped.append(paragraph[:max_chars])
@@ -395,7 +405,7 @@ class _VigilagentPDF(FPDF):
             self.set_xy(x_start, y_start + row_h)
         self.ln(3)
 
-    def timeline_rows(self, rows: List[str]) -> None:
+    def timeline_rows(self, rows: list[str]) -> None:
         self.set_font("Courier", "", 9)
         self.set_text_color(*TEXT_BLACK)
         for r in rows:
@@ -410,18 +420,19 @@ class _VigilagentPDF(FPDF):
 
 # ── Builder ──────────────────────────────────────────────────────────────────
 
+
 class VigilagentReportBuilder:
     """Orchestrates real-data extraction + LLM enrichment + PDF rendering."""
 
-    LLM_OVERALL_TIMEOUT = 600.0      # seconds budget for all LLM calls
-    LLM_PER_CALL_TIMEOUT = 25.0      # seconds per individual call
+    LLM_OVERALL_TIMEOUT = 600.0  # seconds budget for all LLM calls
+    LLM_PER_CALL_TIMEOUT = 25.0  # seconds per individual call
 
     def __init__(
         self,
         scan_id: str,
         target_url: str,
-        events: List[Dict[str, Any]],
-        telemetry: Optional[Dict[str, Any]] = None,
+        events: list[dict[str, Any]],
+        telemetry: dict[str, Any] | None = None,
         cortex: Any = None,
         manager: Any = None,
     ) -> None:
@@ -438,19 +449,20 @@ class VigilagentReportBuilder:
     async def build(self) -> str:
         findings = self._collect_findings()
         # Enrich each finding with LLM prose (best-effort, time-boxed).
-        enriched: List[Dict[str, Any]] = []
+        enriched: list[dict[str, Any]] = []
         try:
             enriched = await asyncio.wait_for(
-                self._enrich_findings(findings), timeout=self.LLM_OVERALL_TIMEOUT,
+                self._enrich_findings(findings),
+                timeout=self.LLM_OVERALL_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             enriched = [self._fallback_enrichment(f) for f in findings]
         except Exception as exc:
             logger.warning("[ScanPDF] LLM enrichment failed, using fallback: %s", exc)
             enriched = [self._fallback_enrichment(f) for f in findings]
         if len(enriched) < len(findings):
             # Ensure every finding renders even if enrichment partially failed.
-            for f in findings[len(enriched):]:
+            for f in findings[len(enriched) :]:
                 enriched.append(self._fallback_enrichment(f))
 
         exec_bullets = await self._safe_executive_bullets(len(findings))
@@ -483,10 +495,10 @@ class VigilagentReportBuilder:
 
     # ── data collection (real data, never fabricated) ────────────────────────
 
-    def _collect_findings(self) -> List[Dict[str, Any]]:
+    def _collect_findings(self) -> list[dict[str, Any]]:
         """Extract confirmed findings (deduplicated) from the events buffer."""
         keep_types = {"VULN_CONFIRMED", "HIDDEN_TEXT", "PROMPT_INJECTION"}
-        seen: Dict[str, Dict[str, Any]] = {}
+        seen: dict[str, dict[str, Any]] = {}
         for ev in self.events:
             etype = str(ev.get("type", "")).upper()
             if not any(k in etype for k in keep_types):
@@ -504,7 +516,7 @@ class VigilagentReportBuilder:
         return list(seen.values())
 
     @staticmethod
-    def _lookup_cwe(vuln_type: str) -> Dict[str, Any]:
+    def _lookup_cwe(vuln_type: str) -> dict[str, Any]:
         key = (vuln_type or "").upper().replace(" ", "_").replace("/", "_")
         if key in CWE_MAP:
             return CWE_MAP[key]
@@ -516,10 +528,11 @@ class VigilagentReportBuilder:
     @staticmethod
     def _severity_label(score: float) -> str:
         band = severity_band(score)
-        return {"low": "LOW", "medium": "MEDIUM",
-                "high": "HIGH", "critical": "CRITICAL"}.get(band.lower(), band.upper())
+        return {"low": "LOW", "medium": "MEDIUM", "high": "HIGH", "critical": "CRITICAL"}.get(
+            band.lower(), band.upper()
+        )
 
-    def _normalise_finding(self, ev: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalise_finding(self, ev: dict[str, Any]) -> dict[str, Any]:
         """Return a finding dict with everything the renderer needs."""
         payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
         payload = payload or {}
@@ -530,13 +543,17 @@ class VigilagentReportBuilder:
         url = _first_meaningful(payload.get("url"), default=self.target_url)
         method = _first_meaningful(payload.get("method"), data_blob.get("method"), default="GET").upper()
         param = _first_meaningful(
-            payload.get("param"), payload.get("parameter"), data_blob.get("param"),
+            payload.get("param"),
+            payload.get("parameter"),
+            data_blob.get("param"),
             default="-",
         )
         # Attack data / payload string (real)
         attack_payload = _first_meaningful(
-            payload.get("payload"), payload.get("attack_payload"),
-            data_blob.get("payload"), default="",
+            payload.get("payload"),
+            payload.get("attack_payload"),
+            data_blob.get("payload"),
+            default="",
         )
         # CWE lookup, real CVSS via deterministic engine
         cwe_info = self._lookup_cwe(vuln_type)
@@ -545,25 +562,28 @@ class VigilagentReportBuilder:
         if isinstance(payload.get("cvss_score"), (int, float)):
             cvss_score = float(payload["cvss_score"])
         severity_payload = str(payload.get("severity") or "").upper()
-        if severity_payload in SEVERITY_COLORS:
-            severity = severity_payload
-        else:
-            severity = self._severity_label(cvss_score)
+        severity = severity_payload if severity_payload in SEVERITY_COLORS else self._severity_label(cvss_score)
         threat_score = max(0, min(100, int(round(float(cvss_score) * 10))))
 
         # Real HTTP request/response, captured by the agents
         request_blob = _first_meaningful(
-            payload.get("request"), data_blob.get("request"),
-            payload.get("raw_request"), default="",
+            payload.get("request"),
+            data_blob.get("request"),
+            payload.get("raw_request"),
+            default="",
         )
         response_blob = _first_meaningful(
-            payload.get("response"), payload.get("response_body"),
-            data_blob.get("response"), data_blob.get("response_body"),
+            payload.get("response"),
+            payload.get("response_body"),
+            data_blob.get("response"),
+            data_blob.get("response_body"),
             default="",
         )
         status_code = _first_meaningful(
-            payload.get("status"), payload.get("status_code"),
-            payload.get("response_code"), data_blob.get("status"),
+            payload.get("status"),
+            payload.get("status_code"),
+            payload.get("response_code"),
+            data_blob.get("status"),
             default="200",
         )
         headers = payload.get("headers") if isinstance(payload.get("headers"), dict) else {}
@@ -599,8 +619,8 @@ class VigilagentReportBuilder:
 
     # ── LLM enrichment (prose only, never invents data) ──────────────────────
 
-    async def _enrich_findings(self, raw_findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        enriched: List[Dict[str, Any]] = []
+    async def _enrich_findings(self, raw_findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        enriched: list[dict[str, Any]] = []
         for ev in raw_findings:
             f = self._normalise_finding(ev)
             llm = await self._enrich_single(f)
@@ -608,15 +628,17 @@ class VigilagentReportBuilder:
             enriched.append(f)
         return enriched
 
-    async def _enrich_single(self, f: Dict[str, Any]) -> Dict[str, Any]:
+    async def _enrich_single(self, f: dict[str, Any]) -> dict[str, Any]:
         cortex = self.cortex
         # 1. Vulnerability summary (description / impact / remediation / code_fix)
-        summary: Dict[str, Any] = {}
+        summary: dict[str, Any] = {}
         try:
             if cortex is not None:
                 summary = await asyncio.wait_for(
                     cortex.generate_vulnerability_summary(
-                        f["vuln_type"], f["attack_payload"] or f["evidence_text"], f["url"],
+                        f["vuln_type"],
+                        f["attack_payload"] or f["evidence_text"],
+                        f["url"],
                     ),
                     timeout=self.LLM_PER_CALL_TIMEOUT,
                 )
@@ -627,7 +649,7 @@ class VigilagentReportBuilder:
             summary = {}
 
         # 2. Forensic narrative (root cause / evidence / advantage)
-        forensic: Dict[str, Any] = {}
+        forensic: dict[str, Any] = {}
         try:
             if cortex is not None:
                 forensic = await asyncio.wait_for(
@@ -649,7 +671,8 @@ class VigilagentReportBuilder:
         tech_stack = self._infer_tech_stack(f)
         code_fix = ""
         try:
-            if cortex is not None:                    code_fix = await asyncio.wait_for(
+            if cortex is not None:
+                code_fix = await asyncio.wait_for(
                     cortex.generate_code_fix(f["vuln_type"], f["attack_payload"], f["url"], tech_stack),
                     timeout=self.LLM_PER_CALL_TIMEOUT,
                 )
@@ -658,23 +681,32 @@ class VigilagentReportBuilder:
             code_fix = ""
 
         # Coerce + fall back deterministically
-        description = self._coerce_bullets(summary.get("description"), default=[
-            f"{f['name']} confirmed at {f['url']}.",
-            f"Triggered by {f['method']} request on parameter '{f['param']}'.",
-            "Application accepted unvalidated input and surfaced anomalous behaviour.",
-        ])[:3]
-        impact = self._coerce_bullets(summary.get("impact"), default=[
-            "Strategic Impact: increases probability of unauthorised access to sensitive data.",
-            "Financial Impact: exposes the organisation to incident response and disclosure costs.",
-            "Technical Impact: weakens trust boundaries enforced at this endpoint.",
-            "Operational Impact: bypasses controls expected to govern this surface.",
-        ])[:4]
-        remediation = self._coerce_bullets(summary.get("remediation"), default=[
-            "Validate and canonicalise input on this endpoint server-side.",
-            "Apply defence-in-depth (parameterised queries, output encoding, authorisation checks).",
-            "Deploy detection rules covering this attack signature.",
-            "Re-run the verification command after remediation to confirm closure.",
-        ])[:4]
+        description = self._coerce_bullets(
+            summary.get("description"),
+            default=[
+                f"{f['name']} confirmed at {f['url']}.",
+                f"Triggered by {f['method']} request on parameter '{f['param']}'.",
+                "Application accepted unvalidated input and surfaced anomalous behaviour.",
+            ],
+        )[:3]
+        impact = self._coerce_bullets(
+            summary.get("impact"),
+            default=[
+                "Strategic Impact: increases probability of unauthorised access to sensitive data.",
+                "Financial Impact: exposes the organisation to incident response and disclosure costs.",
+                "Technical Impact: weakens trust boundaries enforced at this endpoint.",
+                "Operational Impact: bypasses controls expected to govern this surface.",
+            ],
+        )[:4]
+        remediation = self._coerce_bullets(
+            summary.get("remediation"),
+            default=[
+                "Validate and canonicalise input on this endpoint server-side.",
+                "Apply defence-in-depth (parameterised queries, output encoding, authorisation checks).",
+                "Deploy detection rules covering this attack signature.",
+                "Re-run the verification command after remediation to confirm closure.",
+            ],
+        )[:4]
 
         # Pad missing entries to required counts so layout stays consistent.
         while len(description) < 3:
@@ -685,9 +717,14 @@ class VigilagentReportBuilder:
             remediation.append("Continue monitoring and re-test after fixes are deployed.")
 
         explanation = self._explanation_text(f, forensic)
-        forensic_line = forensic.get("evidence_analysis") or forensic.get("root_cause") or (
-            f["audit_reasoning"][:240] if f["audit_reasoning"] else
-            "Server-side validation insufficient for the supplied input vector."
+        forensic_line = (
+            forensic.get("evidence_analysis")
+            or forensic.get("root_cause")
+            or (
+                f["audit_reasoning"][:240]
+                if f["audit_reasoning"]
+                else "Server-side validation insufficient for the supplied input vector."
+            )
         )
         secure_code = self._clean_code_block(code_fix) or self._fallback_code(f["vuln_type"], tech_stack)
 
@@ -701,41 +738,44 @@ class VigilagentReportBuilder:
             "secure_code": secure_code,
         }
 
-    def _fallback_enrichment(self, ev: Dict[str, Any]) -> Dict[str, Any]:
+    def _fallback_enrichment(self, ev: dict[str, Any]) -> dict[str, Any]:
         f = self._normalise_finding(ev)
-        f.update({
-            "description": [
-                f"{f['name']} observed at {f['url']}.",
-                f"Triggered through {f['method']} on parameter '{f['param']}'.",
-                "Server response demonstrated weakened input handling.",
-            ],
-            "impact": [
-                "Strategic Impact: opens a path toward sensitive data or actions.",
-                "Financial Impact: incident response and remediation cost exposure.",
-                "Technical Impact: weakens authentication / validation contracts.",
-                "Operational Impact: erodes trust boundaries on this endpoint.",
-            ],
-            "remediation": [
-                "Apply server-side validation and parameterised data access.",
-                "Add layered controls (auth checks, output encoding, allow-lists).",
-                "Add detection rules covering this attack signature.",
-                "Re-run the reproduction command after remediation.",
-            ],
-            "explanation": (
-                f"Agent {f['agent']} flagged this finding from concrete request/response "
-                f"evidence captured during the scan; pattern '{f['vuln_type']}' was observed "
-                f"and reported by the live attack pipeline."
-            ),
-            "forensic_line": (
-                f["audit_reasoning"][:240] if f["audit_reasoning"]
-                else "Server-side validation insufficient for the supplied input vector."
-            ),
-            "tech_stack": self._infer_tech_stack(f),
-            "secure_code": self._fallback_code(f["vuln_type"], self._infer_tech_stack(f)),
-        })
+        f.update(
+            {
+                "description": [
+                    f"{f['name']} observed at {f['url']}.",
+                    f"Triggered through {f['method']} on parameter '{f['param']}'.",
+                    "Server response demonstrated weakened input handling.",
+                ],
+                "impact": [
+                    "Strategic Impact: opens a path toward sensitive data or actions.",
+                    "Financial Impact: incident response and remediation cost exposure.",
+                    "Technical Impact: weakens authentication / validation contracts.",
+                    "Operational Impact: erodes trust boundaries on this endpoint.",
+                ],
+                "remediation": [
+                    "Apply server-side validation and parameterised data access.",
+                    "Add layered controls (auth checks, output encoding, allow-lists).",
+                    "Add detection rules covering this attack signature.",
+                    "Re-run the reproduction command after remediation.",
+                ],
+                "explanation": (
+                    f"Agent {f['agent']} flagged this finding from concrete request/response "
+                    f"evidence captured during the scan; pattern '{f['vuln_type']}' was observed "
+                    f"and reported by the live attack pipeline."
+                ),
+                "forensic_line": (
+                    f["audit_reasoning"][:240]
+                    if f["audit_reasoning"]
+                    else "Server-side validation insufficient for the supplied input vector."
+                ),
+                "tech_stack": self._infer_tech_stack(f),
+                "secure_code": self._fallback_code(f["vuln_type"], self._infer_tech_stack(f)),
+            }
+        )
         return f
 
-    async def _safe_executive_bullets(self, total_findings: int) -> List[str]:
+    async def _safe_executive_bullets(self, total_findings: int) -> list[str]:
         cortex = self.cortex
         if cortex is None:
             return self._exec_fallback(total_findings)
@@ -756,7 +796,7 @@ class VigilagentReportBuilder:
             logger.debug("[ScanPDF] Executive summary LLM call failed: %s", exc)
         return self._exec_fallback(total_findings)
 
-    def _exec_fallback(self, total_findings: int) -> List[str]:
+    def _exec_fallback(self, total_findings: int) -> list[str]:
         if total_findings == 0:
             return [
                 "No exploitable vulnerabilities were confirmed against the tested attack surface.",
@@ -765,7 +805,7 @@ class VigilagentReportBuilder:
                 "Maintain monitoring and alerting on the surfaces that were probed.",
             ]
         return [
-            f"Vigilagent Scanner confirmed {total_findings} security finding(s) against {self.target_url}.",
+            f"Vigilagent confirmed {total_findings} security finding(s) against {self.target_url}.",
             "Each finding includes the captured HTTP traffic, payload decomposition and a reproduction command.",
             "Prioritise remediation by severity; CRITICAL and HIGH findings should be addressed first.",
             "Re-run the scan after remediation to validate that each finding has been closed.",
@@ -774,7 +814,7 @@ class VigilagentReportBuilder:
     # ── helpers for prose normalisation ──────────────────────────────────────
 
     @staticmethod
-    def _coerce_bullets(value: Any, *, default: List[str]) -> List[str]:
+    def _coerce_bullets(value: Any, *, default: list[str]) -> list[str]:
         if not value:
             return list(default)
         if isinstance(value, str):
@@ -797,7 +837,7 @@ class VigilagentReportBuilder:
             s = s[:-3].rstrip()
         return s.strip()
 
-    def _explanation_text(self, f: Dict[str, Any], forensic: Dict[str, Any]) -> str:
+    def _explanation_text(self, f: dict[str, Any], forensic: dict[str, Any]) -> str:
         """Combine real agent attribution with LLM root-cause prose."""
         agent = f["agent"] or "Agent"
         if f["audit_reasoning"]:
@@ -818,7 +858,7 @@ class VigilagentReportBuilder:
         return f"{agent} forensic analysis: {base}{confidence_part}".strip()
 
     @staticmethod
-    def _severity_breakdown(events: List[Dict[str, Any]]) -> Dict[str, int]:
+    def _severity_breakdown(events: list[dict[str, Any]]) -> dict[str, int]:
         counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
         for ev in events:
             etype = str(ev.get("type", "")).upper()
@@ -834,7 +874,7 @@ class VigilagentReportBuilder:
             counts[sev] = counts.get(sev, 0) + 1
         return counts
 
-    def _infer_tech_stack(self, f: Dict[str, Any]) -> str:
+    def _infer_tech_stack(self, f: dict[str, Any]) -> str:
         host = urlparse(f.get("url", "")).hostname or ""
         host = host.lower()
         # Cheap heuristic — better than nothing and enough for the LLM stub.
@@ -897,7 +937,7 @@ class VigilagentReportBuilder:
         if "COMMAND" in vt or "RCE" in vt:
             return (
                 "# VULNERABLE\n"
-                "os.system(f\"ping {user_input}\")\n\n"
+                'os.system(f"ping {user_input}")\n\n'
                 "# SECURE — argv list, no shell\n"
                 "subprocess.run(['ping', '-c', '1', user_input], check=True)"
             )
@@ -914,7 +954,9 @@ class VigilagentReportBuilder:
     # ── rendering ────────────────────────────────────────────────────────────
 
     def _render_executive_summary(
-        self, findings: List[Dict[str, Any]], bullets: List[str],
+        self,
+        findings: list[dict[str, Any]],
+        bullets: list[str],
     ) -> None:
         pdf = self.pdf
         pdf.big_title("Executive Summary")
@@ -932,7 +974,7 @@ class VigilagentReportBuilder:
         pdf.ln(3)
         pdf.bullet_list(bullets)
 
-    def _render_finding(self, idx: int, f: Dict[str, Any]) -> None:
+    def _render_finding(self, idx: int, f: dict[str, Any]) -> None:
         pdf = self.pdf
         # Filter banner
         category = self._category_for(f["vuln_type"], f["name"])
@@ -941,8 +983,7 @@ class VigilagentReportBuilder:
         # Finding header
         pdf.set_text_color(*BRAND_RULE)
         pdf.set_font("Helvetica", "B", 14)
-        pdf.cell(0, 8, _sanitize(f"Finding #{idx}: {f['name']}"),
-                 new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 8, _sanitize(f"Finding #{idx}: {f['name']}"), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(1)
 
         # Severity pill
@@ -972,10 +1013,7 @@ class VigilagentReportBuilder:
 
         # Forensic Analysis paragraph (real method/param/url)
         pdf.section_label("Forensic Analysis:")
-        forensic_text = (
-            f"Method: {f['method']} | Param: {f['param']} | "
-            f"URL: {f['url']}\nAnalysis: {f['forensic_line']}"
-        )
+        forensic_text = f"Method: {f['method']} | Param: {f['param']} | URL: {f['url']}\nAnalysis: {f['forensic_line']}"
         pdf.paragraph(forensic_text)
 
         # Payload decomposition table (real evidence-derived rows)
@@ -1020,7 +1058,7 @@ class VigilagentReportBuilder:
     def _render_timeline(self) -> None:
         pdf = self.pdf
         pdf.big_title("Scan Timeline")
-        rows: List[str] = []
+        rows: list[str] = []
         for ev in self.events[:300]:
             rows.append(self._format_timeline_row(ev))
         if not rows:
@@ -1051,30 +1089,36 @@ class VigilagentReportBuilder:
         return name.split()[0].upper() if name else "FINDINGS"
 
     @staticmethod
-    def _payload_decomposition_rows(f: Dict[str, Any]) -> List[List[str]]:
-        rows: List[List[str]] = []
+    def _payload_decomposition_rows(f: dict[str, Any]) -> list[list[str]]:
+        rows: list[list[str]] = []
         # Row 1: parameter being attacked
-        rows.append([
-            "Parameter",
-            f["param"] or "(unnamed)",
-            f"Targeted by {f['method']} request to demonstrate {f['name']}.",
-        ])
+        rows.append(
+            [
+                "Parameter",
+                f["param"] or "(unnamed)",
+                f"Targeted by {f['method']} request to demonstrate {f['name']}.",
+            ]
+        )
         # Row 2: raw payload
-        rows.append([
-            "Payload",
-            _truncate(f["attack_payload"] or "(empty body)", 120),
-            "Crafted input that bypassed server-side validation.",
-        ])
+        rows.append(
+            [
+                "Payload",
+                _truncate(f["attack_payload"] or "(empty body)", 120),
+                "Crafted input that bypassed server-side validation.",
+            ]
+        )
         # Row 3: response indicator
-        rows.append([
-            "Response",
-            f"HTTP {f['status_code']} ({_truncate(f['response'] or f['evidence_text'] or 'observed', 60)})",
-            "Server response that confirmed exploitable behaviour.",
-        ])
+        rows.append(
+            [
+                "Response",
+                f"HTTP {f['status_code']} ({_truncate(f['response'] or f['evidence_text'] or 'observed', 60)})",
+                "Server response that confirmed exploitable behaviour.",
+            ]
+        )
         return rows
 
     @staticmethod
-    def _build_curl(f: Dict[str, Any]) -> str:
+    def _build_curl(f: dict[str, Any]) -> str:
         method = f["method"]
         url = f["url"]
         cmd = [f"curl -X {method} '{url}'"]
@@ -1092,7 +1136,7 @@ class VigilagentReportBuilder:
         return "".join(cmd)
 
     @staticmethod
-    def _build_request_snapshot(f: Dict[str, Any]) -> List[str]:
+    def _build_request_snapshot(f: dict[str, Any]) -> list[str]:
         if f["request"]:
             text = _sanitize(f["request"]).strip()
             return [line for line in text.split("\n")][:18]
@@ -1106,7 +1150,7 @@ class VigilagentReportBuilder:
         return lines[:18]
 
     @staticmethod
-    def _build_response_snapshot(f: Dict[str, Any]) -> List[str]:
+    def _build_response_snapshot(f: dict[str, Any]) -> list[str]:
         if f["response"]:
             text = _sanitize(f["response"]).strip()
             lines = text.split("\n")[:18]
@@ -1120,7 +1164,7 @@ class VigilagentReportBuilder:
         return lines
 
     @staticmethod
-    def _format_timeline_row(ev: Dict[str, Any]) -> str:
+    def _format_timeline_row(ev: dict[str, Any]) -> str:
         ts_raw = ev.get("timestamp")
         if isinstance(ts_raw, datetime):
             ts = ts_raw.strftime("%Y-%m-%d %H:%M:%S")

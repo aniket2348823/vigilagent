@@ -42,7 +42,7 @@ const Login = ({ onLoginSuccess }) => {
             const data = await res.json();
 
             if (data.status === 'success') {
-                if (data.token) localStorage.setItem('vulagent_ws_token', data.token);
+                if (data.token) localStorage.setItem('vigilagent_ws_token', data.token);
                 // Reset attempt counter on successful login
                 try { localStorage.removeItem('vigilagent_login_attempts'); } catch { /* ignore */ }
                 onLoginSuccess();

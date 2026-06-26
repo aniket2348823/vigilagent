@@ -29,6 +29,7 @@ Hermes patterns adopted in this revision:
     every compaction; the deterministic fallback is used during cooldown.
   - Explicit ``gemini-2.5-flash`` pinning for summarization (§13).
 """
+
 from __future__ import annotations
 
 import logging
@@ -62,11 +63,38 @@ _PROTECTED_MARKERS = (
 # fallback. These are *not* protected (they may be summarized), but when the LLM
 # is unavailable we keep the highest-scoring ones verbatim.
 _SIGNAL_HINTS = (
-    "vuln", "inject", "sqli", "xss", "ssrf", "rce", "idor", "lfi", "rfi",
-    "traversal", "cve-", "cwe-", "severity", "auth", "token", "session",
-    "cookie", "credential", "param", "endpoint", "error", "exception",
-    "stack", "version", "server:", "x-powered-by", "waf", "bypass",
-    "callback", "oob", "interactsh", "exfil",
+    "vuln",
+    "inject",
+    "sqli",
+    "xss",
+    "ssrf",
+    "rce",
+    "idor",
+    "lfi",
+    "rfi",
+    "traversal",
+    "cve-",
+    "cwe-",
+    "severity",
+    "auth",
+    "token",
+    "session",
+    "cookie",
+    "credential",
+    "param",
+    "endpoint",
+    "error",
+    "exception",
+    "stack",
+    "version",
+    "server:",
+    "x-powered-by",
+    "waf",
+    "bypass",
+    "callback",
+    "oob",
+    "interactsh",
+    "exfil",
 )
 
 # Conservative secret patterns. Redaction is applied ONLY to lossy summary
@@ -118,19 +146,26 @@ class CompressionResult:
 class ContextCompressor:
     """Sliding-window summarizer with protected head/tail (Architecture §13)."""
 
-    def __init__(self, max_tokens: int = 24000, keep_last: int = 20,
-                 keep_first: int = 4, *, recent_token_budget: int | None = None,
-                 summary_ratio: float = 0.20, summary_min_tokens: int = 256,
-                 summary_max_tokens: int = 1024, cooldown_seconds: float = 300.0,
-                 model: str = SUMMARY_MODEL) -> None:
+    def __init__(
+        self,
+        max_tokens: int = 24000,
+        keep_last: int = 20,
+        keep_first: int = 4,
+        *,
+        recent_token_budget: int | None = None,
+        summary_ratio: float = 0.20,
+        summary_min_tokens: int = 256,
+        summary_max_tokens: int = 1024,
+        cooldown_seconds: float = 300.0,
+        model: str = SUMMARY_MODEL,
+    ) -> None:
         self.max_tokens = max_tokens
         self.keep_last = keep_last
         self.keep_first = keep_first
         # Recent context preserved by token size, not just line count. Defaults
         # to ~35% of the budget so the freshest events always survive intact.
         self.recent_token_budget = (
-            recent_token_budget if recent_token_budget is not None
-            else max(1, int(max_tokens * 0.35))
+            recent_token_budget if recent_token_budget is not None else max(1, int(max_tokens * 0.35))
         )
         self.summary_ratio = max(0.05, min(summary_ratio, 0.80))
         self.summary_min_tokens = summary_min_tokens
@@ -218,9 +253,7 @@ class ContextCompressor:
             new_transcript.extend(protected)
         if summary_block:
             tag = "Gemini 2.5 Flash" if used_llm else "deterministic fallback"
-            new_transcript.append(
-                f"[COMPRESSION_SUMMARY] (older context compressed by {tag})\n" + summary_block
-            )
+            new_transcript.append(f"[COMPRESSION_SUMMARY] (older context compressed by {tag})\n" + summary_block)
         new_transcript.extend(tail)
 
         compressed_tokens = estimate_tokens("\n".join(new_transcript))
@@ -267,7 +300,10 @@ class ContextCompressor:
             )
             try:
                 result = await cortex._call_gemini(
-                    prompt, temperature=0.1, max_tokens=budget, scan_ctx=scan_ctx,
+                    prompt,
+                    temperature=0.1,
+                    max_tokens=budget,
+                    scan_ctx=scan_ctx,
                     model_override=self.model,
                 )
                 if result and not str(result).startswith("["):
@@ -288,8 +324,9 @@ class ContextCompressor:
         extraction of endpoints, parameters, methods, and status codes so the
         compressor degrades gracefully (Architecture §11.3 / §14 fallback)."""
         blob = "\n".join(lines)
-        endpoints = sorted(set(re.findall(
-            r"https?://[^\s\"'<>]+|/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{2,}", blob)))[:20]
+        endpoints = sorted(set(re.findall(r"https?://[^\s\"'<>]+|/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{2,}", blob)))[
+            :20
+        ]
         params = sorted(set(re.findall(r"[?&]([A-Za-z0-9_]+)=", blob)))[:20]
         methods = sorted(set(re.findall(r"\b(GET|POST|PUT|DELETE|PATCH)\b", blob)))
         codes = sorted(set(re.findall(r"\b[1-5][0-9]{2}\b", blob)))[:15]

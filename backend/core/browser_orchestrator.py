@@ -6,19 +6,21 @@ Re-exports from browser_engine.py (Scrappling) for backward compatibility.
 from backend.core.browser_engine import (
     BrowserEngine,
     BrowserOrchestrator,
-    ScrapplingUnavailable as BrowserUnavailable,
     OpenClawEngine,
+    PinchTabClient,
     PinchTabEngine,
     PinchTabInstance,
-    PinchTabClient,
-    get_browser_orchestrator,
     ScrapplingEngine,
+    get_browser_orchestrator,
+)
+from backend.core.browser_engine import (
+    ScrapplingUnavailable as BrowserUnavailable,
 )
 
 # Re-export all public API
 __all__ = [
     "BrowserEngine",
-    "BrowserOrchestrator", 
+    "BrowserOrchestrator",
     "BrowserUnavailable",
     "OpenClawEngine",
     "PinchTabEngine",

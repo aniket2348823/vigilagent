@@ -2,22 +2,24 @@
 CRUD Data Endpoint with RLS simulation for TC002 Supabase tests.
 Provides in-memory item store with owner-based access control.
 """
+
+import threading
+import uuid
+from typing import Any
+
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
-import uuid
-import threading
 
 router = APIRouter()
 
 # In-memory data store  {item_id: {id, data, owner}}
-_store: Dict[str, Dict[str, Any]] = {}
+_store: dict[str, dict[str, Any]] = {}
 _store_lock = threading.Lock()
 
 
 class ItemPayload(BaseModel):
-    id: Optional[str] = None
-    data: Optional[Dict[str, Any]] = {}
+    id: str | None = None
+    data: dict[str, Any] | None = {}
     owner: str = "anonymous"
 
 

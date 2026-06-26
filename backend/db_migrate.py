@@ -4,6 +4,7 @@ Database Migration Runner — applies schema.sql + schema_extensions.sql to Supa
 Usage:
     python -m backend.db_migrate
 """
+
 import os
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ from pathlib import Path
 
 def main():
     from dotenv import load_dotenv
+
     load_dotenv()
 
     url = os.getenv("SUPABASE_URL")
@@ -21,6 +23,7 @@ def main():
         sys.exit(1)
 
     from supabase import create_client
+
     sb = create_client(url, key)
 
     project_root = Path(__file__).resolve().parent

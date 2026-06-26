@@ -14,6 +14,7 @@ Now:
     analysis runs.
   * The AI weakness pass only fires once a real JWT has been confirmed.
 """
+
 from __future__ import annotations
 
 import base64
@@ -44,9 +45,7 @@ def _b64url_encode(value: bytes) -> str:
 # every JWT header begins with. Without that anchor the regex matched random
 # foo.bar.baz tokens (DVWA's user_token CSRF, generic short-id paths) and
 # fed them into the AI weakness path which then hallucinated risk.
-_JWT_RE = re.compile(
-    r"\beyJ[A-Za-z0-9_-]{6,}\.eyJ[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]{0,})\b"
-)
+_JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.eyJ[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]{0,})\b")
 
 
 def parse_jwt(token: str) -> dict:
@@ -91,10 +90,12 @@ def forge_hs256(token: str, secret: str, claim_overrides: dict | None = None) ->
     payload = dict(parsed["payload"])
     header["alg"] = "HS256"
     payload.update(claim_overrides or {})
-    signing_input = ".".join([
-        _b64url_encode(json.dumps(header, separators=(",", ":")).encode()),
-        _b64url_encode(json.dumps(payload, separators=(",", ":")).encode()),
-    ])
+    signing_input = ".".join(
+        [
+            _b64url_encode(json.dumps(header, separators=(",", ":")).encode()),
+            _b64url_encode(json.dumps(payload, separators=(",", ":")).encode()),
+        ]
+    )
     sig = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
     return f"{signing_input}.{_b64url_encode(sig)}"
 
@@ -193,8 +194,9 @@ class JWTTokenCracker(BaseArsenalModule):
     async def generate_payloads(self, packet: JobPacket) -> list[TaskTarget]:
         return [packet.target]
 
-    async def analyze_responses(self, interactions: list[tuple[TaskTarget, str]],
-                                packet: JobPacket) -> list[Vulnerability]:
+    async def analyze_responses(
+        self, interactions: list[tuple[TaskTarget, str]], packet: JobPacket
+    ) -> list[Vulnerability]:
         # PRECONDITION GATE (Architecture §17, §25): JWTTokenCracker must only
         # confirm when an ACTUAL JWT is present somewhere we can see — request
         # headers/cookies/url, response Authorization header, response body, or
@@ -219,47 +221,64 @@ class JWTTokenCracker(BaseArsenalModule):
 
                 # Signal 1: token transported in URL (always exposed via logs/referrer).
                 if location == "url_query":
-                    vulns.append(Vulnerability(
-                        name="JWT Exposed in URL",
-                        severity="HIGH",
-                        description="JWT carried as a query parameter — leaks via logs, "
-                                    "referrers, browser history, and bookmarks.",
-                        evidence=f"Token in URL: {target.url}",
-                        remediation="Move JWT to the Authorization header or HttpOnly cookie.",
-                    ))
+                    vulns.append(
+                        Vulnerability(
+                            name="JWT Exposed in URL",
+                            severity="HIGH",
+                            description="JWT carried as a query parameter — leaks via logs, "
+                            "referrers, browser history, and bookmarks.",
+                            evidence=f"Token in URL: {target.url}",
+                            remediation="Move JWT to the Authorization header or HttpOnly cookie.",
+                        )
+                    )
 
                 # Signal 2: alg=none accepted (tested by forging and submitting).
                 alg = str(parsed.get("alg", "")).lower()
                 if alg == "none":
-                    vulns.append(Vulnerability(
-                        name="JWT alg=none Accepted",
-                        severity="CRITICAL",
-                        description="Token advertises alg=none — server must NEVER accept this "
-                                    "for an authenticated session.",
-                        evidence=f"JWT header: {parsed.get('header')}",
-                        remediation="Reject unsigned JWTs. Pin accepted algorithms server-side.",
-                    ))
+                    vulns.append(
+                        Vulnerability(
+                            name="JWT alg=none Accepted",
+                            severity="CRITICAL",
+                            description="Token advertises alg=none — server must NEVER accept this "
+                            "for an authenticated session.",
+                            evidence=f"JWT header: {parsed.get('header')}",
+                            remediation="Reject unsigned JWTs. Pin accepted algorithms server-side.",
+                        )
+                    )
 
                 # Signal 3: weak HMAC secret cracked offline.
-                weak = crack_hs256_secret(token, [
-                    "secret", "password", "admin", "jwt", "changeme",
-                    "123456", "default", "test", "key", "vigilagent",
-                ])
+                weak = crack_hs256_secret(
+                    token,
+                    [
+                        "secret",
+                        "password",
+                        "admin",
+                        "jwt",
+                        "changeme",
+                        "123456",
+                        "default",
+                        "test",
+                        "key",
+                        "vigilagent",
+                    ],
+                )
                 if weak:
-                    vulns.append(Vulnerability(
-                        name="Weak JWT HS256 Secret",
-                        severity="HIGH",
-                        description="JWT signature validated against a common weak HMAC secret.",
-                        evidence=f"Recovered weak secret candidate: {weak}",
-                        remediation="Rotate JWT signing keys to high-entropy secrets or asymmetric signing.",
-                    ))
+                    vulns.append(
+                        Vulnerability(
+                            name="Weak JWT HS256 Secret",
+                            severity="HIGH",
+                            description="JWT signature validated against a common weak HMAC secret.",
+                            evidence=f"Recovered weak secret candidate: {weak}",
+                            remediation="Rotate JWT signing keys to high-entropy secrets or asymmetric signing.",
+                        )
+                    )
 
                 # AI weakness pass: only when we actually have a real JWT.
                 try:
                     from backend.ai.cortex import get_cortex_engine
+
                     cortex = get_cortex_engine()
-                    jwt_analysis = await cortex.analyze_jwt_weakness(
-                        token=token, url=target.url)
+                    jwt_analysis = await cortex.analyze_jwt_weakness(token=token, url=target.url)
                 except Exception as exc:
                     logger.debug("[JWTCracker] AI JWT weakness analysis failed: %s", exc)
                     jwt_analysis = None
@@ -273,13 +292,15 @@ class JWTTokenCracker(BaseArsenalModule):
                 if len(set(weaknesses)) >= 2 and risk >= 60:
                     summary = ", ".join(sorted(set(weaknesses)))
                     recs = (jwt_analysis or {}).get("recommendations") or []
-                    vulns.append(Vulnerability(
-                        name=f"JWT Weakness: {summary}",
-                        severity="HIGH" if risk > 75 else "MEDIUM",
-                        description=f"AI-confirmed JWT weaknesses (risk={risk}): {summary}.",
-                        evidence=f"Weaknesses: {weaknesses}; risk_score={risk}",
-                        remediation=recs[0] if recs else "Implement RS256 JWT validation.",
-                    ))
+                    vulns.append(
+                        Vulnerability(
+                            name=f"JWT Weakness: {summary}",
+                            severity="HIGH" if risk > 75 else "MEDIUM",
+                            description=f"AI-confirmed JWT weaknesses (risk={risk}): {summary}.",
+                            evidence=f"Weaknesses: {weaknesses}; risk_score={risk}",
+                            remediation=recs[0] if recs else "Implement RS256 JWT validation.",
+                        )
+                    )
 
         # WRONG-CLASS SUPPRESSION (Architecture §17, §25): if any captured
         # response body clearly belongs to ANOTHER vulnerability class
@@ -289,6 +310,7 @@ class JWTTokenCracker(BaseArsenalModule):
         # the seeder's auth cookie — not the vuln of the page.
         if vulns:
             from backend.modules.evidence import classify_response_evidence
+
             wrong_class = False
             for _t, text in interactions:
                 if not isinstance(text, str):

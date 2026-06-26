@@ -1,7 +1,13 @@
 """Parser for Interactsh JSONL output."""
+
 from __future__ import annotations
-from pathlib import Path
+
+from typing import TYPE_CHECKING
+
 from backend.parsers.recon.base import ParsedEntity, safe_json_lines
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def parse_interactsh_jsonl(path: Path | str) -> list[ParsedEntity]:
@@ -16,11 +22,25 @@ def parse_interactsh_jsonl(path: Path | str) -> list[ParsedEntity]:
         timestamp = str(row.get("timestamp", ""))
         qtype = str(row.get("q-type", ""))
         key = f"{uid}:{protocol}:{raddr}"
-        if key in seen: continue
+        if key in seen:
+            continue
         seen.add(key)
-        entities.append(ParsedEntity(kind="oob_interaction", label=f"oob:{protocol}:{uid[:20]}",
-            confidence=0.9, properties={"unique_id": uid, "protocol": protocol,
-                "remote_address": raddr, "raw_request_preview": raw_req[:500],
-                "raw_response_preview": raw_resp[:500], "timestamp": timestamp, "q_type": qtype},
-            source_tool="interactsh", phase="template_validation"))
+        entities.append(
+            ParsedEntity(
+                kind="oob_interaction",
+                label=f"oob:{protocol}:{uid[:20]}",
+                confidence=0.9,
+                properties={
+                    "unique_id": uid,
+                    "protocol": protocol,
+                    "remote_address": raddr,
+                    "raw_request_preview": raw_req[:500],
+                    "raw_response_preview": raw_resp[:500],
+                    "timestamp": timestamp,
+                    "q_type": qtype,
+                },
+                source_tool="interactsh",
+                phase="template_validation",
+            )
+        )
     return entities

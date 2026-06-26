@@ -16,19 +16,22 @@ Endpoints (Architecture §22):
   GET    /api/scans/{scan_id}/graph       knowledge-graph stats/snapshot
   GET    /api/scans/{scan_id}/report      report file/links
 """
+
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import logging
 import os
+import re
 import time
 import uuid
+from datetime import UTC
 
-import hashlib
-import re
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 
-import logging
 from backend.core.state import stats_db_manager
 
 logger = logging.getLogger(__name__)
@@ -38,6 +41,8 @@ router = APIRouter()
 # FIX-008: Strict scan_id validation
 _SCAN_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$", re.ASCII)
 _TARGET_URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
+
+
 # FIX-009: Reject dangerous target URLs
 # SECURITY: localhost/127.0.0.1 are NEVER blocked — this is a pentest tool
 # that must be able to scan local targets. The scope-guard middleware
@@ -69,6 +74,7 @@ class CreateScanRequest(BaseModel):
             raise ValueError("target_url must be a valid HTTP/HTTPS URL")
         # Block private IP ranges and metadata endpoints
         from urllib.parse import urlparse
+
         parsed = urlparse(v)
         hostname = (parsed.hostname or "").lower()
         forbidden = _get_forbidden_hosts()
@@ -91,12 +97,17 @@ async def create_scan(req: CreateScanRequest, background_tasks: BackgroundTasks)
     target_config = {"url": req.target_url, "mode": req.mode, "modules": req.modules}
     _now_iso = time.strftime("%Y-%m-%dT%H:%M:%S")
     scan_record = {
-        "id": scan_id, "scan_id": scan_id, "target_url": req.target_url,
-        "scope": req.target_url, "status": "Initializing", "modules": req.modules,
+        "id": scan_id,
+        "scan_id": scan_id,
+        "target_url": req.target_url,
+        "scope": req.target_url,
+        "status": "Initializing",
+        "modules": req.modules,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "created_at": _now_iso,
         "report_ready": False,
-        "results": [], "events": [],
+        "results": [],
+        "events": [],
     }
     await stats_db_manager.register_scan(scan_record)
 
@@ -106,12 +117,11 @@ async def create_scan(req: CreateScanRequest, background_tasks: BackgroundTasks)
         except Exception as exc:  # pragma: no cover - background
             stats_db_manager.update_scan_status(scan_id, "Failed")
             import logging
+
             logging.getLogger("api.scans").error("scan %s failed: %s", scan_id, exc)
             # Cleanup: stop any agents that managed to start before the crash
-            try:
+            with contextlib.suppress(Exception):
                 await _cleanup_zombie_agents(scan_id)
-            except Exception:
-                pass
 
     background_tasks.add_task(_run)
     return JSONResponse(status_code=202, content={"scan_id": scan_id, "status": "accepted"})
@@ -125,8 +135,9 @@ async def _cleanup_zombie_agents(scan_id: str) -> None:
     which would break other concurrent scans.
     """
     try:
-        from backend.core.orchestrator import HiveOrchestrator
         import asyncio as _aio
+
+        from backend.core.orchestrator import HiveOrchestrator
 
         # Per-scan cleanup: only stop agents registered for this scan
         async with HiveOrchestrator._get_lock():
@@ -152,7 +163,8 @@ async def _cleanup_zombie_agents(scan_id: str) -> None:
                 "[Cancel] No per-scan agents found for %s; "
                 "global fallback skipped to protect concurrent scans. "
                 "Zombie sweep will clean up when scan status changes.",
-                scan_id)
+                scan_id,
+            )
     except Exception as exc:
         logger.warning("[Cancel] Zombie cleanup failed: %s", exc)
 
@@ -177,22 +189,26 @@ async def list_scans():
         # ``YYYY-MM-DD HH:MM:SS`` -> ISO.
         try:
             from datetime import datetime as _dt
+
             return _dt.strptime(s, "%Y-%m-%d %H:%M:%S").isoformat()
         except Exception as exc:
             import logging as _log
+
             _log.getLogger("api.scans").debug("datetime parse failed: %s", exc)
         # Float seconds (event-loop time or unix epoch).
         try:
-            from datetime import datetime as _dt, timezone as _tz
+            from datetime import datetime as _dt
+
             ts = float(s)
             # Event-loop times are small (< ~1e9 only after years); treat
             # values < 1e9 as relative loop seconds and don't pretend they're
             # epochs — return the raw string so the UI shows something rather
             # than a 1970 date.
             if ts > 1e9:
-                return _dt.fromtimestamp(ts, tz=_tz.utc).isoformat()
+                return _dt.fromtimestamp(ts, tz=UTC).isoformat()
         except Exception as exc:
             import logging as _log
+
             _log.getLogger("api.scans").debug("timestamp conversion failed: %s", exc)
         return s
 
@@ -205,6 +221,7 @@ async def list_scans():
                 _start = s.get("created_at") or s.get("timestamp") or ""
                 if _start:
                     from datetime import datetime as _dt
+
                     _fmts = ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]
                     _parsed = None
                     for _f in _fmts:
@@ -221,6 +238,7 @@ async def list_scans():
         if not duration and s.get("completed_at") and s.get("created_at"):
             try:
                 from datetime import datetime as _dt
+
                 _fmts = ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]
                 _start_dt = _end_dt = None
                 for _f in _fmts:
@@ -244,26 +262,30 @@ async def list_scans():
         findings_list = []
         try:
             findings_list = _findings_from_scan(s)
-            findings_list = [_enrich_finding_for_api(f, s.get("id", "")) for f in findings_list[:20]]  # Cap at 20 for list view
+            findings_list = [
+                _enrich_finding_for_api(f, s.get("id", "")) for f in findings_list[:20]
+            ]  # Cap at 20 for list view
         except Exception:
             findings_list = []
-        rows.append({
-            "id": s.get("id"),
-            "name": s.get("name") or f"Scan {str(s.get('id', ''))[-8:]}",
-            "target": s.get("target_url") or s.get("scope"),
-            "target_url": s.get("target_url") or s.get("scope") or "",
-            "scope": s.get("scope") or s.get("target_url") or "",
-            "status": s.get("status"),
-            "modules": s.get("modules", []),
-            "duration": duration,
-            "findings": findings_list,
-            "report_ready": bool(s.get("report_ready", False)),
-            "timestamp": s.get("timestamp") or _created_at(s),
-            "created_at": _created_at(s),
-        })
+        rows.append(
+            {
+                "id": s.get("id"),
+                "name": s.get("name") or f"Scan {str(s.get('id', ''))[-8:]}",
+                "target": s.get("target_url") or s.get("scope"),
+                "target_url": s.get("target_url") or s.get("scope") or "",
+                "scope": s.get("scope") or s.get("target_url") or "",
+                "status": s.get("status"),
+                "modules": s.get("modules", []),
+                "duration": duration,
+                "findings": findings_list,
+                "report_ready": bool(s.get("report_ready", False)),
+                "timestamp": s.get("timestamp") or _created_at(s),
+                "created_at": _created_at(s),
+            }
+        )
     # Newest-first. Empty ``created_at`` strings sort last so freshly-created
     # scans without a timestamp don't push completed history off the top.
-    rows.sort(key=lambda r: (r.get("created_at") or ""), reverse=True)
+    rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return {"scans": rows, "count": len(rows)}
 
 
@@ -279,9 +301,11 @@ def _signal(scan_id: str, signal: str) -> dict:
     """Publish a CONTROL_SIGNAL to the scan's context if the hive is live."""
     delivered = False
     try:
-        from backend.core.orchestrator import HiveOrchestrator
         import asyncio
+
         from backend.core.hive import EventType, HiveEvent
+        from backend.core.orchestrator import HiveOrchestrator
+
         # Find any active agent's bus to publish the control signal.
         agents = getattr(HiveOrchestrator, "active_agents", {}) or {}
         bus = None
@@ -290,12 +314,17 @@ def _signal(scan_id: str, signal: str) -> dict:
             if bus is not None:
                 break
         if bus is not None:
-            asyncio.create_task(bus.publish(HiveEvent(
-                type=EventType.CONTROL_SIGNAL, source="api.scans", scan_id=scan_id,
-                payload={"signal": signal})))
+            asyncio.create_task(
+                bus.publish(
+                    HiveEvent(
+                        type=EventType.CONTROL_SIGNAL, source="api.scans", scan_id=scan_id, payload={"signal": signal}
+                    )
+                )
+            )
             delivered = True
     except Exception as exc:
         import logging as _log
+
         _log.getLogger("api.scans").debug("control signal delivery failed: %s", exc)
         delivered = False
     return {"scan_id": scan_id, "signal": signal, "delivered": delivered}
@@ -404,7 +433,7 @@ def _enrich_finding_for_api(f: dict, scan_id: str) -> dict:
     # downstream UIs can key React lists without colliding.
     # FIX-016: Use SHA-256 instead of SHA-1 for stable finding IDs
     if not out.get("id"):
-        sig = f"{scan_id}|{str(f.get('url',''))}|{str(f.get('type',''))}".lower()
+        sig = f"{scan_id}|{str(f.get('url', ''))}|{str(f.get('type', ''))}".lower()
         out["id"] = "F-" + hashlib.sha256(sig.encode("utf-8")).hexdigest()[:10]
 
     out.setdefault("type", f.get("type") or f.get("vuln_type") or "Unknown")
@@ -416,18 +445,24 @@ def _enrich_finding_for_api(f: dict, scan_id: str) -> dict:
     if not isinstance(out.get("cvss_score"), (int, float)) or not out.get("cvss_severity"):
         try:
             from backend.reporting.cvss_engine import score_for_vuln_class
+
             score, _vector = score_for_vuln_class(str(out.get("type", "")))
             out.setdefault("cvss_score", round(float(score), 1))
             band = (
-                "CRITICAL" if score >= 9.0
-                else "HIGH" if score >= 7.0
-                else "MEDIUM" if score >= 4.0
-                else "LOW" if score > 0
+                "CRITICAL"
+                if score >= 9.0
+                else "HIGH"
+                if score >= 7.0
+                else "MEDIUM"
+                if score >= 4.0
+                else "LOW"
+                if score > 0
                 else "INFO"
             )
             out.setdefault("cvss_severity", band)
         except Exception as exc:
             import logging as _log
+
             _log.getLogger("api.scans").debug("CVSS scoring failed for finding: %s", exc)
             out.setdefault("cvss_score", 0.0)
             out.setdefault("cvss_severity", out.get("severity", "INFO"))
@@ -465,6 +500,7 @@ async def scan_graph(scan_id: str):
     """Knowledge-graph stats for the scan (Architecture §12, §22)."""
     try:
         from backend.core.unified_knowledge_graph import unified_knowledge_graph
+
         return unified_knowledge_graph.stats()
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
@@ -473,8 +509,8 @@ async def scan_graph(scan_id: str):
 @router.get("/{scan_id}/report")
 async def scan_report(scan_id: str):
     """Return generated report links for the scan (Architecture §18, §22)."""
-    import os
     from backend.core.config import settings
+
     reports_dir = settings.REPORTS_DIR
     pdf = f"Scan_Report_{scan_id}.pdf"
     findings_dir = os.path.join(reports_dir, scan_id)
@@ -484,5 +520,4 @@ async def scan_report(scan_id: str):
     if os.path.isdir(findings_dir):
         for f in os.listdir(findings_dir):
             outputs[f.rsplit(".", 1)[-1]] = os.path.join(findings_dir, f)
-    return {"scan_id": scan_id, "reports": outputs,
-            "export_endpoint": f"/api/reports/findings/{scan_id}/export"}
+    return {"scan_id": scan_id, "reports": outputs, "export_endpoint": f"/api/reports/findings/{scan_id}/export"}

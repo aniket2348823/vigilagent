@@ -4,8 +4,9 @@ inql writes per-target JSON (introspection schema) and/or query files. We
 extract the GraphQL types/queries/mutations as endpoint+schema entities. The
 parser is tolerant of both the raw introspection JSON and inql's summary JSON.
 """
+
 from __future__ import annotations
-import json
+
 from pathlib import Path
 
 from backend.parsers.recon.base import ParsedEntity, safe_json_file
@@ -51,16 +52,32 @@ def parse_inql_output(path: Path | str) -> list[ParsedEntity]:
     if not (queries or mutations or types):
         return entities
 
-    entities.append(ParsedEntity(
-        kind="graphql_schema", label="graphql_introspection", confidence=0.85,
-        properties={"query_count": len(queries), "mutation_count": len(mutations),
-                    "type_count": len(types), "queries": queries[:50],
-                    "mutations": mutations[:50]},
-        source_tool="inql", phase="api_reconnaissance"))
+    entities.append(
+        ParsedEntity(
+            kind="graphql_schema",
+            label="graphql_introspection",
+            confidence=0.85,
+            properties={
+                "query_count": len(queries),
+                "mutation_count": len(mutations),
+                "type_count": len(types),
+                "queries": queries[:50],
+                "mutations": mutations[:50],
+            },
+            source_tool="inql",
+            phase="api_reconnaissance",
+        )
+    )
     for m in mutations:
         if m:
-            entities.append(ParsedEntity(
-                kind="graphql_mutation", label=m, confidence=0.8,
-                properties={"operation": "mutation", "risk": "HIGH"},
-                source_tool="inql", phase="api_reconnaissance"))
+            entities.append(
+                ParsedEntity(
+                    kind="graphql_mutation",
+                    label=m,
+                    confidence=0.8,
+                    properties={"operation": "mutation", "risk": "HIGH"},
+                    source_tool="inql",
+                    phase="api_reconnaissance",
+                )
+            )
     return entities

@@ -29,8 +29,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Protocol
 
 # Tracing — already optional inside backend.core.tracing
 try:
@@ -39,8 +39,9 @@ except Exception:  # pragma: no cover - defensive: tracing is optional infra
     from contextlib import contextmanager
 
     @contextmanager
-    def trace_span(name: str, attributes: Optional[dict] = None):  # type: ignore
+    def trace_span(name: str, attributes: dict | None = None):  # type: ignore
         yield None
+
 
 # Circuit breaker — OPTIONAL dependency. The design references the
 # ``circuitbreaker`` PyPI package, but it is not pinned in
@@ -55,8 +56,13 @@ except Exception:  # pragma: no cover
     _ext_circuit = None  # type: ignore
     _CIRCUIT_BREAKER_LIB_AVAILABLE = False
 
+import contextlib
+
 from backend.core.integration_config import IntegrationConfig, get_integration_config
 from backend.core.task_manager import TaskManager
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +76,8 @@ class _EventBusLike(Protocol):
 
 
 class _LearningEngineLike(Protocol):
-    async def learn_from_browser_vulnerability(self, vuln_data: Dict, scan_id: str) -> Any: ...
-    async def learn_framework_pattern(self, framework: Optional[str], routes: List[str]) -> Any: ...
+    async def learn_from_browser_vulnerability(self, vuln_data: dict, scan_id: str) -> Any: ...
+    async def learn_framework_pattern(self, framework: str | None, routes: list[str]) -> Any: ...
 
 
 class _SkillLibraryLike(Protocol):
@@ -106,7 +112,7 @@ class _LocalCircuitBreaker:
     failure_threshold: int = 5
     recovery_timeout: float = 60.0
     _failures: int = 0
-    _opened_at: Optional[float] = None
+    _opened_at: float | None = None
     _trips: int = 0
 
     class CircuitOpen(RuntimeError):
@@ -154,7 +160,7 @@ class _LocalCircuitBreaker:
 # ---------------------------------------------------------------------------
 # Lightweight event shim — accepts dicts OR objects with .data/.scan_id.
 # ---------------------------------------------------------------------------
-def _event_data(event: Any) -> Dict[str, Any]:
+def _event_data(event: Any) -> dict[str, Any]:
     if isinstance(event, dict):
         return event.get("data", event)
     return getattr(event, "data", {}) or {}
@@ -195,7 +201,7 @@ class IntegrationCoordinator:
         health_monitor: _HealthMonitorLike,
         healing_engine: _HealingEngineLike,
         browser_orchestrator: _BrowserOrchestratorLike,
-        config: Optional[IntegrationConfig] = None,
+        config: IntegrationConfig | None = None,
     ) -> None:
         self.bus = bus
         self.learning_engine = learning_engine
@@ -206,18 +212,16 @@ class IntegrationCoordinator:
         self.config: IntegrationConfig = config or get_integration_config()
 
         # Event batching for BROWSER_DISCOVERY storms.
-        self._discovery_batch: List[Dict[str, Any]] = []
+        self._discovery_batch: list[dict[str, Any]] = []
         self._batch_lock = asyncio.Lock()
-        self._batch_task: Optional[asyncio.Task] = None
+        self._batch_task: asyncio.Task | None = None
         self._shutdown = False
-        
+
         # Task manager for background tasks
         self._task_manager = TaskManager("IntegrationCoordinator")
 
         # Concurrency cap on learning fan-out.
-        self._learning_semaphore = asyncio.Semaphore(
-            max(1, self.config.max_concurrent_learning)
-        )
+        self._learning_semaphore = asyncio.Semaphore(max(1, self.config.max_concurrent_learning))
 
         # Circuit breakers per dependency (always have local breakers; if the
         # external lib is present we still use the local ones so trip metrics
@@ -249,9 +253,7 @@ class IntegrationCoordinator:
             except Exception as e:  # pragma: no cover - defensive
                 logger.warning("Coordinator subscribe partially failed: %s", e)
 
-            self._batch_task = self._task_manager.create_task(
-                self._drain_discovery_batches(), name="ic_batch_drain"
-            )
+            self._batch_task = self._task_manager.create_task(self._drain_discovery_batches(), name="ic_batch_drain")
             self._initialized = True
 
             logger.info(
@@ -269,10 +271,8 @@ class IntegrationCoordinator:
         self._shutdown = True
         if self._batch_task and not self._batch_task.done():
             self._batch_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._batch_task
-            except (asyncio.CancelledError, Exception):
-                pass
         async with self._batch_lock:
             if self._discovery_batch:
                 await self._flush_discovery_batch_locked()
@@ -285,7 +285,7 @@ class IntegrationCoordinator:
         )
 
     # ----------------------------------------------------- public metrics
-    def get_integration_metrics(self) -> Dict[str, Any]:
+    def get_integration_metrics(self) -> dict[str, Any]:
         """Snapshot for /api/integration/metrics."""
         processed = self._metrics.events_processed
         failed = self._metrics.events_failed
@@ -322,11 +322,10 @@ class IntegrationCoordinator:
             {"vuln.type": str(data.get("vuln_type")), "scan_id": scan_id},
         ):
             try:
+
                 async def _do() -> None:
                     async with self._learning_semaphore:
-                        await self.learning_engine.learn_from_browser_vulnerability(
-                            data, scan_id
-                        )
+                        await self.learning_engine.learn_from_browser_vulnerability(data, scan_id)
 
                 await self._cb_vuln.call(_do)
                 self._metrics.events_processed += 1
@@ -388,11 +387,10 @@ class IntegrationCoordinator:
 
         with trace_span("flush_discovery_batch", {"batch.size": len(batch)}):
             try:
+
                 async def _do() -> None:
                     tasks = [
-                        self.learning_engine.learn_framework_pattern(
-                            d.get("framework"), d.get("routes", []) or []
-                        )
+                        self.learning_engine.learn_framework_pattern(d.get("framework"), d.get("routes", []) or [])
                         for d in batch
                     ]
                     if tasks:
@@ -414,7 +412,7 @@ class IntegrationCoordinator:
 # The dashboard endpoint at backend/api/endpoints/dashboard.py imports this
 # symbol lazily inside a function and checks it for truthiness, so leaving it
 # at None until lifespan calls ``init_integration_coordinator`` is safe.
-integration_coordinator: Optional[IntegrationCoordinator] = None
+integration_coordinator: IntegrationCoordinator | None = None
 
 
 def init_integration_coordinator(
@@ -425,7 +423,7 @@ def init_integration_coordinator(
     health_monitor: _HealthMonitorLike,
     healing_engine: _HealingEngineLike,
     browser_orchestrator: _BrowserOrchestratorLike,
-    config: Optional[IntegrationConfig] = None,
+    config: IntegrationConfig | None = None,
 ) -> IntegrationCoordinator:
     """Create + cache the module-level coordinator. Idempotent."""
     global integration_coordinator

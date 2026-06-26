@@ -4,11 +4,16 @@ arjun emits a JSON object keyed by URL:
   {"http://host/api": {"params":["id","token"], "method":"GET"}}
 or a list-of-params variant depending on version.
 """
+
 from __future__ import annotations
-from pathlib import Path
+
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from backend.parsers.recon.base import ParsedEntity, safe_json_file
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def parse_arjun_json(path: Path | str) -> list[ParsedEntity]:
@@ -31,9 +36,20 @@ def parse_arjun_json(path: Path | str) -> list[ParsedEntity]:
             if key in seen:
                 continue
             seen.add(key)
-            entities.append(ParsedEntity(
-                kind="parameter", label=str(p), confidence=0.8,
-                properties={"url": url, "host": host, "method": method,
-                            "location": "query", "discovered_via": "arjun"},
-                source_tool="arjun", phase="http_browser_intelligence"))
+            entities.append(
+                ParsedEntity(
+                    kind="parameter",
+                    label=str(p),
+                    confidence=0.8,
+                    properties={
+                        "url": url,
+                        "host": host,
+                        "method": method,
+                        "location": "query",
+                        "discovered_via": "arjun",
+                    },
+                    source_tool="arjun",
+                    phase="http_browser_intelligence",
+                )
+            )
     return entities

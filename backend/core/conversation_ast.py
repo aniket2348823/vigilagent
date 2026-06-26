@@ -4,7 +4,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-
 SUMMARIZATION_TOOL_NAME = "execute_task_and_return_summary"
 FALLBACK_RESPONSE_CONTENT = "the call was not handled, please try again"
 
@@ -44,7 +43,7 @@ class ConversationAST:
     sections: list[ChainSection] = field(default_factory=list)
 
     @classmethod
-    def from_messages(cls, messages: list[dict[str, Any]], *, force: bool = True) -> "ConversationAST":
+    def from_messages(cls, messages: list[dict[str, Any]], *, force: bool = True) -> ConversationAST:
         ast = cls()
         current: ChainSection | None = None
         current_pair: BodyPair | None = None
@@ -95,19 +94,23 @@ class ConversationAST:
             for pair in section.body:
                 missing = pair.tool_call_ids() - pair.response_ids()
                 for call_id in sorted(missing):
-                    pair.tool_messages.append({
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "name": _tool_name(pair.ai_message, call_id),
-                        "content": FALLBACK_RESPONSE_CONTENT,
-                    })
+                    pair.tool_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "name": _tool_name(pair.ai_message, call_id),
+                            "content": FALLBACK_RESPONSE_CONTENT,
+                        }
+                    )
                 unmatched = pair.response_ids() - pair.tool_call_ids()
                 for call_id in sorted(unmatched):
-                    pair.ai_message.setdefault("tool_calls", []).append({
-                        "id": call_id,
-                        "type": "function",
-                        "function": {"name": "unknown_tool", "arguments": "{}"},
-                    })
+                    pair.ai_message.setdefault("tool_calls", []).append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": "unknown_tool", "arguments": "{}"},
+                        }
+                    )
 
     def normalize_tool_call_ids(self, prefix: str = "call") -> dict[str, str]:
         mapping: dict[str, str] = {}
@@ -128,11 +131,13 @@ class ConversationAST:
 
 
 def message_size(msg: dict[str, Any]) -> int:
-    return len(str(msg.get("content", "")).encode("utf-8", errors="replace")) + len(str(msg.get("tool_calls", "")).encode("utf-8", errors="replace"))
+    return len(str(msg.get("content", "")).encode("utf-8", errors="replace")) + len(
+        str(msg.get("tool_calls", "")).encode("utf-8", errors="replace")
+    )
 
 
 def _tool_name(ai_message: dict[str, Any], call_id: str) -> str:
     for call in ai_message.get("tool_calls", []) or []:
         if call.get("id") == call_id:
-            return ((call.get("function") or {}).get("name") or "unknown_tool")
+            return (call.get("function") or {}).get("name") or "unknown_tool"
     return "unknown_tool"

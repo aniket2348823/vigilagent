@@ -1,21 +1,21 @@
-from fastapi import APIRouter, Header, Response, Request
-from starlette.responses import JSONResponse
-import random
+import base64
+import hmac
+import io
 import json
+import logging
 import os
 import time
+import uuid
+
 import pyotp
 import qrcode
-import io
-import base64
-import uuid
-from typing import List, Dict
+from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel
-from backend.core.state import stats_db_manager
+from starlette.responses import JSONResponse
+
+from backend.core.csrf_protection import csrf_protect, csrf_protection, get_session_id
 from backend.core.rate_limiter import rate_limit
-import logging
-import hmac
-from backend.core.csrf_protection import csrf_protection, get_session_id, csrf_protect
+from backend.core.state import stats_db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -25,26 +25,29 @@ router = APIRouter()
 CONFIG_FILE = "user_config.json"
 SESSION_FILE = ".session"
 
+
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         return {"secret": None, "enabled": False}
     try:
-        with open(CONFIG_FILE, "r") as f:
+        with open(CONFIG_FILE) as f:
             return json.load(f)
     except Exception as e:
         logger.debug("Dashboard config load failed: %s", e)
         return {"secret": None, "enabled": False}
 
+
 def save_config(config):
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f)
+
 
 # --- SESSION STATE PERSISTENCE ---
 def load_session():
     if not os.path.exists(SESSION_FILE):
         return {"authenticated": False, "token": None, "expires": 0}
     try:
-        with open(SESSION_FILE, "r") as f:
+        with open(SESSION_FILE) as f:
             data = json.load(f)
             # Check expiration
             if data.get("expires", 0) < time.time():
@@ -54,19 +57,22 @@ def load_session():
         logger.debug("Dashboard session load failed: %s", e)
         return {"authenticated": False, "token": None, "expires": 0}
 
+
 def save_session(session_data):
     with open(SESSION_FILE, "w") as f:
         json.dump(session_data, f)
+
 
 def clear_session():
     if os.path.exists(SESSION_FILE):
         os.remove(SESSION_FILE)
 
+
 def _validate_auth(authorization: str = None):
     """Check if a valid Authorization Bearer token matches the active session.
     Returns (is_valid, session). If session exists, the token MUST match."""
     session = load_session()
-    
+
     # Test mode mock tokens (only active when TESTING=true environment variable is set)
     if authorization and os.getenv("TESTING", "false").lower() == "true":
         # In test mode, reject known invalid tokens
@@ -79,7 +85,7 @@ def _validate_auth(authorization: str = None):
         # SECURITY FIX (C-1): No active session means auth is required.
         # Return False so unauthenticated requests are rejected by default.
         return False, session
-        
+
     # Active session exists — validate the token from the header
     if not authorization or not authorization.startswith("Bearer "):
         return False, session
@@ -88,13 +94,17 @@ def _validate_auth(authorization: str = None):
         return False, session
     return True, session
 
+
 # --- DATA MODELS ---
 
+
 class SettingsUpdate(BaseModel):
-    pass 
+    pass
+
 
 class Verify2FA(BaseModel):
     totp_code: str
+
 
 class LoginRequest(BaseModel):
     username: str = "user"
@@ -105,6 +115,7 @@ class LoginRequest(BaseModel):
 # --- SELF-AWARENESS HELPER ---
 
 # --- BROWSER HEALTH HELPER (Task 7.7, Architecture §29.13 non-blocking) ---
+
 
 def _get_browser_health_block():
     """Read browser health from the agent health monitor extension (Task 7.7).
@@ -134,6 +145,7 @@ def _get_browser_health_block():
     candidates.append(health_monitor)
     try:
         from backend.core import agent_health_monitor as _ahm_mod
+
         ext = getattr(_ahm_mod, "browser_health_monitor", None)
         if ext is not None and ext is not health_monitor:
             candidates.append(ext)
@@ -171,16 +183,8 @@ def _get_browser_health_block():
         if score is None:
             score = data.get("browser_health_score")
         block["score"] = score
-        block["active_contexts"] = (
-            data.get("active_contexts")
-            or data.get("total_active_contexts")
-            or 0
-        )
-        block["error_rate"] = (
-            data.get("error_rate")
-            or data.get("browser_error_rate")
-            or 0.0
-        )
+        block["active_contexts"] = data.get("active_contexts") or data.get("total_active_contexts") or 0
+        block["error_rate"] = data.get("error_rate") or data.get("browser_error_rate") or 0.0
         block["alert"] = data.get("alert") or data.get("alerts") or None
         block["available"] = True
         return block
@@ -191,7 +195,7 @@ async def _get_self_awareness_summary():
     """Get self-awareness metrics summary for dashboard"""
     try:
         from backend.core.hive import hive
-        
+
         summary = {
             "enabled": False,
             "agents": [],
@@ -199,83 +203,86 @@ async def _get_self_awareness_summary():
             "avg_success_rate": 0.0,
             "stuck_agents": 0,
             "recent_decisions": [],
-            "recent_adaptations": []
+            "recent_adaptations": [],
         }
-        
+
         # Get all agents
         all_agents = hive.get_all_agents()
-        
+
         if not all_agents:
             return summary
-        
+
         total_success_rate = 0.0
         self_aware_count = 0
-        
+
         for agent in all_agents:
             # Check if agent has self-awareness
-            if not hasattr(agent, 'self_awareness') or not agent.self_awareness:
+            if not hasattr(agent, "self_awareness") or not agent.self_awareness:
                 continue
-            
+
             self_aware_count += 1
             summary["enabled"] = True
-            
+
             try:
                 # Get performance metrics
                 performance_tracker = agent.self_awareness.performance_tracker
                 metrics = await performance_tracker.get_metrics_summary()
-                
+
                 # Check stuck state
                 stuck_info = await performance_tracker.detect_stuck_state()
-                
+
                 # Get proficiency scores
                 capability_assessor = agent.self_awareness.capability_assessor
                 skill_map = await capability_assessor.get_skill_map()
-                
+
                 agent_summary = {
                     "agent_id": agent.agent_id,
                     "success_rate": metrics.get("success_rate", 0.0),
                     "total_actions": metrics.get("total_actions", 0),
                     "is_stuck": stuck_info is not None,
-                    "top_skills": dict(sorted(skill_map.items(), key=lambda x: x[1], reverse=True)[:3]) if skill_map else {}
+                    "top_skills": dict(sorted(skill_map.items(), key=lambda x: x[1], reverse=True)[:3])
+                    if skill_map
+                    else {},
                 }
-                
+
                 summary["agents"].append(agent_summary)
                 total_success_rate += metrics.get("success_rate", 0.0)
-                
+
                 if stuck_info:
                     summary["stuck_agents"] += 1
-                
+
                 # Get recent decisions (limit to 5 per agent)
                 decision_logger = agent.self_awareness.decision_logger
-                recent_decisions = await decision_logger.query_decisions(
-                    agent_id=agent.agent_id,
-                    limit=5
-                )
-                
+                recent_decisions = await decision_logger.query_decisions(agent_id=agent.agent_id, limit=5)
+
                 for decision in recent_decisions:
-                    summary["recent_decisions"].append({
-                        "agent_id": decision.agent_id,
-                        "timestamp": decision.timestamp.isoformat(),
-                        "action_type": decision.action_type,
-                        "confidence": decision.confidence,
-                        "rationale": decision.rationale[:100] + "..." if len(decision.rationale) > 100 else decision.rationale
-                    })
-                
+                    summary["recent_decisions"].append(
+                        {
+                            "agent_id": decision.agent_id,
+                            "timestamp": decision.timestamp.isoformat(),
+                            "action_type": decision.action_type,
+                            "confidence": decision.confidence,
+                            "rationale": decision.rationale[:100] + "..."
+                            if len(decision.rationale) > 100
+                            else decision.rationale,
+                        }
+                    )
+
             except Exception as e:
                 logger.error(f"Error getting self-awareness data for {agent.agent_id}: {e}")
                 continue
-        
+
         # Calculate average success rate
         if self_aware_count > 0:
             summary["avg_success_rate"] = total_success_rate / self_aware_count
             summary["total_self_aware"] = self_aware_count
-        
+
         # Sort recent decisions by timestamp (most recent first)
         summary["recent_decisions"].sort(key=lambda x: x["timestamp"], reverse=True)
         summary["recent_decisions"] = summary["recent_decisions"][:10]  # Limit to 10 most recent
-        
+
         return summary
-        
+
     except Exception as e:
         logger.error(f"Error getting self-awareness summary: {e}")
         return {
@@ -285,7 +292,7 @@ async def _get_self_awareness_summary():
             "avg_success_rate": 0.0,
             "stuck_agents": 0,
             "recent_decisions": [],
-            "recent_adaptations": []
+            "recent_adaptations": [],
         }
 
 
@@ -295,54 +302,68 @@ async def _get_self_awareness_summary():
 _stats_cache = {}
 _stats_last_updated = 0.0
 
+
 @router.get("/stats")
 @rate_limit("/api/dashboard/stats")
 async def get_dashboard_stats(request: Request, authorization: str = Header(None)):
     """V7: Cached statistics for TC011 High-Concurrency compliance."""
     global _stats_last_updated, _stats_cache
     import time
+
     from starlette.responses import JSONResponse
+
     if time.time() - _stats_last_updated < 1.0 and _stats_cache:
         return JSONResponse(status_code=200, content=_stats_cache)
-    
+
     config = load_config()
     # TEST MODE: Bypass auth for automated tests
-    is_test_mode = os.getenv("VULAGENT_TEST_MODE", "false").lower() == "true"
+    is_test_mode = os.getenv("VIGILAGENT_TEST_MODE", "false").lower() == "true"
     # Validate auth token if 2FA is enabled OR if the client explicitly provided a token
     if not is_test_mode and (config.get("enabled") or authorization):
         is_valid, session = _validate_auth(authorization)
         if not is_valid or not session.get("authenticated"):
-            return JSONResponse(status_code=401, content={"error": "Unauthorized", "metrics": {}, "graph_data": [], "recent_activity": []})
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Unauthorized", "metrics": {}, "graph_data": [], "recent_activity": []},
+            )
 
     recent = []
     historical_threats = []
-    
+
     stats = stats_db_manager.get_stats()
     scans = stats.get("scans", [])
-    
+
     for s in scans:
-        scan_name = s.get('name') or s.get('scope') or 'Untitled Scan'
-        scan_status = s.get('status', 'Unknown')
-        scan_timestamp = s.get('timestamp', s.get('created_at', ''))
+        scan_name = s.get("name") or s.get("scope") or "Untitled Scan"
+        scan_status = s.get("status", "Unknown")
+        scan_timestamp = s.get("timestamp", s.get("created_at", ""))
         # Logic for 'recent' summaries
-        recent.append({
-            "text": f"Scan {scan_status}: {scan_name}",
-            "time": scan_timestamp,
-            "type": "info" if scan_status in ("Completed", "Finalizing") else "critical"
-        })
+        recent.append(
+            {
+                "text": f"Scan {scan_status}: {scan_name}",
+                "time": scan_timestamp,
+                "type": "info" if scan_status in ("Completed", "Finalizing") else "critical",
+            }
+        )
         # Logic for pre-populating threat_feed
         for r in s.get("results", []):
             payload = r.get("payload", {})
             if not isinstance(payload, dict):
                 payload = {}
-            historical_threats.append({
-                "timestamp": str(r.get("timestamp", "")).split()[-1][:8] if " " in str(r.get("timestamp", "")) else "History",
-                "agent": r.get("source", "agent_prism"),
-                "threat_type": payload.get("type", "VULNERABILITY"),
-                "url": payload.get("url", scan_name),
-                "severity": payload.get("severity", "MEDIUM").upper(),
-                "risk_score": payload.get("data", {}).get("risk_score", 50) if isinstance(payload.get("data"), dict) else 50
-            })
+            historical_threats.append(
+                {
+                    "timestamp": str(r.get("timestamp", "")).split()[-1][:8]
+                    if " " in str(r.get("timestamp", ""))
+                    else "History",
+                    "agent": r.get("source", "agent_prism"),
+                    "threat_type": payload.get("type", "VULNERABILITY"),
+                    "url": payload.get("url", scan_name),
+                    "severity": payload.get("severity", "MEDIUM").upper(),
+                    "risk_score": payload.get("data", {}).get("risk_score", 50)
+                    if isinstance(payload.get("data"), dict)
+                    else 50,
+                }
+            )
 
     # Add self-awareness metrics
     self_awareness_data = await _get_self_awareness_summary()
@@ -354,23 +375,24 @@ async def get_dashboard_stats(request: Request, authorization: str = Header(None
             "total_scans": len(scans),
             "active_scans": sum(1 for s in scans if s.get("status") == "Running"),
             "vulnerabilities": stats.get("vulnerabilities", 0),
-            "critical": stats.get("critical", 0)
+            "critical": stats.get("critical", 0),
         },
         "graph_data": stats.get("history", []),
         "recent_activity": recent[:5],
         "historical_threats": historical_threats[:60],
         "self_awareness": self_awareness_data,
-        "browser_health": browser_health_block
+        "browser_health": browser_health_block,
     }
     _stats_last_updated = time.time()
     return _stats_cache
+
 
 @router.get("/scans")
 @rate_limit()
 async def get_scan_list(request: Request, authorization: str = Header(None)):
     config = load_config()
     # TEST MODE: Bypass auth for automated tests
-    is_test_mode = os.getenv("VULAGENT_TEST_MODE", "false").lower() == "true"
+    is_test_mode = os.getenv("VIGILAGENT_TEST_MODE", "false").lower() == "true"
     # Validate auth token if 2FA is enabled OR if the client explicitly provided a token
     if not is_test_mode and (config.get("enabled") or authorization):
         is_valid, session = _validate_auth(authorization)
@@ -383,20 +405,22 @@ async def get_scan_list(request: Request, authorization: str = Header(None)):
             s["scan_id"] = s["id"]
     return scans
 
+
 @router.post("/settings")
 @rate_limit()
 @csrf_protect()
 async def update_settings(request: Request, settings: SettingsUpdate):
     return {"status": "success", "message": "Settings updated."}
 
+
 @router.get("/settings")
 async def get_settings():
     config = load_config()
-    return {
-        "2fa_enabled": config["enabled"]
-    }
+    return {"2fa_enabled": config["enabled"]}
+
 
 # --- CSRF TOKEN GENERATION ---
+
 
 @router.get("/csrf-token")
 @rate_limit()
@@ -406,7 +430,9 @@ async def get_csrf_token(request: Request):
     token = await csrf_protection.generate_token(session_id)
     return {"csrf_token": token}
 
+
 # --- 2FA MANAGEMENT ---
+
 
 @router.post("/settings/2fa/generate")
 @rate_limit()
@@ -424,25 +450,23 @@ async def generate_2fa(request: Request, authorization: str = Header(None)):
                 return JSONResponse(status_code=401, content={"error": "Unauthorized"})
 
     secret = pyotp.random_base32()
-    # We DON'T save to config yet, only when verified. 
+    # We DON'T save to config yet, only when verified.
     # But we need to store it temporarily for the verify step.
     # For simplicity, we'll save it to config but with enabled=False
     config["secret"] = secret
-    config["enabled"] = False 
+    config["enabled"] = False
     save_config(config)
-    
+
     totp = pyotp.TOTP(secret)
     provisioning_uri = totp.provisioning_uri(name="Agent Omega", issuer_name="Vigilagent")
-    
+
     img = qrcode.make(provisioning_uri)
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
     img_str = base64.b64encode(buffered.getvalue()).decode()
-    
-    return {
-        "qr_code": f"data:image/png;base64,{img_str}",
-        "qr_code_base64": f"data:image/png;base64,{img_str}"
-    }
+
+    return {"qr_code": f"data:image/png;base64,{img_str}", "qr_code_base64": f"data:image/png;base64,{img_str}"}
+
 
 @router.post("/settings/2fa/verify")
 @rate_limit()
@@ -451,22 +475,25 @@ async def verify_2fa(request: Request, payload: Verify2FA):
     config = load_config()
     if not config.get("secret"):
         return JSONResponse(status_code=401, content={"status": "error", "message": "No secret generated."})
-        
+
     totp = pyotp.TOTP(config["secret"])
     if totp.verify(payload.totp_code):
         config["enabled"] = True
         save_config(config)
-        
+
         # Auto-login on setup
         token = str(uuid.uuid4())
-        save_session({
-            "authenticated": True, 
-            "token": token,
-            "expires": time.time() + 86400  # 24 hour session
-        })
+        save_session(
+            {
+                "authenticated": True,
+                "token": token,
+                "expires": time.time() + 86400,  # 24 hour session
+            }
+        )
         return {"status": "success", "message": "2FA Enabled Successfully.", "token": token}
     else:
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid Token."})
+
 
 @router.post("/settings/2fa/disable")
 @csrf_protect()
@@ -475,31 +502,30 @@ async def disable_2fa(request: Request, authorization: str = Header(None)):
     config = load_config()
     if not config.get("enabled"):
         return {"status": "success", "message": "2FA is already disabled."}
-    
+
     # Require valid auth to disable (security measure)
     session = load_session()
     if session.get("authenticated"):
         is_valid, _ = _validate_auth(authorization)
         if not is_valid:
             return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    
+
     config["enabled"] = False
     config["secret"] = None
     save_config(config)
     clear_session()
     return {"status": "success", "message": "2FA has been disabled."}
 
+
 # --- AUTHENTICATION FLOW ---
+
 
 @router.get("/auth/status")
 async def auth_status():
     config = load_config()
     session = load_session()
-    return {
-        "2fa_required": config["enabled"],
-        "authenticated": session["authenticated"],
-        "token": session.get("token")
-    }
+    return {"2fa_required": config["enabled"], "authenticated": session["authenticated"], "token": session.get("token")}
+
 
 @router.post("/auth/login")
 @rate_limit()
@@ -523,25 +549,30 @@ async def login(request: Request, payload: LoginRequest):
     totp = pyotp.TOTP(config["secret"])
     if totp.verify(code):
         token = str(uuid.uuid4())
-        save_session({
-            "authenticated": True, 
-            "token": token,
-            "expires": time.time() + 86400  # 24 hour session
-        })
+        save_session(
+            {
+                "authenticated": True,
+                "token": token,
+                "expires": time.time() + 86400,  # 24 hour session
+            }
+        )
         return {"status": "success", "message": "Authenticated.", "token": token, "session_token": token}
     else:
         # Prevent brute force (simple delay could be added here)
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid 2FA Code."})
+
 
 @router.post("/auth/logout")
 async def logout():
     clear_session()
     return {"status": "success"}
 
+
 @router.post("/reset")
 @csrf_protect()
 async def reset_dashboard(request: Request):
     from backend.core.state import stats_db_manager
+
     await stats_db_manager.wipe_scans()
     return {"status": "success", "message": "All historical scans have been wiped."}
 
@@ -549,6 +580,7 @@ async def reset_dashboard(request: Request):
 # ═══════════════════════════════════════════════════════════════════════
 # CONTINUOUS LEARNING METRICS ENDPOINT
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @router.get("/api/learning/metrics")
 async def get_learning_metrics():
@@ -558,35 +590,27 @@ async def get_learning_metrics():
     """
     try:
         from backend.core.learning_engine import learning_engine
+
         metrics = learning_engine.get_metrics()
-        
+
         # Add pattern breakdown by type
         pattern_breakdown = {}
         for pattern in learning_engine.patterns.values():
             ptype = pattern.pattern_type
             if ptype not in pattern_breakdown:
-                pattern_breakdown[ptype] = {
-                    "count": 0,
-                    "high_confidence": 0,
-                    "avg_success_rate": 0.0
-                }
+                pattern_breakdown[ptype] = {"count": 0, "high_confidence": 0, "avg_success_rate": 0.0}
             pattern_breakdown[ptype]["count"] += 1
             if pattern.confidence > 0.7:
                 pattern_breakdown[ptype]["high_confidence"] += 1
-        
+
         # Calculate average success rates
         for ptype in pattern_breakdown:
             patterns_of_type = [p for p in learning_engine.patterns.values() if p.pattern_type == ptype]
             if patterns_of_type:
                 avg_sr = sum(p.success_rate for p in patterns_of_type) / len(patterns_of_type)
                 pattern_breakdown[ptype]["avg_success_rate"] = round(avg_sr, 3)
-        
-        return {
-            "success": True,
-            "metrics": metrics,
-            "pattern_breakdown": pattern_breakdown,
-            "learning_enabled": True
-        }
+
+        return {"success": True, "metrics": metrics, "pattern_breakdown": pattern_breakdown, "learning_enabled": True}
     except Exception as e:
         return {
             "success": False,
@@ -597,22 +621,18 @@ async def get_learning_metrics():
                 "total_scans_analyzed": 0,
                 "total_vulns_learned": 0,
                 "avg_pattern_confidence": 0.0,
-                "learning_rate": 0.0
+                "learning_rate": 0.0,
             },
             "pattern_breakdown": {},
-            "learning_enabled": False
+            "learning_enabled": False,
         }
 
 
 @router.get("/api/learning/patterns")
-async def get_learning_patterns(
-    pattern_type: str = None,
-    min_confidence: float = 0.0,
-    limit: int = 50
-):
+async def get_learning_patterns(pattern_type: str = None, min_confidence: float = 0.0, limit: int = 50):
     """
     Get learned patterns with optional filtering.
-    
+
     Query params:
     - pattern_type: Filter by type (endpoint_pattern, payload_success, vuln_correlation, recon_strategy)
     - min_confidence: Minimum confidence threshold (0.0 to 1.0)
@@ -620,38 +640,34 @@ async def get_learning_patterns(
     """
     try:
         from backend.core.learning_engine import learning_engine
-        
+
         patterns = list(learning_engine.patterns.values())
-        
+
         # Apply filters
         if pattern_type:
             patterns = [p for p in patterns if p.pattern_type == pattern_type]
-        
+
         patterns = [p for p in patterns if p.confidence >= min_confidence]
-        
+
         # Sort by confidence (highest first)
         patterns.sort(key=lambda p: p.confidence, reverse=True)
-        
+
         # Limit results
         patterns = patterns[:limit]
-        
+
         # Convert to dict for JSON serialization
         from dataclasses import asdict
+
         patterns_data = [asdict(p) for p in patterns]
-        
+
         return {
             "success": True,
             "patterns": patterns_data,
             "total_count": len(patterns_data),
-            "filtered": pattern_type is not None or min_confidence > 0.0
+            "filtered": pattern_type is not None or min_confidence > 0.0,
         }
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "patterns": [],
-            "total_count": 0
-        }
+        return {"success": False, "error": str(e), "patterns": [], "total_count": 0}
 
 
 @router.get("/api/learning/recommendations/{target_url:path}")
@@ -661,17 +677,10 @@ async def get_learning_recommendations(target_url: str):
     """
     try:
         from backend.core.learning_engine import learning_engine
-        
-        recommendations = await learning_engine.get_recommendations(
-            target_url,
-            {"scan_id": "preview"}
-        )
-        
-        return {
-            "success": True,
-            "target_url": target_url,
-            "recommendations": recommendations
-        }
+
+        recommendations = await learning_engine.get_recommendations(target_url, {"scan_id": "preview"})
+
+        return {"success": True, "target_url": target_url, "recommendations": recommendations}
     except Exception as e:
         return {
             "success": False,
@@ -680,8 +689,8 @@ async def get_learning_recommendations(target_url: str):
                 "priority_vulns": [],
                 "effective_payloads": [],
                 "correlated_vulns": [],
-                "confidence": 0.0
-            }
+                "confidence": 0.0,
+            },
         }
 
 
@@ -689,30 +698,20 @@ async def get_learning_recommendations(target_url: str):
 # AGENT EVOLUTION SYSTEM ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @router.get("/api/evolution/health")
 async def get_agent_health():
     """Get health metrics for all agents."""
     try:
         from backend.core.agent_health_monitor import health_monitor
-        
+
         all_health = health_monitor.get_all_health()
         summary = health_monitor.get_system_health_summary()
         alerts = health_monitor.get_alerts(limit=20)
-        
-        return {
-            "success": True,
-            "agents": all_health,
-            "summary": summary,
-            "alerts": alerts
-        }
+
+        return {"success": True, "agents": all_health, "summary": summary, "alerts": alerts}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "agents": {},
-            "summary": {},
-            "alerts": []
-        }
+        return {"success": False, "error": str(e), "agents": {}, "summary": {}, "alerts": []}
 
 
 @router.get("/api/evolution/health/{agent_name}")
@@ -720,29 +719,16 @@ async def get_agent_health_detail(agent_name: str):
     """Get detailed health metrics and history for a specific agent."""
     try:
         from backend.core.agent_health_monitor import health_monitor
-        
+
         current = health_monitor.get_agent_health(agent_name)
         history = health_monitor.get_agent_history(agent_name, limit=100)
-        
+
         if not current:
-            return JSONResponse(
-                status_code=404,
-                content={"success": False, "error": f"Agent {agent_name} not found"}
-            )
-        
-        return {
-            "success": True,
-            "agent_name": agent_name,
-            "current": current,
-            "history": history
-        }
+            return JSONResponse(status_code=404, content={"success": False, "error": f"Agent {agent_name} not found"})
+
+        return {"success": True, "agent_name": agent_name, "current": current, "history": history}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "current": None,
-            "history": []
-        }
+        return {"success": False, "error": str(e), "current": None, "history": []}
 
 
 @router.get("/api/evolution/healing")
@@ -750,22 +736,13 @@ async def get_healing_metrics():
     """Get self-healing metrics and recovery history."""
     try:
         from backend.core.recovery_engine import healing_engine
-        
+
         metrics = healing_engine.get_healing_metrics()
         history = healing_engine.get_recovery_history(limit=50)
-        
-        return {
-            "success": True,
-            "metrics": metrics,
-            "recovery_history": history
-        }
+
+        return {"success": True, "metrics": metrics, "recovery_history": history}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "metrics": {},
-            "recovery_history": []
-        }
+        return {"success": False, "error": str(e), "metrics": {}, "recovery_history": []}
 
 
 @router.get("/api/evolution/healing/{agent_name}")
@@ -773,32 +750,21 @@ async def get_agent_healing_history(agent_name: str):
     """Get healing history for a specific agent."""
     try:
         from backend.core.recovery_engine import healing_engine
-        
+
         history = healing_engine.get_recovery_history(agent_name=agent_name, limit=50)
-        
-        return {
-            "success": True,
-            "agent_name": agent_name,
-            "recovery_history": history
-        }
+
+        return {"success": True, "agent_name": agent_name, "recovery_history": history}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "recovery_history": []
-        }
+        return {"success": False, "error": str(e), "recovery_history": []}
 
 
 @router.get("/api/evolution/skills")
 async def get_skills(
-    skill_type: str = None,
-    min_confidence: float = 0.0,
-    min_success_rate: float = 0.0,
-    limit: int = 50
+    skill_type: str = None, min_confidence: float = 0.0, min_success_rate: float = 0.0, limit: int = 50
 ):
     """
     Get skills from the skill library.
-    
+
     Query params:
     - skill_type: Filter by type (payload_generation, endpoint_discovery, attack_chain, evasion)
     - min_confidence: Minimum confidence threshold
@@ -806,81 +772,53 @@ async def get_skills(
     - limit: Maximum number of skills to return
     """
     try:
-        from backend.core.skill_library import skill_library
         from dataclasses import asdict
-        
+
+        from backend.core.skill_library import skill_library
+
         skills = skill_library.search_skills(
-            skill_type=skill_type,
-            min_confidence=min_confidence,
-            min_success_rate=min_success_rate,
-            limit=limit
+            skill_type=skill_type, min_confidence=min_confidence, min_success_rate=min_success_rate, limit=limit
         )
-        
+
         skills_data = [asdict(s) for s in skills]
-        
-        return {
-            "success": True,
-            "skills": skills_data,
-            "total_count": len(skills_data)
-        }
+
+        return {"success": True, "skills": skills_data, "total_count": len(skills_data)}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "skills": [],
-            "total_count": 0
-        }
+        return {"success": False, "error": str(e), "skills": [], "total_count": 0}
 
 
 @router.get("/api/evolution/skills/top")
 async def get_top_skills(limit: int = 10):
     """Get top-performing skills."""
     try:
-        from backend.core.skill_library import skill_library
         from dataclasses import asdict
-        
+
+        from backend.core.skill_library import skill_library
+
         skills = skill_library.get_top_skills(limit=limit)
         skills_data = [asdict(s) for s in skills]
-        
-        return {
-            "success": True,
-            "skills": skills_data,
-            "total_count": len(skills_data)
-        }
+
+        return {"success": True, "skills": skills_data, "total_count": len(skills_data)}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "skills": [],
-            "total_count": 0
-        }
+        return {"success": False, "error": str(e), "skills": [], "total_count": 0}
 
 
 @router.get("/api/evolution/skills/{skill_id}")
 async def get_skill_detail(skill_id: str):
     """Get detailed information about a specific skill."""
     try:
-        from backend.core.skill_library import skill_library
         from dataclasses import asdict
-        
+
+        from backend.core.skill_library import skill_library
+
         skill = skill_library.get_skill(skill_id)
-        
+
         if not skill:
-            return JSONResponse(
-                status_code=404,
-                content={"success": False, "error": f"Skill {skill_id} not found"}
-            )
-        
-        return {
-            "success": True,
-            "skill": asdict(skill)
-        }
+            return JSONResponse(status_code=404, content={"success": False, "error": f"Skill {skill_id} not found"})
+
+        return {"success": True, "skill": asdict(skill)}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "skill": None
-        }
+        return {"success": False, "error": str(e), "skill": None}
 
 
 @router.get("/api/evolution/skills/stats")
@@ -888,19 +826,12 @@ async def get_skill_library_stats():
     """Get statistics about the skill library."""
     try:
         from backend.core.skill_library import skill_library
-        
+
         stats = skill_library.get_library_stats()
-        
-        return {
-            "success": True,
-            "stats": stats
-        }
+
+        return {"success": True, "stats": stats}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "stats": {}
-        }
+        return {"success": False, "error": str(e), "stats": {}}
 
 
 @router.post("/api/evolution/skills/extract")
@@ -911,51 +842,47 @@ async def extract_skills_from_patterns(request: Request):
     This is normally done automatically, but can be triggered manually.
     """
     try:
+        from dataclasses import asdict
+
         from backend.core.skill_extractor import skill_extractor
         from backend.core.skill_library import skill_library
-        from dataclasses import asdict
-        
+
         # Extract skills
         new_skills = await skill_extractor.extract_skills_from_patterns()
-        
+
         # Add to library
         added_count = 0
         for skill in new_skills:
             if skill_library.add_skill(skill):
                 added_count += 1
-        
+
         return {
             "success": True,
             "message": f"Extracted {len(new_skills)} skills, added {added_count} to library",
             "extracted_count": len(new_skills),
             "added_count": added_count,
-            "skills": [asdict(s) for s in new_skills]
+            "skills": [asdict(s) for s in new_skills],
         }
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "extracted_count": 0,
-            "added_count": 0
-        }
+        return {"success": False, "error": str(e), "extracted_count": 0, "added_count": 0}
 
 
 @router.get("/api/evolution/metrics")
 async def get_evolution_metrics():
     """Get comprehensive evolution system metrics."""
     try:
-        from backend.core.learning_engine import learning_engine
         from backend.core.agent_health_monitor import health_monitor
+        from backend.core.learning_engine import learning_engine
         from backend.core.recovery_engine import healing_engine
-        from backend.core.skill_library import skill_library
         from backend.core.skill_extractor import skill_extractor
-        
+        from backend.core.skill_library import skill_library
+
         learning_metrics = learning_engine.get_metrics()
         health_summary = health_monitor.get_system_health_summary()
         healing_metrics = healing_engine.get_healing_metrics()
         skill_stats = skill_library.get_library_stats()
         extraction_metrics = skill_extractor.get_extraction_metrics()
-        
+
         return {
             "success": True,
             "learning": learning_metrics,
@@ -963,7 +890,7 @@ async def get_evolution_metrics():
             "healing": healing_metrics,
             "skills": skill_stats,
             "extraction": extraction_metrics,
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
     except Exception as e:
         return {
@@ -973,13 +900,14 @@ async def get_evolution_metrics():
             "health": {},
             "healing": {},
             "skills": {},
-            "extraction": {}
+            "extraction": {},
         }
 
 
 # ============================================================================
 # INTEGRATION METRICS ENDPOINTS (Section 20)
 # ============================================================================
+
 
 @router.get("/api/integration/metrics")
 async def get_integration_metrics():
@@ -988,13 +916,12 @@ async def get_integration_metrics():
     Includes skill acquisition, health, performance, and resource metrics.
     """
     try:
-        from backend.core.integration_coordinator import integration_coordinator
-        from backend.core.learning_engine import learning_engine, browser_learning
-        from backend.core.skill_library import skill_library
         from backend.core.agent_health_monitor import health_monitor
-        from backend.core.unified_resource_manager import UnifiedResourceManager
+        from backend.core.integration_coordinator import integration_coordinator
+        from backend.core.learning_engine import learning_engine
         from backend.core.performance_optimizer import performance_optimizer
-        
+        from backend.core.skill_library import skill_library
+
         metrics = {
             "timestamp": time.time(),
             "integration": {},
@@ -1002,21 +929,21 @@ async def get_integration_metrics():
             "skills": {},
             "health": {},
             "resources": {},
-            "performance": {}
+            "performance": {},
         }
-        
+
         # Integration coordinator metrics
         if integration_coordinator:
             metrics["integration"] = integration_coordinator.get_integration_metrics()
-        
+
         # Learning metrics
         if learning_engine:
             metrics["learning"] = {
                 "total_patterns": len(learning_engine.patterns),
                 "http_patterns": len([p for p in learning_engine.patterns.values() if "http" in p.pattern_type]),
-                "browser_patterns": len([p for p in learning_engine.patterns.values() if "browser" in p.pattern_type])
+                "browser_patterns": len([p for p in learning_engine.patterns.values() if "browser" in p.pattern_type]),
             }
-        
+
         # Skill acquisition metrics
         if skill_library:
             all_skills = skill_library.get_all_skills()
@@ -1025,9 +952,9 @@ async def get_integration_metrics():
                 "http_skills": len([s for s in all_skills if s.execution_context == "http_only"]),
                 "browser_skills": len([s for s in all_skills if s.execution_context == "browser_required"]),
                 "hybrid_skills": len([s for s in all_skills if s.execution_context == "hybrid"]),
-                "acquisition_rate": len(all_skills) / max(1, metrics["learning"].get("total_patterns", 1))
+                "acquisition_rate": len(all_skills) / max(1, metrics["learning"].get("total_patterns", 1)),
             }
-        
+
         # Health metrics
         if health_monitor:
             all_health = health_monitor.get_all_health()
@@ -1035,19 +962,18 @@ async def get_integration_metrics():
                 "total_agents": len(all_health),
                 "healthy_agents": len([h for h in all_health.values() if h["health_score"] > 70]),
                 "unhealthy_agents": len([h for h in all_health.values() if h["health_score"] < 40]),
-                "avg_health_score": sum(h["health_score"] for h in all_health.values()) / len(all_health) if all_health else 0
+                "avg_health_score": sum(h["health_score"] for h in all_health.values()) / len(all_health)
+                if all_health
+                else 0,
             }
-        
+
         # Performance metrics
         metrics["performance"] = performance_optimizer.get_performance_report()
-        
+
         return JSONResponse(content=metrics)
-        
+
     except Exception as e:
-        return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
-        )
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @router.get("/api/integration/realtime")
@@ -1057,59 +983,52 @@ async def get_realtime_monitoring():
     Includes active browser contexts, resource usage, evolution progress, self-healing events.
     """
     try:
+        from backend.core.agent_health_monitor import browser_health_monitor
         from backend.core.browser_orchestrator import browser_orchestrator
-        from backend.core.agent_health_monitor import health_monitor, browser_health_monitor
         from backend.core.recovery_engine import healing_engine
-        from backend.core.unified_resource_manager import UnifiedResourceManager
-        
+
         realtime = {
             "timestamp": time.time(),
             "browser_contexts": {},
             "resource_usage": {},
             "evolution_progress": {},
-            "healing_events": {}
+            "healing_events": {},
         }
-        
+
         # Active browser contexts
         if browser_orchestrator:
             realtime["browser_contexts"] = {
-                "active_count": len(browser_orchestrator.active_contexts) if hasattr(browser_orchestrator, 'active_contexts') else 0,
+                "active_count": len(browser_orchestrator.active_contexts)
+                if hasattr(browser_orchestrator, "active_contexts")
+                else 0,
                 "total_memory_mb": 0,  # Would be calculated from actual contexts
-                "contexts": []
+                "contexts": [],
             }
-        
+
         # Resource usage
         if browser_health_monitor:
             browser_health = browser_health_monitor.get_all_browser_health()
             total_memory = sum(h.get("context_memory_mb", 0) for h in browser_health.values())
-            realtime["resource_usage"] = {
-                "browser_memory_mb": total_memory,
-                "active_contexts": len(browser_health)
-            }
-        
+            realtime["resource_usage"] = {"browser_memory_mb": total_memory, "active_contexts": len(browser_health)}
+
         # Evolution progress
         from backend.core.learning_engine import learning_engine
+
         if learning_engine:
             realtime["evolution_progress"] = {
                 "patterns_learned": len(learning_engine.patterns),
-                "learning_rate": 0.0  # Would be calculated from recent patterns
+                "learning_rate": 0.0,  # Would be calculated from recent patterns
             }
-        
+
         # Self-healing events
         if healing_engine:
             recent_recoveries = healing_engine.get_recovery_history(limit=10)
-            realtime["healing_events"] = {
-                "recent_count": len(recent_recoveries),
-                "recent_events": recent_recoveries
-            }
-        
+            realtime["healing_events"] = {"recent_count": len(recent_recoveries), "recent_events": recent_recoveries}
+
         return JSONResponse(content=realtime)
-        
+
     except Exception as e:
-        return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
-        )
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @router.get("/api/integration/drilldown/{metric_type}")
@@ -1119,57 +1038,57 @@ async def get_drilldown_metrics(metric_type: str):
     Supports: http_vs_browser, skill_breakdown, agent_specific
     """
     try:
-        from backend.core.skill_library import skill_library
         from backend.core.agent_health_monitor import health_monitor
         from backend.core.performance_optimizer import performance_optimizer
-        
+        from backend.core.skill_library import skill_library
+
         if metric_type == "http_vs_browser":
             # HTTP vs Browser performance comparison
             http_metrics = list(performance_optimizer.metrics.get("http", []))
             browser_metrics = list(performance_optimizer.metrics.get("browser", []))
-            
+
             http_avg = sum(m["response_time_ms"] for m in http_metrics) / len(http_metrics) if http_metrics else 0
-            browser_avg = sum(m["response_time_ms"] for m in browser_metrics) / len(browser_metrics) if browser_metrics else 0
-            
-            return JSONResponse(content={
-                "http": {
-                    "avg_response_ms": http_avg,
-                    "sample_size": len(http_metrics)
-                },
-                "browser": {
-                    "avg_response_ms": browser_avg,
-                    "sample_size": len(browser_metrics)
-                },
-                "comparison": {
-                    "faster": "http" if http_avg < browser_avg else "browser",
-                    "speedup_factor": max(http_avg, browser_avg) / min(http_avg, browser_avg) if min(http_avg, browser_avg) > 0 else 0
+            browser_avg = (
+                sum(m["response_time_ms"] for m in browser_metrics) / len(browser_metrics) if browser_metrics else 0
+            )
+
+            return JSONResponse(
+                content={
+                    "http": {"avg_response_ms": http_avg, "sample_size": len(http_metrics)},
+                    "browser": {"avg_response_ms": browser_avg, "sample_size": len(browser_metrics)},
+                    "comparison": {
+                        "faster": "http" if http_avg < browser_avg else "browser",
+                        "speedup_factor": max(http_avg, browser_avg) / min(http_avg, browser_avg)
+                        if min(http_avg, browser_avg) > 0
+                        else 0,
+                    },
                 }
-            })
-        
+            )
+
         elif metric_type == "skill_breakdown":
             # Skill type breakdown
             if skill_library:
                 all_skills = skill_library.get_all_skills()
-                
+
                 breakdown = {
                     "by_type": {},
                     "by_context": {},
                     "by_success_rate": {
                         "high": 0,  # > 0.8
                         "medium": 0,  # 0.5-0.8
-                        "low": 0  # < 0.5
-                    }
+                        "low": 0,  # < 0.5
+                    },
                 }
-                
+
                 for skill in all_skills:
                     # By type
                     skill_type = skill.skill_type
                     breakdown["by_type"][skill_type] = breakdown["by_type"].get(skill_type, 0) + 1
-                    
+
                     # By context
                     context = skill.execution_context
                     breakdown["by_context"][context] = breakdown["by_context"].get(context, 0) + 1
-                    
+
                     # By success rate
                     if skill.success_rate > 0.8:
                         breakdown["by_success_rate"]["high"] += 1
@@ -1177,33 +1096,27 @@ async def get_drilldown_metrics(metric_type: str):
                         breakdown["by_success_rate"]["medium"] += 1
                     else:
                         breakdown["by_success_rate"]["low"] += 1
-                
+
                 return JSONResponse(content=breakdown)
-        
+
         elif metric_type == "agent_specific":
             # Agent-specific metrics
             if health_monitor:
                 all_health = health_monitor.get_all_health()
-                
+
                 agent_metrics = {}
                 for agent_name, health in all_health.items():
                     agent_metrics[agent_name] = {
                         "health_score": health["health_score"],
                         "error_rate": health.get("error_rate", 0),
                         "response_time_ms": health.get("response_time_ms", 0),
-                        "memory_mb": health.get("memory_mb", 0)
+                        "memory_mb": health.get("memory_mb", 0),
                     }
-                
+
                 return JSONResponse(content=agent_metrics)
-        
+
         else:
-            return JSONResponse(
-                content={"error": f"Unknown metric type: {metric_type}"},
-                status_code=400
-            )
-        
+            return JSONResponse(content={"error": f"Unknown metric type: {metric_type}"}, status_code=400)
+
     except Exception as e:
-        return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
-        )
+        return JSONResponse(content={"error": str(e)}, status_code=500)

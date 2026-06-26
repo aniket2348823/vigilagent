@@ -7,13 +7,14 @@ vectors, then confirms via deterministic command-output signatures combined with
 a differential vs the baseline response (>= 2 independent signals, never a bare
 substring match).
 """
+
 from __future__ import annotations
 
 import re
 import urllib.parse
 
 from backend.core.base import BaseArsenalModule
-from backend.core.protocol import JobPacket, Vulnerability, TaskTarget
+from backend.core.protocol import JobPacket, TaskTarget, Vulnerability
 
 # Non-destructive proof commands. Separators cover Linux + Windows shells; the
 # commands are read-only identity/echo probes (no state change), per §9 safety.
@@ -22,11 +23,11 @@ _PROBE_CMDS = ("id", "uname -a", "whoami", "echo VIGIL$((7*7))ECHO")
 
 # Deterministic command-output signatures (proof a shell actually ran).
 _CMD_OUTPUT_MARKERS = (
-    re.compile(r"uid=\d+\([a-z_][a-z0-9_-]*\)"),          # id (Linux)
-    re.compile(r"Linux \S+ \S+"),                          # uname -a (Linux)
-    re.compile(r"VIGIL49ECHO"),                            # echo $((7*7)) arithmetic
-    re.compile(r"(?i)\b[a-z]:\\\\(windows|users)\b"),      # Windows path echo
-    re.compile(r"(?i)\bnt authority\\\\system\b"),         # Windows whoami
+    re.compile(r"uid=\d+\([a-z_][a-z0-9_-]*\)"),  # id (Linux)
+    re.compile(r"Linux \S+ \S+"),  # uname -a (Linux)
+    re.compile(r"VIGIL49ECHO"),  # echo $((7*7)) arithmetic
+    re.compile(r"(?i)\b[a-z]:\\\\(windows|users)\b"),  # Windows path echo
+    re.compile(r"(?i)\bnt authority\\\\system\b"),  # Windows whoami
 )
 
 
@@ -47,9 +48,13 @@ class CommandInjectionProbe(BaseArsenalModule):
                 for cmd in _PROBE_CMDS:
                     mutated = dict(params)
                     mutated[param] = [f"{base_val}{sep} {cmd}"]
-                    targets.append(TaskTarget(
-                        url=f"{base}?{urllib.parse.urlencode(mutated, doseq=True)}",
-                        method="GET", headers=dict(headers)))
+                    targets.append(
+                        TaskTarget(
+                            url=f"{base}?{urllib.parse.urlencode(mutated, doseq=True)}",
+                            method="GET",
+                            headers=dict(headers),
+                        )
+                    )
         return targets
 
     async def generate_payloads(self, packet: JobPacket) -> list[TaskTarget]:
@@ -58,8 +63,9 @@ class CommandInjectionProbe(BaseArsenalModule):
         targets: list[TaskTarget] = []
 
         # Baseline first (unmodified) so the analyzer can diff against it.
-        targets.append(TaskTarget(url=url, method=packet.target.method or "GET",
-                                  headers=headers, payload=packet.target.payload))
+        targets.append(
+            TaskTarget(url=url, method=packet.target.method or "GET", headers=headers, payload=packet.target.payload)
+        )
 
         # Query-vector injection.
         targets.extend(self._inject_query(url, headers))
@@ -75,12 +81,12 @@ class CommandInjectionProbe(BaseArsenalModule):
                 body = dict(seed)
                 body[field] = f"127.0.0.1{sep} id; uname -a"
                 body.setdefault("Submit", "Submit")
-                targets.append(TaskTarget(
-                    url=url, method="POST", headers=form_headers, payload=body))
+                targets.append(TaskTarget(url=url, method="POST", headers=form_headers, payload=body))
         return targets
 
-    async def analyze_responses(self, interactions: list[tuple[TaskTarget, str]],
-                                packet: JobPacket) -> list[Vulnerability]:
+    async def analyze_responses(
+        self, interactions: list[tuple[TaskTarget, str]], packet: JobPacket
+    ) -> list[Vulnerability]:
         """Confirm command injection: a command-output signature must appear AND
         the response must differ materially from the baseline (Architecture §17,
         >= 2 independent signals). Baseline is interaction[0]."""
@@ -108,16 +114,23 @@ class CommandInjectionProbe(BaseArsenalModule):
             if confirmed and key not in seen:
                 seen.add(key)
                 vector = "body" if target.method == "POST" else "query"
-                vulns.append(Vulnerability(
-                    name="OS Command Injection",
-                    severity="CRITICAL",
-                    description=("Injected shell command output was reflected in the response, "
-                                 "proving server-side command execution."),
-                    evidence=(f"Target: {target.url} (vector={vector})\n"
-                              f"Command-output signature: {matched}; {ev.summary}"),
-                    remediation=("Never pass user input to a shell. Use allowlists and native "
-                                 "language APIs; if a shell is unavoidable, use strict argument "
-                                 "escaping and parameterization."),
-                ))
+                vulns.append(
+                    Vulnerability(
+                        name="OS Command Injection",
+                        severity="CRITICAL",
+                        description=(
+                            "Injected shell command output was reflected in the response, "
+                            "proving server-side command execution."
+                        ),
+                        evidence=(
+                            f"Target: {target.url} (vector={vector})\nCommand-output signature: {matched}; {ev.summary}"
+                        ),
+                        remediation=(
+                            "Never pass user input to a shell. Use allowlists and native "
+                            "language APIs; if a shell is unavoidable, use strict argument "
+                            "escaping and parameterization."
+                        ),
+                    )
+                )
                 break  # one confirmed RCE is decisive
         return vulns

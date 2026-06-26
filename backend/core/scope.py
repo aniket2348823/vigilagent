@@ -18,16 +18,20 @@ Scope model (Architecture §10):
   - max_rps / max_concurrency
   - extension capture allowlist
 """
+
 from __future__ import annotations
 
 import ipaddress
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 try:
     import yaml  # type: ignore
@@ -53,7 +57,7 @@ def _parse_iso(value: str | None) -> datetime | None:
             text = text[:-1] + "+00:00"
         dt = datetime.fromisoformat(text)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except Exception as exc:
         logger.warning("Could not parse scope datetime: %s: %s", value, exc)
@@ -87,7 +91,7 @@ class ScopePolicy:
     # ── Construction ─────────────────────────────────────────────────────────
 
     @classmethod
-    def from_target(cls, target_url: str | None = None, extra_hosts: Iterable[str] = ()) -> "ScopePolicy":
+    def from_target(cls, target_url: str | None = None, extra_hosts: Iterable[str] = ()) -> ScopePolicy:
         """Build scope from a single target URL.
 
         SECURITY: Defaults to passive/recon-only mode (authorization="none").
@@ -99,17 +103,18 @@ class ScopePolicy:
             parsed = urlparse(target_url)
             if parsed.hostname:
                 hosts.add(parsed.hostname.lower())
-        
+
         # SECURITY: Default to passive mode unless explicitly authorized
         import os
+
         auth_mode = "none"
         if os.getenv("ALPHA_EXPLICIT_AUTHORIZATION", "false").lower() == "true":
             auth_mode = "explicit"
-        
+
         return cls(allowed_hosts=hosts, authorization=auth_mode)
 
     @classmethod
-    def from_yaml(cls, path: str | Path | None = None) -> "ScopePolicy":
+    def from_yaml(cls, path: str | Path | None = None) -> ScopePolicy:
         """Load the declarative engagement scope from config/scope.yaml."""
         cfg_path = Path(path) if path else _SCOPE_FILE
         if yaml is None or not cfg_path.exists():
@@ -153,12 +158,10 @@ class ScopePolicy:
         return self.within_window(now=now)
 
     def within_window(self, *, now: datetime | None = None) -> bool:
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         if self.window_start and now < self.window_start:
             return False
-        if self.window_end and now > self.window_end:
-            return False
-        return True
+        return not (self.window_end and now > self.window_end)
 
     # ── Decisions ──────────────────────────────────────────────────────────────
 
@@ -180,15 +183,13 @@ class ScopePolicy:
             return False
 
         host_allowed = self._host_in_scope(host)
-        glob_allowed = (
-            not self.allowed_url_globs
-            or any(fnmatch(normalized, pattern.lower()) for pattern in self.allowed_url_globs)
+        glob_allowed = not self.allowed_url_globs or any(
+            fnmatch(normalized, pattern.lower()) for pattern in self.allowed_url_globs
         )
 
         # If any allowlist is configured, the target must satisfy it.
-        if self.allowed_hosts or self.allowed_cidrs:
-            if not host_allowed:
-                return False
+        if (self.allowed_hosts or self.allowed_cidrs) and not host_allowed:
+            return False
         if self.allowed_url_globs and not glob_allowed:
             return False
 
@@ -232,8 +233,7 @@ class ScopePolicy:
         active_actions = {"exploit", "validate", "attack", "intrusive"}
         if action in active_actions and not self.is_authorized():
             raise ScopeViolation(
-                f"Blocked {action}: engagement not authorized or outside window "
-                f"(authorization={self.authorization})"
+                f"Blocked {action}: engagement not authorized or outside window (authorization={self.authorization})"
             )
         if not self.allows(url):
             raise ScopeViolation(f"Blocked out-of-scope {action}: {url}")

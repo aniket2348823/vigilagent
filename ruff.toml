@@ -1,0 +1,45 @@
+# Ruff configuration for Vigilagent backend
+# https://docs.astral.sh/ruff/
+
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "S",    # flake8-bandit (security)
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+]
+ignore = [
+    "B008",   # function call in default argument (FastAPI Depends)
+    "B905",   # zip without strict
+    "UP007",  # use X | Y for union types (Python 3.10+)
+    "S101",   # assert used (fine in tests)
+    "S104",   # possible hardcoded password (we use env vars)
+    "S603",   # subprocess call - check for execution of untrusted input
+    "S607",   # starting a process with a partial executable path
+    "E501",   # line too long — enforced by `ruff format` instead
+    "E402",   # module import not at top — intentional lazy/circular imports
+]
+
+[lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S106"]
+# Forward type references via `from __future__ import annotations`
+"backend/agents/alpha_recon/api_routes.py" = ["F821"]
+"backend/core/hive.py" = ["F821"]
+"backend/core/redis_client.py" = ["F821"]
+"backend/parsers/recon/masscan.py" = ["F821"]
+"backend/tools/recon/runner.py" = ["F821"]
+
+[lint.isort]
+known-first-party = ["backend"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

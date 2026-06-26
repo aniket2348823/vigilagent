@@ -14,23 +14,27 @@ Skill ingestion pipeline:
 Skill sources are discovered from configured roots (workspace `.agents/skills`,
 optional external roots). LLM prompt snippets are generated at runtime only.
 """
+
 from __future__ import annotations
 
+import hashlib
+import hmac as _hmac
 import json
 import logging
+import os as _os
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from backend.skills.catalog import SkillCatalog, SkillMeta, skill_catalog
 from backend.skills.classifier import (
-    classify_domain, classify_risk, is_offensive, needs_network,
+    classify_domain,
+    classify_risk,
+    is_offensive,
+    needs_network,
 )
 from backend.skills.mapper import agents_for_domain, map_required_tools
 from backend.skills.policy import PromotionState, RiskClass
-import hashlib
-import hmac as _hmac
-import os as _os
 
 logger = logging.getLogger("vigilagent.skills.loader")
 
@@ -64,9 +68,9 @@ def load_skill_roots(config_path: Path | None = None) -> list[Path]:
     if yaml is not None and cfg.exists():
         try:
             data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
-            for entry in (data.get("roots") or []):
+            for entry in data.get("roots") or []:
                 roots.append(_resolve_root(str(entry)))
-            for entry in (data.get("external_roots") or []):
+            for entry in data.get("external_roots") or []:
                 roots.append(_resolve_root(str(entry)))
         except Exception as exc:  # pragma: no cover - fail safe to defaults
             logger.warning("Could not parse skills.yaml (%s); using defaults.", exc)
@@ -112,25 +116,22 @@ def _parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
 
 
 # HMAC integrity verification for skill files (Architecture security hardening)
-_SKILL_HMAC_KEY = _os.getenv('VIGILAGENT_SKILL_HMAC_KEY', '')
+_SKILL_HMAC_KEY = _os.getenv("VIGILAGENT_SKILL_HMAC_KEY", "")
+
 
 def _verify_skill_integrity(path: Path, content: str) -> bool:
     """Verify skill file integrity via HMAC if a key is configured."""
     if not _SKILL_HMAC_KEY:
         return True  # No key configured, skip verification
-    
-    hmac_path = path.with_suffix('.md.hmac')
+
+    hmac_path = path.with_suffix(".md.hmac")
     if not hmac_path.exists():
         logger.warning("[SkillLoader] %s: missing .hmac integrity file (key configured) — REJECTING", path)
         return False  # Key configured but no integrity file: reject to prevent tampering
-    
+
     try:
-        expected = hmac_path.read_text(encoding='utf-8').strip()
-        actual = _hmac.new(
-            _SKILL_HMAC_KEY.encode('utf-8'),
-            content.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
+        expected = hmac_path.read_text(encoding="utf-8").strip()
+        actual = _hmac.new(_SKILL_HMAC_KEY.encode("utf-8"), content.encode("utf-8"), hashlib.sha256).hexdigest()
         if not _hmac.compare_digest(expected, actual):
             logger.error("[SkillLoader] %s: HMAC MISMATCH - file may be tampered!", path)
             return False
@@ -140,7 +141,7 @@ def _verify_skill_integrity(path: Path, content: str) -> bool:
         return True  # Graceful degradation
 
 
-def _meta_from_skill_md(path: Path) -> Optional[SkillMeta]:
+def _meta_from_skill_md(path: Path) -> SkillMeta | None:
     """Parse a SKILL.md file and verify its integrity before processing."""
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
@@ -241,8 +242,7 @@ class SkillLoader:
         # Merge mappings into matching catalog entries (by skill_id or name).
         if pending_maps:
             self._apply_mappings(pending_maps)
-        logger.info("[SkillLoader] ingested %d skills into catalog (%d mapping entries)",
-                    count, len(pending_maps))
+        logger.info("[SkillLoader] ingested %d skills into catalog (%d mapping entries)", count, len(pending_maps))
         return count
 
     @staticmethod

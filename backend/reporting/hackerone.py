@@ -32,4 +32,3 @@ def render_hackerone_report(finding: dict[str, Any]) -> str:
 ## Remediation
 {finding.get("remediation", "Apply input validation, authorization checks, and regression tests for this class of issue.")}
 """
-

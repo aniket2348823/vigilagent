@@ -7,18 +7,17 @@ Implements the approval flow:
 3. Orchestrator blocks until user approves/denies/times out
 4. If denied, phase is skipped with audit log
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import Any
 
 from pydantic import BaseModel, Field
 
 from backend.agents.alpha_recon.event_schemas import (
     ApprovalRequiredEvent,
-    ApprovalResponseEvent,
 )
 from backend.agents.alpha_recon.models import stable_id
 from backend.core.database import db_manager
@@ -28,6 +27,7 @@ logger = logging.getLogger("alpha.approvals")
 
 class ApprovalRequest(BaseModel):
     """A pending approval for an active scanning phase."""
+
     approval_id: str
     scan_id: str
     phase: str
@@ -105,15 +105,12 @@ class ApprovalManager:
             )
             await event_bus.emit("RECON_APPROVAL_REQUIRED", event.model_dump())
 
-        logger.info(f"[APPROVAL] Waiting for approval {approval_id} "
-                     f"(phase={phase}, tools={tools})")
+        logger.info(f"[APPROVAL] Waiting for approval {approval_id} (phase={phase}, tools={tools})")
 
         # Wait for response
         try:
-            await asyncio.wait_for(
-                self._response_events[approval_id].wait(),
-                timeout=timeout_seconds)
-        except asyncio.TimeoutError:
+            await asyncio.wait_for(self._response_events[approval_id].wait(), timeout=timeout_seconds)
+        except TimeoutError:
             request.status = "timeout"
             request.responded_at = time.time()
             logger.warning(f"[APPROVAL] Timed out after {timeout_seconds}s: {approval_id}")
@@ -125,14 +122,13 @@ class ApprovalManager:
         self._cleanup(approval_id)
         return approved
 
-    async def respond(self, approval_id: str, approved: bool, *,
-                       responded_by: str = "user") -> bool:
+    async def respond(self, approval_id: str, approved: bool, *, responded_by: str = "user") -> bool:
         """Submit a response to a pending approval."""
         request = self._pending.get(approval_id)
         if not request:
             logger.warning(f"[APPROVAL] Unknown approval ID: {approval_id}")
             return False
-        
+
         # H-18: Validate that only pending approvals can be responded to
         if request.status != "pending":
             logger.warning(f"[APPROVAL] Cannot respond to non-pending approval {approval_id} (status={request.status})")

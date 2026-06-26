@@ -1,6 +1,6 @@
 {
-    "module_name": "Antigravity IDE Supervisor",
-    "vision": "Autonomous oversight of all development, security, and quality activities within the Antigravity workspace.",
+    "module_name": "Vigilagent IDE Supervisor",
+    "vision": "Autonomous oversight of all development, security, and quality activities within the Vigilagent workspace.",
     "tech_stack": {
         "frameworks": [
             "GSD",
@@ -25,6 +25,6 @@
         "gsd": "ACTIVE_OMNIPRESENT",
         "ralph": "ALWAYS_ON",
         "testsprite": "ZERO_PROMPT_HEADLESS",
-        "context": "d:/Antigravity 2/API Endpoint Scanner"
+        "context": "d:/Vigilagent/API Endpoint Scanner"
     }
 }

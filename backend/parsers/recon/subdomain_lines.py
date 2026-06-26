@@ -1,8 +1,13 @@
 """Parser for one-subdomain-per-line tools (assetfinder, github-subdomains, puredns)."""
-from __future__ import annotations
-from pathlib import Path
 
-from backend.parsers.recon.base import ParsedEntity, safe_lines, is_valid_domain, extract_host
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from backend.parsers.recon.base import ParsedEntity, extract_host, is_valid_domain, safe_lines
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _parse_subdomain_lines(path: Path | str, tool: str) -> list[ParsedEntity]:
@@ -15,10 +20,16 @@ def _parse_subdomain_lines(path: Path | str, tool: str) -> list[ParsedEntity]:
         if not is_valid_domain(host):
             continue
         seen.add(host)
-        entities.append(ParsedEntity(
-            kind="subdomain", label=host, confidence=0.8,
-            properties={"discovered_via": tool},
-            source_tool=tool, phase="passive_intelligence"))
+        entities.append(
+            ParsedEntity(
+                kind="subdomain",
+                label=host,
+                confidence=0.8,
+                properties={"discovered_via": tool},
+                source_tool=tool,
+                phase="passive_intelligence",
+            )
+        )
     return entities
 
 

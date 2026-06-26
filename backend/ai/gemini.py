@@ -7,13 +7,14 @@
 #          and text-embedding-004 (cloud inference).
 # ═══════════════════════════════════════════════════════════════════════════════
 
-import aiohttp
 import asyncio
 import json
 import logging
 import os
 import time as _time
-from typing import Optional, Dict, Any, List
+from typing import Any
+
+import aiohttp
 
 logger = logging.getLogger("GEMINI")
 
@@ -38,14 +39,14 @@ class GeminiClient:
     and vector embeddings for Agent Kappa memory.
     """
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: str | None = None):
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
 
         if self._api_key == "your_gemini_api_key_here":
             logger.warning("GEMINI: Key is still the placeholder! Please update .env")
             self._api_key = ""
 
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._session_lock = asyncio.Lock()  # FIX: Initialize lock eagerly to prevent race condition
         self._telemetry = {
             "calls": 0,
@@ -101,7 +102,7 @@ class GeminiClient:
 
         url = f"{GEMINI_API_URL}/models/{GEMINI_MODEL}:generateContent"
 
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": temperature,
@@ -152,12 +153,7 @@ class GeminiClient:
                             logger.error("GEMINI: Empty candidates in response")
                             return "[GEMINI ERROR] No candidates returned."
 
-                        result = (
-                            candidates[0]
-                            .get("content", {})
-                            .get("parts", [{}])[0]
-                            .get("text", "")
-                        )
+                        result = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
 
                         usage = data.get("usageMetadata", {})
                         self._telemetry["input_tokens"] += usage.get("promptTokenCount", 0)
@@ -173,7 +169,7 @@ class GeminiClient:
 
                     elif response.status == 429:
                         logger.warning(f"GEMINI: Rate limited (429). Retry {attempt + 1}/{MAX_RETRIES}")
-                        await asyncio.sleep(2 ** attempt)
+                        await asyncio.sleep(2**attempt)
                         continue
 
                     else:
@@ -188,7 +184,7 @@ class GeminiClient:
                 self._telemetry["errors"] += 1
                 logger.error("GEMINI: Cannot connect to Gemini API")
                 return "[GEMINI OFFLINE] Cannot connect to Gemini API."
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._telemetry["errors"] += 1
                 logger.error(f"GEMINI: Request timed out after {GEMINI_TIMEOUT}s")
                 if attempt < MAX_RETRIES:
@@ -221,7 +217,7 @@ class GeminiClient:
         """Generate narrative text for reports and summaries."""
         return await self.call(prompt, temperature=0.3, max_tokens=500, scan_ctx=scan_ctx)
 
-    async def generate_embedding(self, text: str, scan_ctx=None) -> List[float]:
+    async def generate_embedding(self, text: str, scan_ctx=None) -> list[float]:
         """
         Generate a vector embedding via Gemini embeddings.
         Returns the embedding values or an empty list on failure.

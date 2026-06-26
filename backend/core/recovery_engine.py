@@ -16,6 +16,7 @@ Single merged module that replaces the former `self_healing_engine.py` and
     corrective action, and writes the resolving pattern to the SkillLibrary so
     the Planner can consume it (closing the write-only loop, §29.9 req 4).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,13 +28,17 @@ import time
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
-from backend.core.agent_health_monitor import health_monitor, HealthAlert
-from backend.core.self_awareness_config import SelfAwarenessConfig
-from backend.core.tracing import get_tracer, trace_span
+from backend.core.agent_health_monitor import health_monitor
+from backend.core.tracing import get_tracer
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from backend.core.self_awareness_config import SelfAwarenessConfig
 
 logger = logging.getLogger("RecoveryEngine")
 tracer = get_tracer()
@@ -43,14 +48,16 @@ tracer = get_tracer()
 # SELF-HEALING (formerly self_healing_engine.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class RecoveryRecord:
     """Represents a recovery action taken by the system."""
+
     timestamp: float
     agent_name: str
     issue: str
     action_type: str  # "restart", "strategy_change", "resource_reallocation", etc.
-    action_details: Dict[str, Any]
+    action_details: dict[str, Any]
     success: bool
     recovery_time_ms: float = 0.0
 
@@ -58,6 +65,7 @@ class RecoveryRecord:
 @dataclass
 class CircuitBreaker:
     """Circuit breaker for failing endpoints."""
+
     endpoint: str
     failure_count: int = 0
     success_count: int = 0
@@ -99,12 +107,12 @@ class SelfHealingEngine:
         self.healing_dir = self.brain_dir / "healing"
         self.healing_dir.mkdir(parents=True, exist_ok=True)
         self.recovery_history: deque = deque(maxlen=1000)
-        self.circuit_breakers: Dict[str, CircuitBreaker] = {}
-        self.restart_counts: Dict[str, int] = defaultdict(int)
-        self.last_restart: Dict[str, float] = {}
-        self.strategy_changes: Dict[str, List[str]] = defaultdict(list)
-        self.agent_load: Dict[str, int] = defaultdict(int)
-        self.restart_callbacks: Dict[str, Callable] = {}
+        self.circuit_breakers: dict[str, CircuitBreaker] = {}
+        self.restart_counts: dict[str, int] = defaultdict(int)
+        self.last_restart: dict[str, float] = {}
+        self.strategy_changes: dict[str, list[str]] = defaultdict(list)
+        self.agent_load: dict[str, int] = defaultdict(int)
+        self.restart_callbacks: dict[str, Callable] = {}
         self.config = {
             "max_restarts_per_hour": 5,
             "restart_backoff_seconds": [5, 10, 30, 60, 300],
@@ -135,7 +143,7 @@ class SelfHealingEngine:
                         await self.adapt_strategy(agent_name, "high_error_rate")
                 await self.balance_load()
                 now_ts = time.time()
-                if not hasattr(self, '_last_state_save') or (now_ts - getattr(self, '_last_state_save', 0)) >= 300:
+                if not hasattr(self, "_last_state_save") or (now_ts - getattr(self, "_last_state_save", 0)) >= 300:
                     await self.save_healing_state()
                     self._last_state_save = time.time()
             except Exception as e:
@@ -152,7 +160,9 @@ class SelfHealingEngine:
         if agent_name in self.last_restart:
             time_since_restart = time.time() - self.last_restart[agent_name]
             if time_since_restart < backoff_delay:
-                logger.info(f"[SelfHealing] Waiting {backoff_delay - time_since_restart:.0f}s before restarting {agent_name}")
+                logger.info(
+                    f"[SelfHealing] Waiting {backoff_delay - time_since_restart:.0f}s before restarting {agent_name}"
+                )
                 return False
         logger.info(f"[SelfHealing] Attempting to restart {agent_name} (attempt {restart_count + 1})")
         try:
@@ -165,20 +175,26 @@ class SelfHealingEngine:
             self.restart_counts[agent_name] += 1
             self.last_restart[agent_name] = time.time()
             recovery_time = (time.time() - start_time) * 1000
-            self._record_recovery(agent_name, "agent_crashed", "restart",
-                                  {"restart_count": self.restart_counts[agent_name], "backoff_delay": backoff_delay},
-                                  success, recovery_time)
+            self._record_recovery(
+                agent_name,
+                "agent_crashed",
+                "restart",
+                {"restart_count": self.restart_counts[agent_name], "backoff_delay": backoff_delay},
+                success,
+                recovery_time,
+            )
             if success:
                 logger.info(f"[SelfHealing] Successfully restarted {agent_name}")
                 health_monitor.clear_alerts(agent_name)
             return success
         except Exception as e:
             logger.error(f"[SelfHealing] Failed to restart {agent_name}: {e}")
-            self._record_recovery(agent_name, "agent_crashed", "restart", {"error": str(e)},
-                                  False, (time.time() - start_time) * 1000)
+            self._record_recovery(
+                agent_name, "agent_crashed", "restart", {"error": str(e)}, False, (time.time() - start_time) * 1000
+            )
             return False
 
-    async def heal_unhealthy_agent(self, agent_name: str, metrics: Dict[str, Any]):
+    async def heal_unhealthy_agent(self, agent_name: str, metrics: dict[str, Any]):
         health_score = metrics["health_score"]
         logger.info(f"[SelfHealing] Healing unhealthy agent {agent_name} (health: {health_score:.0f}/100)")
         if metrics["memory_mb"] > 500:
@@ -195,8 +211,7 @@ class SelfHealingEngine:
             new_strategy = "LOW_AND_SLOW"
         else:
             new_strategy = "MULTI_STEP_EXPLOIT"
-        self._record_recovery(agent_name, reason, "strategy_change",
-                              {"new_strategy": new_strategy}, True, 0.0)
+        self._record_recovery(agent_name, reason, "strategy_change", {"new_strategy": new_strategy}, True, 0.0)
 
     async def balance_load(self):
         all_health = health_monitor.get_all_health()
@@ -226,7 +241,7 @@ class SelfHealingEngine:
         else:
             breaker.record_failure()
 
-    def get_circuit_breaker_status(self, endpoint: str) -> Optional[Dict[str, Any]]:
+    def get_circuit_breaker_status(self, endpoint: str) -> dict[str, Any] | None:
         if endpoint in self.circuit_breakers:
             return asdict(self.circuit_breakers[endpoint])
         return None
@@ -250,20 +265,34 @@ class SelfHealingEngine:
         logger.info(f"[SelfHealing] Reducing load for {agent_name}")
         self._record_recovery(agent_name, "slow_response_time", "load_reduction", {}, True, 0.0)
 
-    def _record_recovery(self, agent_name: str, issue: str, action_type: str,
-                         action_details: Dict[str, Any], success: bool, recovery_time_ms: float):
-        self.recovery_history.append(RecoveryRecord(
-            timestamp=time.time(), agent_name=agent_name, issue=issue,
-            action_type=action_type, action_details=action_details,
-            success=success, recovery_time_ms=recovery_time_ms))
+    def _record_recovery(
+        self,
+        agent_name: str,
+        issue: str,
+        action_type: str,
+        action_details: dict[str, Any],
+        success: bool,
+        recovery_time_ms: float,
+    ):
+        self.recovery_history.append(
+            RecoveryRecord(
+                timestamp=time.time(),
+                agent_name=agent_name,
+                issue=issue,
+                action_type=action_type,
+                action_details=action_details,
+                success=success,
+                recovery_time_ms=recovery_time_ms,
+            )
+        )
 
-    def get_recovery_history(self, agent_name: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_recovery_history(self, agent_name: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         history = list(self.recovery_history)
         if agent_name:
             history = [h for h in history if h.agent_name == agent_name]
         return [asdict(h) for h in history[-limit:]]
 
-    def get_healing_metrics(self) -> Dict[str, Any]:
+    def get_healing_metrics(self) -> dict[str, Any]:
         total_recoveries = len(self.recovery_history)
         successful_recoveries = sum(1 for r in self.recovery_history if r.success)
         recovery_by_type = defaultdict(int)
@@ -293,6 +322,7 @@ class SelfHealingEngine:
             # timestamp filename which would clobber if two coroutines wrote
             # in the same second.
             import os as _os
+
             tmp_file = self.healing_dir / "healing_state.tmp"
             final_file = self.healing_dir / "healing_state.json"
             tmp_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -312,14 +342,15 @@ class BrowserSelfHealingExtension:
 
     def __init__(self, healing_engine: SelfHealingEngine):
         self.engine = healing_engine
-        self.browser_restart_counts: Dict[str, int] = defaultdict(int)
-        self.last_browser_restart: Dict[str, float] = {}
+        self.browser_restart_counts: dict[str, int] = defaultdict(int)
+        self.last_browser_restart: dict[str, float] = {}
 
     async def heal_browser_crash(self, agent_name: str, browser_orchestrator: Any) -> bool:
         start_time = time.time()
         logger.info(f"[BrowserHealing] Healing browser crash for {agent_name}")
         try:
             from backend.core.agent_health_monitor import browser_health_monitor
+
             browser_health = browser_health_monitor.get_browser_health(agent_name)
             if not browser_health:
                 logger.warning(f"[BrowserHealing] No browser health data for {agent_name}")
@@ -332,56 +363,72 @@ class BrowserSelfHealingExtension:
                 if time_since_restart < backoff_delay:
                     logger.info(f"[BrowserHealing] Waiting {backoff_delay - time_since_restart:.0f}s before restart")
                     return False
-            if hasattr(browser_orchestrator, 'restart_context'):
+            if hasattr(browser_orchestrator, "restart_context"):
                 await browser_orchestrator.restart_context(agent_name)
-            if hasattr(browser_orchestrator, 'restore_session'):
+            if hasattr(browser_orchestrator, "restore_session"):
                 await browser_orchestrator.restore_session(agent_name)
             self.browser_restart_counts[agent_name] += 1
             self.last_browser_restart[agent_name] = time.time()
             recovery_time = (time.time() - start_time) * 1000
-            self.engine._record_recovery(agent_name, "browser_crash", "browser_restart",
-                                         {"restart_count": self.browser_restart_counts[agent_name],
-                                          "backoff_delay": backoff_delay}, True, recovery_time)
+            self.engine._record_recovery(
+                agent_name,
+                "browser_crash",
+                "browser_restart",
+                {"restart_count": self.browser_restart_counts[agent_name], "backoff_delay": backoff_delay},
+                True,
+                recovery_time,
+            )
             logger.info(f"[BrowserHealing] Successfully restarted browser for {agent_name}")
             return True
         except Exception as e:
             logger.error(f"[BrowserHealing] Failed to heal browser crash: {e}")
-            self.engine._record_recovery(agent_name, "browser_crash", "browser_restart",
-                                         {"error": str(e)}, False, (time.time() - start_time) * 1000)
+            self.engine._record_recovery(
+                agent_name,
+                "browser_crash",
+                "browser_restart",
+                {"error": str(e)},
+                False,
+                (time.time() - start_time) * 1000,
+            )
             return False
 
     async def heal_browser_memory(self, agent_name: str, browser_orchestrator: Any) -> bool:
         logger.info(f"[BrowserHealing] Healing browser memory for {agent_name}")
         try:
-            if hasattr(browser_orchestrator, 'close_idle_contexts'):
+            if hasattr(browser_orchestrator, "close_idle_contexts"):
                 closed_count = await browser_orchestrator.close_idle_contexts(agent_name)
                 logger.info(f"[BrowserHealing] Closed {closed_count} idle contexts")
-            if hasattr(browser_orchestrator, 'clear_context_pool'):
+            if hasattr(browser_orchestrator, "clear_context_pool"):
                 await browser_orchestrator.clear_context_pool(agent_name)
             gc.collect()
-            self.engine._record_recovery(agent_name, "browser_memory_high", "memory_cleanup",
-                                         {"action": "closed_idle_contexts_and_gc"}, True, 0.0)
+            self.engine._record_recovery(
+                agent_name,
+                "browser_memory_high",
+                "memory_cleanup",
+                {"action": "closed_idle_contexts_and_gc"},
+                True,
+                0.0,
+            )
             return True
         except Exception as e:
             logger.error(f"[BrowserHealing] Failed to heal browser memory: {e}")
-            self.engine._record_recovery(agent_name, "browser_memory_high", "memory_cleanup",
-                                         {"error": str(e)}, False, 0.0)
+            self.engine._record_recovery(
+                agent_name, "browser_memory_high", "memory_cleanup", {"error": str(e)}, False, 0.0
+            )
             return False
 
-    async def adapt_browser_strategy(self, agent_name: str, reason: str) -> Dict[str, Any]:
+    async def adapt_browser_strategy(self, agent_name: str, reason: str) -> dict[str, Any]:
         logger.info(f"[BrowserHealing] Adapting browser strategy for {agent_name} (reason: {reason})")
         new_strategy = {"mode": "stealth", "concurrency": 1, "fallback_to_http": False}
         if reason in ("high_error_rate", "rate_limited"):
             new_strategy["mode"] = "stealth"
             new_strategy["concurrency"] = 1
-        elif reason == "waf_detected":
-            new_strategy["fallback_to_http"] = True
-        elif reason == "repeated_failures":
+        elif reason == "waf_detected" or reason == "repeated_failures":
             new_strategy["fallback_to_http"] = True
         self.engine._record_recovery(agent_name, reason, "browser_strategy_change", new_strategy, True, 0.0)
         return new_strategy
 
-    def get_browser_circuit_breaker(self, target: str) -> Optional[Dict[str, Any]]:
+    def get_browser_circuit_breaker(self, target: str) -> dict[str, Any] | None:
         return self.engine.get_circuit_breaker_status(f"browser:{target}")
 
     def record_browser_result(self, target: str, success: bool):
@@ -399,12 +446,13 @@ class UnifiedErrorHandlingExtension:
 
     def __init__(self, healing_engine: SelfHealingEngine):
         self.engine = healing_engine
-        self.http_recovery_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {"success": 0, "failure": 0})
-        self.browser_recovery_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {"success": 0, "failure": 0})
-        self.cross_context_learnings: List[Dict[str, Any]] = []
+        self.http_recovery_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"success": 0, "failure": 0})
+        self.browser_recovery_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"success": 0, "failure": 0})
+        self.cross_context_learnings: list[dict[str, Any]] = []
 
-    async def handle_error_unified(self, agent_name: str, error_type: str, context: str,
-                                   error_details: Dict[str, Any]) -> bool:
+    async def handle_error_unified(
+        self, agent_name: str, error_type: str, context: str, error_details: dict[str, Any]
+    ) -> bool:
         logger.info(f"[UnifiedErrorHandling] Handling {context} error: {error_type} for {agent_name}")
         await self._apply_exponential_backoff(agent_name, context)
         self.engine.record_endpoint_result(f"{context}:{agent_name}:{error_type}", False)
@@ -438,21 +486,22 @@ class UnifiedErrorHandlingExtension:
         self.engine.last_restart[backoff_key] = time.time()
         return True
 
-    async def _handle_network_error(self, agent_name: str, context: str, error_details: Dict[str, Any]) -> bool:
+    async def _handle_network_error(self, agent_name: str, context: str, error_details: dict[str, Any]) -> bool:
         logger.info(f"[UnifiedErrorHandling] Handling network error for {agent_name} ({context})")
         await asyncio.sleep(2)
         self.engine._record_recovery(agent_name, "network_error", f"{context}_retry", error_details, True, 2000.0)
         return True
 
-    async def _handle_rate_limit(self, agent_name: str, context: str, error_details: Dict[str, Any]) -> bool:
+    async def _handle_rate_limit(self, agent_name: str, context: str, error_details: dict[str, Any]) -> bool:
         logger.info(f"[UnifiedErrorHandling] Handling rate limit for {agent_name} ({context})")
         await self.engine.adapt_strategy(agent_name, "rate_limited")
         await asyncio.sleep(10)
-        self.engine._record_recovery(agent_name, "rate_limited", f"{context}_strategy_change",
-                                     {"new_strategy": "LOW_AND_SLOW"}, True, 10000.0)
+        self.engine._record_recovery(
+            agent_name, "rate_limited", f"{context}_strategy_change", {"new_strategy": "LOW_AND_SLOW"}, True, 10000.0
+        )
         return True
 
-    async def _handle_auth_error(self, agent_name: str, context: str, error_details: Dict[str, Any]) -> bool:
+    async def _handle_auth_error(self, agent_name: str, context: str, error_details: dict[str, Any]) -> bool:
         """REAL re-authentication via the CredentialVault (Architecture §29.9)."""
         logger.info(f"[UnifiedErrorHandling] Handling auth error for {agent_name} ({context})")
         target = str(error_details.get("target") or error_details.get("url") or "")
@@ -460,6 +509,7 @@ class UnifiedErrorHandlingExtension:
         cred_id = ""
         try:
             from backend.core.credential_vault import credential_vault
+
             fresh = credential_vault.get_fresh_credential(target) if target else None
             if fresh:
                 cred, _secret = fresh
@@ -469,30 +519,38 @@ class UnifiedErrorHandlingExtension:
                 reauthenticated = True
         except Exception as exc:
             logger.warning(f"[UnifiedErrorHandling] Vault re-auth lookup failed: {exc}")
-        self.engine._record_recovery(agent_name, "authentication_failed", f"{context}_reauth",
-                                     {**error_details, "cred_id": cred_id}, reauthenticated, 0.0)
+        self.engine._record_recovery(
+            agent_name,
+            "authentication_failed",
+            f"{context}_reauth",
+            {**error_details, "cred_id": cred_id},
+            reauthenticated,
+            0.0,
+        )
         return reauthenticated
 
-    async def _handle_waf_block(self, agent_name: str, context: str, error_details: Dict[str, Any]) -> bool:
+    async def _handle_waf_block(self, agent_name: str, context: str, error_details: dict[str, Any]) -> bool:
         logger.info(f"[UnifiedErrorHandling] Handling WAF block for {agent_name} ({context})")
         await self.engine.adapt_strategy(agent_name, "waf_detected")
-        self.engine._record_recovery(agent_name, "waf_detected", f"{context}_strategy_change",
-                                     {"new_strategy": "LOW_AND_SLOW"}, True, 0.0)
+        self.engine._record_recovery(
+            agent_name, "waf_detected", f"{context}_strategy_change", {"new_strategy": "LOW_AND_SLOW"}, True, 0.0
+        )
         return True
 
-    async def _handle_generic_error(self, agent_name: str, context: str, error_details: Dict[str, Any]) -> bool:
+    async def _handle_generic_error(self, agent_name: str, context: str, error_details: dict[str, Any]) -> bool:
         logger.info(f"[UnifiedErrorHandling] Handling generic error for {agent_name} ({context})")
         await asyncio.sleep(1)
         self.engine._record_recovery(agent_name, "generic_error", f"{context}_retry", error_details, True, 1000.0)
         return True
 
     async def _learn_from_recovery(self, error_type: str, context: str, success: bool):
-        self.cross_context_learnings.append({
-            "error_type": error_type, "context": context, "success": success, "timestamp": time.time()})
+        self.cross_context_learnings.append(
+            {"error_type": error_type, "context": context, "success": success, "timestamp": time.time()}
+        )
         if len(self.cross_context_learnings) > 1000:
             self.cross_context_learnings = self.cross_context_learnings[-1000:]
 
-    def get_recovery_stats(self) -> Dict[str, Any]:
+    def get_recovery_stats(self) -> dict[str, Any]:
         return {
             "http_recovery": dict(self.http_recovery_stats),
             "browser_recovery": dict(self.browser_recovery_stats),
@@ -500,7 +558,7 @@ class UnifiedErrorHandlingExtension:
             "timestamp": time.time(),
         }
 
-    def get_unified_success_rate(self, error_type: str) -> Dict[str, float]:
+    def get_unified_success_rate(self, error_type: str) -> dict[str, float]:
         http_stats = self.http_recovery_stats.get(error_type, {"success": 0, "failure": 0})
         browser_stats = self.browser_recovery_stats.get(error_type, {"success": 0, "failure": 0})
         http_total = http_stats["success"] + http_stats["failure"]
@@ -508,9 +566,9 @@ class UnifiedErrorHandlingExtension:
         return {
             "http_success_rate": http_stats["success"] / http_total if http_total > 0 else 0.0,
             "browser_success_rate": browser_stats["success"] / browser_total if browser_total > 0 else 0.0,
-            "combined_success_rate": (
-                (http_stats["success"] + browser_stats["success"]) / (http_total + browser_total)
-            ) if (http_total + browser_total) > 0 else 0.0,
+            "combined_success_rate": ((http_stats["success"] + browser_stats["success"]) / (http_total + browser_total))
+            if (http_total + browser_total) > 0
+            else 0.0,
         }
 
 
@@ -520,6 +578,7 @@ unified_error_handling = UnifiedErrorHandlingExtension(healing_engine)
 # ══════════════════════════════════════════════════════════════════════════════
 # STRATEGY ADAPTATION (formerly strategy_adapter.py)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class AdaptationStrategy(Enum):
     RETRY_WITH_BACKOFF = "retry_with_backoff"
@@ -535,13 +594,13 @@ class AdaptationContext:
     stuck_info: Any
     action_type: str
     consecutive_failures: int
-    error_type: Optional[str] = None
+    error_type: str | None = None
 
 
 @dataclass
 class AdaptationResult:
     adapted: bool
-    strategy_applied: Optional[str] = None
+    strategy_applied: str | None = None
     rationale: str = ""
     success: bool = False
 
@@ -549,16 +608,17 @@ class AdaptationResult:
 class StrategyAdapter:
     """Implements adaptive behavior for agents (real strategy selection)."""
 
-    def __init__(self, agent_id: str, config: SelfAwarenessConfig, decision_logger=None,
-                 learning_integrator=None, db=None):
+    def __init__(
+        self, agent_id: str, config: SelfAwarenessConfig, decision_logger=None, learning_integrator=None, db=None
+    ):
         self.agent_id = agent_id
         self.config = config
         self.decision_logger = decision_logger
         self.learning_integrator = learning_integrator
         self.db = db
-        self._last_adaptation: Dict[str, float] = {}
-        self._adaptation_attempts: Dict[str, int] = {}
-        self._diminishing_returns_tracker: Dict[str, list] = {}
+        self._last_adaptation: dict[str, float] = {}
+        self._adaptation_attempts: dict[str, int] = {}
+        self._diminishing_returns_tracker: dict[str, list] = {}
         logger.info(f"[StrategyAdapter] Initialized for agent {agent_id}")
 
     def should_adapt(self, context: AdaptationContext) -> bool:
@@ -612,36 +672,54 @@ class StrategyAdapter:
         rationale = f"Applied {strategy.value} due to {context.consecutive_failures} failures"
         if self.decision_logger:
             try:
-                await self.decision_logger.log_decision({
-                    "agent_id": self.agent_id, "action_type": "adaptation",
-                    "rationale": rationale, "confidence": 0.8,
-                    "context": {"strategy": strategy.value, "action_type": context.action_type,
-                                "consecutive_failures": context.consecutive_failures},
-                })
+                await self.decision_logger.log_decision(
+                    {
+                        "agent_id": self.agent_id,
+                        "action_type": "adaptation",
+                        "rationale": rationale,
+                        "confidence": 0.8,
+                        "context": {
+                            "strategy": strategy.value,
+                            "action_type": context.action_type,
+                            "consecutive_failures": context.consecutive_failures,
+                        },
+                    }
+                )
             except Exception as e:
                 logger.error(f"[StrategyAdapter] Failed to log decision: {e}")
         if self.db:
             try:
                 await self.db.execute(
                     """
-                    INSERT INTO agent_adaptations 
+                    INSERT INTO agent_adaptations
                     (agent_id, timestamp, trigger_reason, strategy_applied, success, context)
                     VALUES ($1, $2, $3, $4, $5, $6)
                     """,
-                    self.agent_id, datetime.utcnow(),
-                    f"{context.consecutive_failures} consecutive failures", strategy.value, True,
-                    {"action_type": context.action_type, "error_type": context.error_type})
+                    self.agent_id,
+                    datetime.utcnow(),
+                    f"{context.consecutive_failures} consecutive failures",
+                    strategy.value,
+                    True,
+                    {"action_type": context.action_type, "error_type": context.error_type},
+                )
             except Exception as e:
                 logger.error(f"[StrategyAdapter] Failed to persist adaptation: {e}")
         result = AdaptationResult(adapted=True, strategy_applied=strategy.value, rationale=rationale, success=True)
         if result.success and self.learning_integrator:
             try:
                 from backend.core.learning_integrator import Strategy
+
                 await self.learning_integrator.save_successful_strategy(
-                    Strategy(name=strategy.value, action_type=context.action_type,
-                             context={"consecutive_failures": context.consecutive_failures,
-                                      "error_type": context.error_type}),
-                    context={"agent_id": self.agent_id, "timestamp": datetime.utcnow().isoformat()})
+                    Strategy(
+                        name=strategy.value,
+                        action_type=context.action_type,
+                        context={
+                            "consecutive_failures": context.consecutive_failures,
+                            "error_type": context.error_type,
+                        },
+                    ),
+                    context={"agent_id": self.agent_id, "timestamp": datetime.utcnow().isoformat()},
+                )
             except Exception as e:
                 logger.error(f"[StrategyAdapter] Failed to save strategy: {e}")
         return result
@@ -652,10 +730,10 @@ class StrategyAdapter:
         attempts = self._diminishing_returns_tracker[action_type]
         if len(attempts) < self.config.diminishing_returns_threshold:
             return False
-        recent = attempts[-self.config.diminishing_returns_threshold:]
+        recent = attempts[-self.config.diminishing_returns_threshold :]
         return all(findings == 0 for findings in recent)
 
-    async def get_metrics(self) -> Dict[str, Any]:
+    async def get_metrics(self) -> dict[str, Any]:
         return {
             "total_adaptations": sum(self._adaptation_attempts.values()),
             "adaptations_by_type": dict(self._adaptation_attempts),
@@ -666,22 +744,23 @@ class StrategyAdapter:
 # RECOVERY FAÇADE (Architecture §14, §29.9)
 # ══════════════════════════════════════════════════════════════════════════════
 
-class RecoveryAction(str, Enum):
-    RETRY = "retry"                       # retry with bounded jittered backoff
-    SWITCH_VECTOR = "switch_vector"       # legacy: switch delivery vector
-    DELEGATE = "delegate"                 # legacy: delegate to peer/worker
-    REDUCE_RATE = "reduce_rate"           # legacy: reduce aggression / stealth mode
+
+class RecoveryAction(StrEnum):
+    RETRY = "retry"  # retry with bounded jittered backoff
+    SWITCH_VECTOR = "switch_vector"  # legacy: switch delivery vector
+    DELEGATE = "delegate"  # legacy: delegate to peer/worker
+    REDUCE_RATE = "reduce_rate"  # legacy: reduce aggression / stealth mode
     ABORT = "abort"
-    REAUTH = "reauth"                     # re-auth from authorized stored sessions only
+    REAUTH = "reauth"  # re-auth from authorized stored sessions only
     # ── §14 self-healing actions (mapped from structured error classes) ──
-    SWITCH_BACKEND = "switch_backend"     # switch tool backend / parser
+    SWITCH_BACKEND = "switch_backend"  # switch tool backend / parser
     REDUCE_CONCURRENCY = "reduce_concurrency"
-    REASSIGN = "reassign"                 # reassign to another worker
-    DISABLE_TOOL = "disable_tool"         # disable unreliable tool for the scan
-    FALLBACK_BROWSER = "fallback_browser" # fall back PinchTab -> Playwright
+    REASSIGN = "reassign"  # reassign to another worker
+    DISABLE_TOOL = "disable_tool"  # disable unreliable tool for the scan
+    FALLBACK_BROWSER = "fallback_browser"  # fall back PinchTab -> Playwright
     COMPRESS_CONTEXT = "compress_context"
     PAUSE_FOR_APPROVAL = "pause_for_approval"
-    MARK_DEGRADED = "mark_degraded"       # mark scan degraded instead of silently failing
+    MARK_DEGRADED = "mark_degraded"  # mark scan degraded instead of silently failing
 
 
 @dataclass
@@ -689,7 +768,7 @@ class RecoveryOutcome:
     action: RecoveryAction
     success: bool
     rationale: str = ""
-    detail: Dict[str, Any] = field(default_factory=dict)
+    detail: dict[str, Any] = field(default_factory=dict)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -698,69 +777,138 @@ class RecoveryOutcome:
 # strategy (§14) instead of a single retry/log path (§29.9 req: real actions).
 # ══════════════════════════════════════════════════════════════════════════════
 
-class ErrorClass(str, Enum):
+
+class ErrorClass(StrEnum):
     """Structured failure taxonomy — determines the recovery strategy (§14)."""
-    RATE_LIMIT = "rate_limit"       # 429 / LLM or target throttling -> reduce concurrency
-    TIMEOUT = "timeout"             # connection/read timeout, no-output stall -> retry w/ backoff
-    NETWORK = "network"             # connection refused/reset/DNS -> retry w/ backoff
-    AUTH = "auth"                   # 401/403, session expired -> re-auth from vault
-    PARSE = "parse"                 # tool output / response could not be parsed -> switch backend
-    TOOL_MISSING = "tool_missing"   # binary/tool not installed/found -> disable tool for scan
-    SCOPE_BLOCK = "scope_block"     # out-of-scope / approval required -> pause (never auto-bypass)
-    SERVER_ERROR = "server_error"   # 5xx upstream/target error -> retry then mark degraded
-    UNKNOWN = "unknown"             # unclassifiable -> retry with backoff
+
+    RATE_LIMIT = "rate_limit"  # 429 / LLM or target throttling -> reduce concurrency
+    TIMEOUT = "timeout"  # connection/read timeout, no-output stall -> retry w/ backoff
+    NETWORK = "network"  # connection refused/reset/DNS -> retry w/ backoff
+    AUTH = "auth"  # 401/403, session expired -> re-auth from vault
+    PARSE = "parse"  # tool output / response could not be parsed -> switch backend
+    TOOL_MISSING = "tool_missing"  # binary/tool not installed/found -> disable tool for scan
+    SCOPE_BLOCK = "scope_block"  # out-of-scope / approval required -> pause (never auto-bypass)
+    SERVER_ERROR = "server_error"  # 5xx upstream/target error -> retry then mark degraded
+    UNKNOWN = "unknown"  # unclassifiable -> retry with backoff
 
 
 @dataclass
 class ClassifiedError:
     """Structured classification of a failure with a concrete recovery action."""
+
     error_class: ErrorClass
     action: RecoveryAction
     retryable: bool
     rationale: str = ""
-    status_code: Optional[int] = None
+    status_code: int | None = None
     message: str = ""
 
 
 # Priority-ordered message patterns (Hermes-style centralized matching).
 _RATE_LIMIT_PATTERNS = (
-    "rate limit", "rate_limit", "rate_limited", "too many requests", "too_many_requests",
-    "throttled", "throttling", "requests per", "tokens per", "quota", "429",
+    "rate limit",
+    "rate_limit",
+    "rate_limited",
+    "too many requests",
+    "too_many_requests",
+    "throttled",
+    "throttling",
+    "requests per",
+    "tokens per",
+    "quota",
+    "429",
 )
 _TIMEOUT_PATTERNS = (
-    "timed out", "timeout", "connection_timeout", "read timeout", "deadline exceeded",
-    "no output", "no-output", "stall", "stalled", "408", "504",
+    "timed out",
+    "timeout",
+    "connection_timeout",
+    "read timeout",
+    "deadline exceeded",
+    "no output",
+    "no-output",
+    "stall",
+    "stalled",
+    "408",
+    "504",
 )
 _NETWORK_PATTERNS = (
-    "connection refused", "connection reset", "connection aborted", "network_error",
-    "network is unreachable", "dns", "name resolution", "econnrefused", "econnreset",
-    "ssl", "tls handshake", "broken pipe",
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "network_error",
+    "network is unreachable",
+    "dns",
+    "name resolution",
+    "econnrefused",
+    "econnreset",
+    "ssl",
+    "tls handshake",
+    "broken pipe",
 )
 _AUTH_PATTERNS = (
-    "authentication_failed", "authentication failed", "unauthorized", "forbidden",
-    "session_expired", "session expired", "invalid token", "token expired",
-    "access denied", "401", "403",
+    "authentication_failed",
+    "authentication failed",
+    "unauthorized",
+    "forbidden",
+    "session_expired",
+    "session expired",
+    "invalid token",
+    "token expired",
+    "access denied",
+    "401",
+    "403",
 )
 _PARSE_PATTERNS = (
-    "parse", "parsing", "json decode", "jsondecode", "invalid json", "malformed",
-    "unexpected token", "could not deserialize", "decode error", "unmarshal",
+    "parse",
+    "parsing",
+    "json decode",
+    "jsondecode",
+    "invalid json",
+    "malformed",
+    "unexpected token",
+    "could not deserialize",
+    "decode error",
+    "unmarshal",
 )
 _TOOL_MISSING_PATTERNS = (
-    "command not found", "not found in path", "no such file", "not installed",
-    "executable not found", "filenotfounderror", "is not recognized", "cannot find",
-    "no such tool", "missing dependency",
+    "command not found",
+    "not found in path",
+    "no such file",
+    "not installed",
+    "executable not found",
+    "filenotfounderror",
+    "is not recognized",
+    "cannot find",
+    "no such tool",
+    "missing dependency",
 )
 _SCOPE_PATTERNS = (
-    "out of scope", "out-of-scope", "scope violation", "scope_block", "not authorized",
-    "not in scope", "approval required", "requires approval", "scope denied",
+    "out of scope",
+    "out-of-scope",
+    "scope violation",
+    "scope_block",
+    "not authorized",
+    "not in scope",
+    "approval required",
+    "requires approval",
+    "scope denied",
 )
 _SERVER_ERROR_PATTERNS = (
-    "internal server error", "bad gateway", "service unavailable", "gateway timeout",
-    "server_error", "500", "502", "503", "5xx", "529", "overloaded",
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "server_error",
+    "500",
+    "502",
+    "503",
+    "5xx",
+    "529",
+    "overloaded",
 )
 
 # ErrorClass -> default recovery action (§14 action vocabulary).
-_CLASS_ACTION: Dict[ErrorClass, RecoveryAction] = {
+_CLASS_ACTION: dict[ErrorClass, RecoveryAction] = {
     ErrorClass.RATE_LIMIT: RecoveryAction.REDUCE_CONCURRENCY,
     ErrorClass.TIMEOUT: RecoveryAction.RETRY,
     ErrorClass.NETWORK: RecoveryAction.RETRY,
@@ -773,10 +921,15 @@ _CLASS_ACTION: Dict[ErrorClass, RecoveryAction] = {
 }
 
 # Classes safe to keep retrying (with bounded backoff) before escalating.
-_RETRYABLE_CLASSES = frozenset({
-    ErrorClass.RATE_LIMIT, ErrorClass.TIMEOUT, ErrorClass.NETWORK,
-    ErrorClass.SERVER_ERROR, ErrorClass.UNKNOWN,
-})
+_RETRYABLE_CLASSES = frozenset(
+    {
+        ErrorClass.RATE_LIMIT,
+        ErrorClass.TIMEOUT,
+        ErrorClass.NETWORK,
+        ErrorClass.SERVER_ERROR,
+        ErrorClass.UNKNOWN,
+    }
+)
 
 # Legacy raw error strings kept for backward compatibility when classification
 # yields UNKNOWN (e.g. WAF/block signals not in the core 8-class taxonomy).
@@ -786,8 +939,9 @@ _ERROR_ACTION = {
 }
 
 
-def jittered_backoff(attempt: int, *, base_delay: float = 2.0, max_delay: float = 120.0,
-                     jitter_ratio: float = 0.5) -> float:
+def jittered_backoff(
+    attempt: int, *, base_delay: float = 2.0, max_delay: float = 120.0, jitter_ratio: float = 0.5
+) -> float:
     """Jittered exponential backoff (adopted from Hermes retry_utils.jittered_backoff).
 
     Decorrelates concurrent retries so multiple agents/sessions hitting the same
@@ -797,17 +951,20 @@ def jittered_backoff(attempt: int, *, base_delay: float = 2.0, max_delay: float 
     [0, jitter_ratio * delay]. ``attempt`` is 1-based.
     """
     exponent = max(0, attempt - 1)
-    if exponent >= 63 or base_delay <= 0:
-        delay = max_delay
-    else:
-        delay = min(base_delay * (2 ** exponent), max_delay)
+    delay = max_delay if exponent >= 63 or base_delay <= 0 else min(base_delay * 2 ** exponent, max_delay)
     seed = (time.time_ns() ^ (max(1, attempt) * 0x9E3779B9)) & 0xFFFFFFFF
     rng = random.Random(seed)
     return delay + rng.uniform(0, jitter_ratio * delay)
 
 
-def classify_error(error: Any = None, *, error_class: str = "", status_code: Optional[int] = None,
-                   message: str = "", context: str = "http") -> ClassifiedError:
+def classify_error(
+    error: Any = None,
+    *,
+    error_class: str = "",
+    status_code: int | None = None,
+    message: str = "",
+    context: str = "http",
+) -> ClassifiedError:
     """Classify a failure into a structured :class:`ErrorClass` + recovery action.
 
     Priority-ordered pipeline (Hermes pattern):
@@ -822,10 +979,14 @@ def classify_error(error: Any = None, *, error_class: str = "", status_code: Opt
 
     def _build(ec: ErrorClass, rationale: str) -> ClassifiedError:
         action = _CLASS_ACTION.get(ec, RecoveryAction.RETRY)
-        return ClassifiedError(error_class=ec, action=action,
-                               retryable=ec in _RETRYABLE_CLASSES,
-                               rationale=rationale, status_code=status_code,
-                               message=message or text[:300])
+        return ClassifiedError(
+            error_class=ec,
+            action=action,
+            retryable=ec in _RETRYABLE_CLASSES,
+            rationale=rationale,
+            status_code=status_code,
+            message=message or text[:300],
+        )
 
     # 1. HTTP status code classification
     if status_code is not None:
@@ -879,17 +1040,17 @@ class RecoveryEngine:
         self.healing = healing_engine
         self.browser = browser_healing
         self.errors = unified_error_handling
-        self._attempts: Dict[tuple, int] = {}
-        self._attempts_last_used: Dict[tuple, float] = {}  # H-23: track last access time
+        self._attempts: dict[tuple, int] = {}
+        self._attempts_last_used: dict[tuple, float] = {}  # H-23: track last access time
         self._max_attempts = 4
         # ── Real recovery state consulted by the rest of the system ──
-        self.disabled_tools: Dict[str, set] = defaultdict(set)        # scan_id -> {tool}
-        self.concurrency_limits: Dict[str, int] = {}                  # scope -> current cap
-        self.browser_backend: Dict[str, str] = {}                     # scope -> "pinchtab"|"playwright"
-        self.tool_backend: Dict[str, str] = {}                        # scope -> active parser/backend
-        self.reassign_requests: deque = deque(maxlen=256)             # pending worker reassignments
-        self.paused_scans: set = set()                                # scans awaiting human approval
-        self.degraded_scans: set = set()                              # scans running degraded
+        self.disabled_tools: dict[str, set] = defaultdict(set)  # scan_id -> {tool}
+        self.concurrency_limits: dict[str, int] = {}  # scope -> current cap
+        self.browser_backend: dict[str, str] = {}  # scope -> "pinchtab"|"playwright"
+        self.tool_backend: dict[str, str] = {}  # scope -> active parser/backend
+        self.reassign_requests: deque = deque(maxlen=256)  # pending worker reassignments
+        self.paused_scans: set = set()  # scans awaiting human approval
+        self.degraded_scans: set = set()  # scans running degraded
         self._default_concurrency = 5
         self._min_concurrency = 1
 
@@ -912,15 +1073,13 @@ class RecoveryEngine:
     def allow_request(self, endpoint: str) -> bool:
         return self.healing.check_circuit_breaker(endpoint)
 
-
     def record_result(self, endpoint: str, success: bool) -> None:
         self.healing.record_endpoint_result(endpoint, success)
 
     def register_restart_callback(self, agent_name: str, callback) -> None:
         self.healing.register_restart_callback(agent_name, callback)
 
-    def select_action(self, error_class: str, *, agent: str = "agent",
-                      consecutive_failures: int = 1) -> RecoveryAction:
+    def select_action(self, error_class: str, *, agent: str = "agent", consecutive_failures: int = 1) -> RecoveryAction:
         """Select a §14 action for ``error_class`` via structured classification.
 
         Bounded retries: once attempts/consecutive failures exceed the budget we
@@ -940,14 +1099,20 @@ class RecoveryEngine:
             return _ERROR_ACTION.get(error_class.lower(), classified.action)
         return classified.action
 
-    async def recover(self, *, agent: str, error_class: str, context: str = "http",
-                      target: str = "", consecutive_failures: int = 1,
-                      detail: Dict[str, Any] | None = None) -> RecoveryOutcome:
+    async def recover(
+        self,
+        *,
+        agent: str,
+        error_class: str,
+        context: str = "http",
+        target: str = "",
+        consecutive_failures: int = 1,
+        detail: dict[str, Any] | None = None,
+    ) -> RecoveryOutcome:
         # H-23: Clean up stale _attempts entries (>1 hour old) to prevent
         # unbounded memory growth.
         now = time.time()
-        stale_keys = [k for k, v in self._attempts.items()
-                      if (now - v) > 3600 if isinstance(v, float)]
+        stale_keys = [k for k, v in self._attempts.items() if (now - v) > 3600 if isinstance(v, float)]
         for k in stale_keys:
             self._attempts.pop(k, None)
         detail = dict(detail or {})
@@ -966,19 +1131,24 @@ class RecoveryEngine:
                 self._attempts.pop(k, None)
                 self._attempts_last_used.pop(k, None)
         attempt = self._attempts[key]
-        classified = classify_error(error_class=error_class,
-                                    status_code=detail.get("status_code"),
-                                    message=str(detail.get("message", "")), context=context)
+        classified = classify_error(
+            error_class=error_class,
+            status_code=detail.get("status_code"),
+            message=str(detail.get("message", "")),
+            context=context,
+        )
         detail["error_class"] = classified.error_class.value
         action = self.select_action(error_class, agent=agent, consecutive_failures=consecutive_failures)
 
         if action == RecoveryAction.REAUTH:
             # Authorized stored sessions only — vault-backed re-auth (§29.9, scope preserved).
             ok = await self.errors._handle_auth_error(agent, context, {**detail, "target": target})
-            outcome = RecoveryOutcome(RecoveryAction.REAUTH, bool(ok),
-                                      "re-authenticated from authorized vault session" if ok
-                                      else "no authorized stored session in vault",
-                                      {"cred_id": detail.get("recovered_cred_id", "")})
+            outcome = RecoveryOutcome(
+                RecoveryAction.REAUTH,
+                bool(ok),
+                "re-authenticated from authorized vault session" if ok else "no authorized stored session in vault",
+                {"cred_id": detail.get("recovered_cred_id", "")},
+            )
         elif action == RecoveryAction.REDUCE_CONCURRENCY:
             # REAL: drop the concurrency cap for this scope and pace via Zeta-style backoff.
             current = self.concurrency_limits.get(scope, self._default_concurrency)
@@ -986,68 +1156,86 @@ class RecoveryEngine:
             self.concurrency_limits[scope] = new_limit
             await self.errors._handle_rate_limit(agent, context, detail)
             delay = jittered_backoff(attempt)
-            self.healing._record_recovery(agent, "rate_limit", "reduce_concurrency",
-                                          {"scope": scope, "concurrency": new_limit, "backoff_s": round(delay, 2)},
-                                          True, delay * 1000.0)
-            outcome = RecoveryOutcome(action, True,
-                                      f"reduced concurrency to {new_limit} for {scope}",
-                                      {"concurrency": new_limit, "backoff_s": round(delay, 2)})
+            self.healing._record_recovery(
+                agent,
+                "rate_limit",
+                "reduce_concurrency",
+                {"scope": scope, "concurrency": new_limit, "backoff_s": round(delay, 2)},
+                True,
+                delay * 1000.0,
+            )
+            outcome = RecoveryOutcome(
+                action,
+                True,
+                f"reduced concurrency to {new_limit} for {scope}",
+                {"concurrency": new_limit, "backoff_s": round(delay, 2)},
+            )
         elif action == RecoveryAction.SWITCH_BACKEND:
             # REAL: flip the active tool backend / parser for this scope.
             tool = str(detail.get("tool") or "default")
             prev = self.tool_backend.get(scope, "primary")
             new_backend = "secondary" if prev == "primary" else "primary"
             self.tool_backend[scope] = new_backend
-            self.healing._record_recovery(agent, "parse", "switch_backend",
-                                          {"scope": scope, "tool": tool, "backend": new_backend}, True, 0.0)
-            outcome = RecoveryOutcome(action, True,
-                                      f"switched {tool} backend to '{new_backend}'",
-                                      {"backend": new_backend, "tool": tool})
+            self.healing._record_recovery(
+                agent, "parse", "switch_backend", {"scope": scope, "tool": tool, "backend": new_backend}, True, 0.0
+            )
+            outcome = RecoveryOutcome(
+                action, True, f"switched {tool} backend to '{new_backend}'", {"backend": new_backend, "tool": tool}
+            )
         elif action == RecoveryAction.DISABLE_TOOL:
             # REAL: take the unreliable tool out of rotation for the rest of the scan.
             tool = str(detail.get("tool") or "unknown")
             self.disabled_tools[scan_id].add(tool)
-            self.healing._record_recovery(agent, "tool_missing", "disable_tool",
-                                          {"scan_id": scan_id, "tool": tool}, True, 0.0)
-            outcome = RecoveryOutcome(action, True,
-                                      f"disabled tool '{tool}' for scan {scan_id}",
-                                      {"tool": tool, "scan_id": scan_id})
+            self.healing._record_recovery(
+                agent, "tool_missing", "disable_tool", {"scan_id": scan_id, "tool": tool}, True, 0.0
+            )
+            outcome = RecoveryOutcome(
+                action, True, f"disabled tool '{tool}' for scan {scan_id}", {"tool": tool, "scan_id": scan_id}
+            )
         elif action == RecoveryAction.FALLBACK_BROWSER:
             # REAL: fall back PinchTab -> Playwright for this scope.
             self.browser_backend[scope] = "playwright"
             await self.browser.adapt_browser_strategy(agent, "repeated_failures")
-            self.healing._record_recovery(agent, "browser_failure", "fallback_browser",
-                                          {"scope": scope, "backend": "playwright"}, True, 0.0)
-            outcome = RecoveryOutcome(action, True, "fell back PinchTab -> Playwright",
-                                      {"browser_backend": "playwright", "scope": scope})
+            self.healing._record_recovery(
+                agent, "browser_failure", "fallback_browser", {"scope": scope, "backend": "playwright"}, True, 0.0
+            )
+            outcome = RecoveryOutcome(
+                action, True, "fell back PinchTab -> Playwright", {"browser_backend": "playwright", "scope": scope}
+            )
         elif action == RecoveryAction.REASSIGN:
             # REAL: queue a reassignment to another worker for the orchestrator to drain.
-            req = {"agent": agent, "scope": scope, "error_class": classified.error_class.value,
-                   "timestamp": time.time()}
+            req = {
+                "agent": agent,
+                "scope": scope,
+                "error_class": classified.error_class.value,
+                "timestamp": time.time(),
+            }
             self.reassign_requests.append(req)
             self.healing._record_recovery(agent, classified.error_class.value, "reassign", req, True, 0.0)
             outcome = RecoveryOutcome(action, True, f"queued reassignment for {agent}", req)
         elif action == RecoveryAction.COMPRESS_CONTEXT:
             # REAL: flag the context for compression (consumed by the LLM client / Kappa).
             detail["compress_context"] = True
-            self.healing._record_recovery(agent, classified.error_class.value, "compress_context",
-                                          {"scope": scope}, True, 0.0)
+            self.healing._record_recovery(
+                agent, classified.error_class.value, "compress_context", {"scope": scope}, True, 0.0
+            )
             outcome = RecoveryOutcome(action, True, "requested context compression", detail)
         elif action == RecoveryAction.PAUSE_FOR_APPROVAL:
             # REAL: halt the scan and surface for human approval — never auto-bypass scope.
             self.paused_scans.add(scan_id)
-            self.healing._record_recovery(agent, "scope_block", "pause_for_approval",
-                                          {"scan_id": scan_id, "scope": scope}, True, 0.0)
-            outcome = RecoveryOutcome(action, False,
-                                      f"paused scan {scan_id} for human approval (scope gate preserved)",
-                                      {"scan_id": scan_id})
+            self.healing._record_recovery(
+                agent, "scope_block", "pause_for_approval", {"scan_id": scan_id, "scope": scope}, True, 0.0
+            )
+            outcome = RecoveryOutcome(
+                action, False, f"paused scan {scan_id} for human approval (scope gate preserved)", {"scan_id": scan_id}
+            )
         elif action == RecoveryAction.MARK_DEGRADED:
             # REAL: mark the scan degraded instead of silently failing.
             self.degraded_scans.add(scan_id)
-            self.healing._record_recovery(agent, classified.error_class.value, "mark_degraded",
-                                          {"scan_id": scan_id, "scope": scope}, True, 0.0)
-            outcome = RecoveryOutcome(action, False, f"marked scan {scan_id} degraded",
-                                      {"scan_id": scan_id})
+            self.healing._record_recovery(
+                agent, classified.error_class.value, "mark_degraded", {"scan_id": scan_id, "scope": scope}, True, 0.0
+            )
+            outcome = RecoveryOutcome(action, False, f"marked scan {scan_id} degraded", {"scan_id": scan_id})
         elif action == RecoveryAction.REDUCE_RATE:
             await self.errors._handle_rate_limit(agent, context, detail)
             outcome = RecoveryOutcome(RecoveryAction.REDUCE_RATE, True, "reduced rate / stealth mode", detail)
@@ -1060,8 +1248,9 @@ class RecoveryEngine:
             delay = jittered_backoff(attempt)
             detail["backoff_s"] = round(delay, 2)
             ok = await self.errors._handle_network_error(agent, context, detail)
-            outcome = RecoveryOutcome(RecoveryAction.RETRY, bool(ok),
-                                      f"retried with jittered backoff ({delay:.1f}s)", detail)
+            outcome = RecoveryOutcome(
+                RecoveryAction.RETRY, bool(ok), f"retried with jittered backoff ({delay:.1f}s)", detail
+            )
         else:
             outcome = RecoveryOutcome(RecoveryAction.ABORT, False, "diminishing returns; aborting", detail)
 
@@ -1077,20 +1266,27 @@ class RecoveryEngine:
         try:
             from backend.core.skill_extractor import Skill
             from backend.core.skill_library import skill_library
+
             skill_id = f"recovery_{error_class}_{action.value}".lower().replace(" ", "_")
             if skill_library.get_skill(skill_id):
                 skill_library.record_skill_usage(skill_id, True)
                 return
-            skill_library.add_skill(Skill(
-                skill_id=skill_id,
-                name=f"Recovery: {error_class} -> {action.value}",
-                description=f"When '{error_class}' occurs in {context}, applying '{action.value}' resolved it.",
-                skill_type="evasion", source_pattern_ids=[],
-                confidence=0.6, success_rate=1.0, sample_size=1))
+            skill_library.add_skill(
+                Skill(
+                    skill_id=skill_id,
+                    name=f"Recovery: {error_class} -> {action.value}",
+                    description=f"When '{error_class}' occurs in {context}, applying '{action.value}' resolved it.",
+                    skill_type="evasion",
+                    source_pattern_ids=[],
+                    confidence=0.6,
+                    success_rate=1.0,
+                    sample_size=1,
+                )
+            )
         except Exception as exc:
             logger.debug("[Recovery] skill write-back skipped: %s", exc)
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         return {
             "healing": self.healing.get_healing_metrics(),
             "errors": self.errors.get_recovery_stats(),
@@ -1148,13 +1344,14 @@ class RecoveryEngine:
 
         # Lazy heal state shared with other browser-recovery surfaces. Stored
         # via ``__dict__.setdefault`` so we don't need an __init__ migration.
-        attempts_map: Dict[str, int] = self.__dict__.setdefault("_browser_heal_attempts", {})
+        attempts_map: dict[str, int] = self.__dict__.setdefault("_browser_heal_attempts", {})
         history: deque = self.__dict__.setdefault("_browser_heal_history", deque(maxlen=256))
 
         # Step 1 — detect crash via the health monitor. Absent metrics is *not*
         # fatal: a brand-new context with no reports yet may still need healing.
         try:
             from backend.core.agent_health_monitor import browser_health_monitor
+
             _ = browser_health_monitor.get_browser_health(scan_id)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("[BrowserHeal] health probe skipped: %s", exc)
@@ -1166,26 +1363,29 @@ class RecoveryEngine:
                 BrowserOrchestrator,
                 get_browser_orchestrator,
             )
+
             try:
                 orchestrator = get_browser_orchestrator()
-            except Exception as factory_exc:
+            except Exception:
                 orchestrator = BrowserOrchestrator()
         except Exception as exc:
             logger.warning(
-                "[BrowserHeal] BrowserOrchestrator unavailable (%s: %s); "
-                "cannot restart context %s for scan %s.",
-                type(exc).__name__, str(exc)[:200], context_id, scan_id,
+                "[BrowserHeal] BrowserOrchestrator unavailable (%s: %s); cannot restart context %s for scan %s.",
+                type(exc).__name__,
+                str(exc)[:200],
+                context_id,
+                scan_id,
             )
             self.healing.record_endpoint_result(endpoint, False)
             return False
 
         # Step 3 — pre-fetch the vault session for this scan/target ONCE so we
         # don't re-query on every retry (§29.13: avoid repeated blocking I/O).
-        session_blob: Optional[Any] = None
+        session_blob: Any | None = None
         try:
             from backend.core.credential_vault import credential_vault
 
-            def _vault_lookup() -> Optional[Any]:
+            def _vault_lookup() -> Any | None:
                 try:
                     fresh = credential_vault.get_fresh_credential(scan_id)
                 except Exception as vault_exc:
@@ -1195,6 +1395,7 @@ class RecoveryEngine:
                     return None
                 _cred, secret = fresh
                 return secret or None
+
             session_blob = await asyncio.wait_for(asyncio.to_thread(_vault_lookup), timeout=30)
         except Exception as exc:  # pragma: no cover - vault import edge case
             logger.debug("[BrowserHeal] vault lookup skipped: %s", exc)
@@ -1203,15 +1404,13 @@ class RecoveryEngine:
         # Step 4 — bounded retry loop with the spec'd backoff schedule.
         for attempt in range(1, self._BROWSER_CRASH_MAX_ATTEMPTS + 1):
             attempts_map[context_id] = attempt
-            backoff_s = self._BROWSER_CRASH_BACKOFF_S[
-                min(attempt - 1, len(self._BROWSER_CRASH_BACKOFF_S) - 1)
-            ]
+            backoff_s = self._BROWSER_CRASH_BACKOFF_S[min(attempt - 1, len(self._BROWSER_CRASH_BACKOFF_S) - 1)]
             # Sleep before retries (not the first attempt) so the very first
             # attempt is immediate and bounded retries pace at 1s, 2s, 4s, 8s.
             if attempt > 1:
                 await asyncio.sleep(backoff_s)
 
-            new_context_id: Optional[str] = None
+            new_context_id: str | None = None
             try:
                 if hasattr(orchestrator, "restart_context"):
                     res = await orchestrator.restart_context(context_id)
@@ -1224,20 +1423,22 @@ class RecoveryEngine:
                         except Exception as close_exc:
                             logger.debug(
                                 "[BrowserHeal] close_context(%s) raised %s — proceeding.",
-                                context_id, close_exc,
+                                context_id,
+                                close_exc,
                             )
                     if hasattr(orchestrator, "create_isolated_context"):
                         new_context_id = await orchestrator.create_isolated_context(scan_id)
                     else:
                         # No restart hook at all — bail; retries won't help.
-                        logger.warning(
-                            "[BrowserHeal] orchestrator lacks restart hooks; aborting heal."
-                        )
+                        logger.warning("[BrowserHeal] orchestrator lacks restart hooks; aborting heal.")
                         break
             except Exception as exc:
                 logger.warning(
                     "[BrowserHeal] attempt %d/%d failed for %s: %s",
-                    attempt, self._BROWSER_CRASH_MAX_ATTEMPTS, context_id, exc,
+                    attempt,
+                    self._BROWSER_CRASH_MAX_ATTEMPTS,
+                    context_id,
+                    exc,
                 )
                 continue  # back off and retry
 
@@ -1254,13 +1455,16 @@ class RecoveryEngine:
                 except Exception as exc:
                     logger.debug(
                         "[BrowserHeal] session restore failed for %s: %s",
-                        new_context_id, exc,
+                        new_context_id,
+                        exc,
                     )
 
             # Step 6 — record + announce the heal.
             self.healing.record_endpoint_result(endpoint, True)
             self.healing._record_recovery(
-                f"browser:{context_id}", "browser_crash", "browser_restart",
+                f"browser:{context_id}",
+                "browser_crash",
+                "browser_restart",
                 {
                     "scan_id": scan_id,
                     "attempt": attempt,
@@ -1268,16 +1472,19 @@ class RecoveryEngine:
                     "new_context_id": new_context_id,
                     "session_restored": session_blob is not None,
                 },
-                True, backoff_s * 1000.0,
+                True,
+                backoff_s * 1000.0,
             )
-            history.append({
-                "timestamp": time.time(),
-                "context_id": context_id,
-                "new_context_id": new_context_id,
-                "scan_id": scan_id,
-                "attempt": attempt,
-                "healed": True,
-            })
+            history.append(
+                {
+                    "timestamp": time.time(),
+                    "context_id": context_id,
+                    "new_context_id": new_context_id,
+                    "scan_id": scan_id,
+                    "attempt": attempt,
+                    "healed": True,
+                }
+            )
             attempts_map[context_id] = 0
             self._emit_agent_healed_event(
                 browser_id=context_id,
@@ -1290,28 +1497,33 @@ class RecoveryEngine:
         # All retries exhausted.
         self.healing.record_endpoint_result(endpoint, False)
         self.healing._record_recovery(
-            f"browser:{context_id}", "browser_crash", "browser_restart",
+            f"browser:{context_id}",
+            "browser_crash",
+            "browser_restart",
             {
                 "scan_id": scan_id,
                 "attempts": attempts_map.get(context_id, self._BROWSER_CRASH_MAX_ATTEMPTS),
                 "exhausted": True,
             },
-            False, 0.0,
+            False,
+            0.0,
         )
-        history.append({
-            "timestamp": time.time(),
-            "context_id": context_id,
-            "scan_id": scan_id,
-            "attempts": self._BROWSER_CRASH_MAX_ATTEMPTS,
-            "healed": False,
-        })
+        history.append(
+            {
+                "timestamp": time.time(),
+                "context_id": context_id,
+                "scan_id": scan_id,
+                "attempts": self._BROWSER_CRASH_MAX_ATTEMPTS,
+                "healed": False,
+            }
+        )
         return False
 
     def _emit_agent_healed_event(
         self,
         *,
         browser_id: str,
-        new_browser_id: Optional[str],
+        new_browser_id: str | None,
         attempt: int,
         engine: str,
     ) -> None:
@@ -1323,6 +1535,7 @@ class RecoveryEngine:
         """
         try:
             from backend.core import hive as _hive_mod
+
             EventType = getattr(_hive_mod, "EventType", None)
             HiveEvent = getattr(_hive_mod, "HiveEvent", None)
             if EventType is None or HiveEvent is None:
@@ -1338,6 +1551,7 @@ class RecoveryEngine:
             bus = None
             try:
                 from backend.core.orchestrator import HiveOrchestrator
+
                 # The bus is passed to every agent's __init__; we can reach it
                 # via any active agent's .bus attribute.
                 for agent in HiveOrchestrator.active_agents.values():
@@ -1409,9 +1623,10 @@ class RecoveryEngine:
                 BrowserOrchestrator,
                 get_browser_orchestrator,
             )
+
             try:
                 orchestrator = get_browser_orchestrator()
-            except Exception as factory_exc:  # pragma: no cover - factory edge case
+            except Exception:  # pragma: no cover - factory edge case
                 orchestrator = BrowserOrchestrator()
         except Exception as exc:
             logger.debug("[BrowserHeal] memory recovery: orchestrator unavailable: %s", exc)
@@ -1457,24 +1672,21 @@ class RecoveryEngine:
                 except Exception as exc:
                     logger.debug(
                         "[BrowserHeal] close_context(%s) raised %s — continuing.",
-                        ctx_id, exc,
+                        ctx_id,
+                        exc,
                     )
         elif hasattr(orchestrator, "_cleanup_idle_contexts"):
             # Older orchestrator: defer to its built-in cleanup, then derive the
             # delta from the active count if exposed.
             before = (
-                orchestrator.get_active_context_count()
-                if hasattr(orchestrator, "get_active_context_count")
-                else None
+                orchestrator.get_active_context_count() if hasattr(orchestrator, "get_active_context_count") else None
             )
             try:
                 await orchestrator._cleanup_idle_contexts(int(IDLE_AFTER_S))
             except Exception as exc:
                 logger.debug("[BrowserHeal] _cleanup_idle_contexts raised %s", exc)
             after = (
-                orchestrator.get_active_context_count()
-                if hasattr(orchestrator, "get_active_context_count")
-                else None
+                orchestrator.get_active_context_count() if hasattr(orchestrator, "get_active_context_count") else None
             )
             if before is not None and after is not None:
                 closed = max(0, before - after)
@@ -1482,7 +1694,7 @@ class RecoveryEngine:
         # Memory-pressure path: when monitor_memory says we're over threshold,
         # also drain the pool entirely to release the heaviest references.
         try:
-            mem_stats: Dict[str, Any] = {}
+            mem_stats: dict[str, Any] = {}
             if hasattr(orchestrator, "monitor_memory"):
                 mem_stats = await orchestrator.monitor_memory() or {}
             mem_mb = float(mem_stats.get("memory_mb", 0.0))
@@ -1505,9 +1717,12 @@ class RecoveryEngine:
                         logger.debug("[BrowserHeal] pool drain skipped: %s", exc)
                 gc.collect()
                 self.healing._record_recovery(
-                    "browser:memory", "browser_memory_high", "memory_cleanup",
+                    "browser:memory",
+                    "browser_memory_high",
+                    "memory_cleanup",
                     {"threshold_mb": threshold_mb, "memory_mb": mem_mb, "closed": closed},
-                    True, 0.0,
+                    True,
+                    0.0,
                 )
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("[BrowserHeal] memory probe skipped: %s", exc)
@@ -1528,7 +1743,7 @@ class RecoveryEngine:
     _STRATEGY_WAF_THRESHOLD: int = 3
     _STRATEGY_CRASH_THRESHOLD: int = 3
 
-    def adapt_browser_strategy(self, failure_history: List[Dict[str, Any]]) -> str:
+    def adapt_browser_strategy(self, failure_history: list[dict[str, Any]]) -> str:
         """Pick a browser strategy from a recent failure history (Task 5.5).
 
         Returns one of:
@@ -1544,7 +1759,7 @@ class RecoveryEngine:
             return "no_change"
         recent = list(failure_history)[-10:]
 
-        def _norm(entry: Dict[str, Any]) -> str:
+        def _norm(entry: dict[str, Any]) -> str:
             for key in ("error_class", "reason", "type", "kind"):
                 v = entry.get(key)
                 if isinstance(v, str) and v:
@@ -1586,10 +1801,8 @@ class RecoveryEngine:
     #   §9   — gates traffic; never makes scope decisions.
     #   §11  — pure data-plane bookkeeping; no LLM calls.
     # ══════════════════════════════════════════════════════════════════════
-    def _get_browser_breaker(self, host: str) -> "_LocalCircuitBreaker":
-        breakers: Dict[str, _LocalCircuitBreaker] = self.__dict__.setdefault(
-            "_browser_breakers", {}
-        )
+    def _get_browser_breaker(self, host: str) -> _LocalCircuitBreaker:
+        breakers: dict[str, _LocalCircuitBreaker] = self.__dict__.setdefault("_browser_breakers", {})
         breaker = breakers.get(host)
         if breaker is None:
             breaker = _LocalCircuitBreaker(name=f"browser:{host}")
@@ -1635,7 +1848,7 @@ class _LocalCircuitBreaker:
     failure_threshold: int = 5
     recovery_timeout: float = 60.0
     _failures: int = 0
-    _opened_at: Optional[float] = None
+    _opened_at: float | None = None
     _trips: int = 0
 
     def _now(self) -> float:

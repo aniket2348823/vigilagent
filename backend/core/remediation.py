@@ -10,12 +10,13 @@
 import difflib
 import json
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Any
 
 logger = logging.getLogger("REMEDIATION")
 
 
 # ─── Framework Detection ──────────────────────────────────────────────────────
+
 
 class FrameworkDetector:
     """
@@ -23,7 +24,7 @@ class FrameworkDetector:
     """
 
     @staticmethod
-    def detect(finding: Dict[str, Any]) -> str:
+    def detect(finding: dict[str, Any]) -> str:
         """Detect the likely backend framework from finding metadata."""
         headers = finding.get("response_headers", {})
         url = str(finding.get("url", finding.get("endpoint", ""))).lower()
@@ -57,7 +58,7 @@ class FrameworkDetector:
 
 # ─── Framework-Specific Fix Templates ─────────────────────────────────────────
 
-FRAMEWORK_FIXES: Dict[str, Dict[str, Dict[str, str]]] = {
+FRAMEWORK_FIXES: dict[str, dict[str, dict[str, str]]] = {
     "IDOR": {
         "django": {
             "before": """def get_user(request, user_id):
@@ -149,6 +150,7 @@ output = f"<div>{html.escape(user_input)}</div>" """,
 
 # ─── Patch Generator ─────────────────────────────────────────────────────────
 
+
 class PatchGenerator:
     """Generates unified diff patches from before/after code."""
 
@@ -170,6 +172,7 @@ class PatchGenerator:
 
 # ─── Remediation Engine ──────────────────────────────────────────────────────
 
+
 class RemediationEngine:
     """
     Auto Remediation Engine for generating framework-specific,
@@ -186,12 +189,13 @@ class RemediationEngine:
         if self._openrouter is None:
             try:
                 from backend.ai.openrouter import openrouter_client
+
                 self._openrouter = openrouter_client
             except ImportError:
                 logger.warning("REMEDIATION: OpenRouter client not available.")
         return self._openrouter
 
-    def generate_local_fix(self, finding: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_local_fix(self, finding: dict[str, Any]) -> dict[str, Any]:
         """
         Generate a remediation using local templates (instant, no API call).
         Falls back to generic if framework/vuln type not in templates.
@@ -240,7 +244,7 @@ class RemediationEngine:
             "source": "generic_fallback",
         }
 
-    async def generate_ai_fix(self, finding: Dict[str, Any]) -> Dict[str, Any]:
+    async def generate_ai_fix(self, finding: dict[str, Any]) -> dict[str, Any]:
         """
         Generate remediation using GPT-OSS-20B via OpenRouter (high quality, async).
         Falls back to local templates if OpenRouter is unavailable.
@@ -308,7 +312,7 @@ class RemediationEngine:
         }
         return ext_map.get(framework, ".py")
 
-    def generate_batch(self, findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def generate_batch(self, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Generate local fixes for a batch of findings (sync, instant)."""
         return [self.generate_local_fix(f) for f in findings]
 

@@ -4,6 +4,7 @@ Alpha V6 Command Guardrails — Adapted from CAI guardrails patterns.
 Validates commands before execution to prevent dangerous operations.
 All commands go through this validation layer before reaching subprocess.
 """
+
 from __future__ import annotations
 
 import base64
@@ -42,10 +43,22 @@ _DANGEROUS_PATTERNS = [
 
 # Unicode homograph map (adapted from CAI)
 _HOMOGRAPH_MAP = {
-    '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p',
-    '\u0441': 'c', '\u0443': 'y', '\u0445': 'x', '\u0410': 'A',
-    '\u0415': 'E', '\u041e': 'O', '\u0420': 'P', '\u0421': 'C',
-    '\u0425': 'X', '\u03b1': 'a', '\u03bf': 'o', '\u03c1': 'p',
+    "\u0430": "a",
+    "\u0435": "e",
+    "\u043e": "o",
+    "\u0440": "p",
+    "\u0441": "c",
+    "\u0443": "y",
+    "\u0445": "x",
+    "\u0410": "A",
+    "\u0415": "E",
+    "\u041e": "O",
+    "\u0420": "P",
+    "\u0421": "C",
+    "\u0425": "X",
+    "\u03b1": "a",
+    "\u03bf": "o",
+    "\u03c1": "p",
 }
 
 # Commands that should NEVER be in an argv array (shell-only constructs)
@@ -66,9 +79,8 @@ def validate_command(argv: tuple[str, ...] | list[str], *, allow_shell: bool = F
         normalized = full_cmd
         for hg, repl in _HOMOGRAPH_MAP.items():
             normalized = normalized.replace(hg, repl)
-        normalized = unicodedata.normalize('NFKD', normalized)
-        return GuardrailResult(allowed=False,
-            reason=f"unicode_homograph_detected:{binary}")
+        normalized = unicodedata.normalize("NFKD", normalized)
+        return GuardrailResult(allowed=False, reason=f"unicode_homograph_detected:{binary}")
 
     # 2. Check for shell constructs in argv (should never be there)
     if not allow_shell:
@@ -79,44 +91,74 @@ def validate_command(argv: tuple[str, ...] | list[str], *, allow_shell: bool = F
                     pass
             # Full shell string detection
             if any(c in str(arg) for c in ["|", ";", "$(", "`"]):
-                return GuardrailResult(allowed=False,
-                    reason=f"shell_construct_in_argv:{arg[:50]}")
+                return GuardrailResult(allowed=False, reason=f"shell_construct_in_argv:{arg[:50]}")
 
     # 3. Check dangerous patterns
     for pattern, name in _DANGEROUS_PATTERNS:
         if re.search(pattern, full_cmd):
-            return GuardrailResult(allowed=False,
-                reason=f"dangerous_pattern:{name}")
+            return GuardrailResult(allowed=False, reason=f"dangerous_pattern:{name}")
 
     # 4. Check for base64 encoded payloads
     if "base64" in full_cmd.lower() and ("-d" in full_cmd or "--decode" in full_cmd):
-        b64_match = re.search(r'([A-Za-z0-9+/=]{20,})', full_cmd)
+        b64_match = re.search(r"([A-Za-z0-9+/=]{20,})", full_cmd)
         if b64_match:
             try:
-                decoded = base64.b64decode(b64_match.group(1)).decode('utf-8', 'ignore')
+                decoded = base64.b64decode(b64_match.group(1)).decode("utf-8", "ignore")
                 for pattern, name in _DANGEROUS_PATTERNS:
                     if re.search(pattern, decoded):
-                        return GuardrailResult(allowed=False,
-                            reason=f"encoded_dangerous_pattern:{name}")
+                        return GuardrailResult(allowed=False, reason=f"encoded_dangerous_pattern:{name}")
             except Exception as e:
                 import logging as _log
+
                 _log.debug("Base64 decode check failed: %s", e)
 
     # 5. Validate binary is a known recon tool (Architecture §7, 39-tool matrix)
     known_binaries = {
-        "subfinder", "amass", "assetfinder", "gau", "waybackurls", "cloudlist",
-        "spiderfoot", "github-subdomains", "dnsx", "shuffledns", "puredns",
-        "cdncheck", "naabu", "masscan", "nmap", "tlsx", "testssl.sh",
-        "httpx", "httprobe", "whatweb", "wafw00f", "katana", "gospider",
-        "hakrawler", "arjun", "paramspider", "feroxbuster", "ffuf", "gobuster",
-        "kr", "kiterunner", "gowitness", "aquatone", "nuclei", "dalfox",
-        "interactsh-client", "dirsearch", "inql",
-        "python", "python3", "massdns",
+        "subfinder",
+        "amass",
+        "assetfinder",
+        "gau",
+        "waybackurls",
+        "cloudlist",
+        "spiderfoot",
+        "github-subdomains",
+        "dnsx",
+        "shuffledns",
+        "puredns",
+        "cdncheck",
+        "naabu",
+        "masscan",
+        "nmap",
+        "tlsx",
+        "testssl.sh",
+        "httpx",
+        "httprobe",
+        "whatweb",
+        "wafw00f",
+        "katana",
+        "gospider",
+        "hakrawler",
+        "arjun",
+        "paramspider",
+        "feroxbuster",
+        "ffuf",
+        "gobuster",
+        "kr",
+        "kiterunner",
+        "gowitness",
+        "aquatone",
+        "nuclei",
+        "dalfox",
+        "interactsh-client",
+        "dirsearch",
+        "inql",
+        "python",
+        "python3",
+        "massdns",
     }
     base_binary = os.path.basename(binary).lower()
     if base_binary not in known_binaries:
-        return GuardrailResult(allowed=False,
-            reason=f"unknown_binary:{base_binary}")
+        return GuardrailResult(allowed=False, reason=f"unknown_binary:{base_binary}")
 
     return GuardrailResult(allowed=True, sanitized_command=full_cmd)
 

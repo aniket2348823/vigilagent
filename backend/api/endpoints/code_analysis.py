@@ -6,6 +6,7 @@ Used by VS Code extension and any CI/CD integration.
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+
 from backend.agents.lambda_agent import LambdaAgent
 
 router = APIRouter()
@@ -44,9 +45,13 @@ async def analyze_iac(payload: FilePayload):
     """Scan Infrastructure-as-Code for misconfigurations (Architecture §29.5).
     Supports Terraform, CloudFormation, Kubernetes, Dockerfile."""
     findings = lambda_agent.scan_iac(payload.content, payload.filename)
-    return {"findings": findings, "total": len(findings),
-            "by_severity": {s: sum(1 for f in findings if f["severity"] == s)
-                            for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")}}
+    return {
+        "findings": findings,
+        "total": len(findings),
+        "by_severity": {
+            s: sum(1 for f in findings if f["severity"] == s) for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+        },
+    }
 
 
 @router.post("/analyze-dependencies")
@@ -54,6 +59,10 @@ async def analyze_dependencies(payload: FilePayload):
     """Scan a dependency manifest (SBOM) for vulnerable/unpinned packages
     (Architecture §29.5). Supports requirements.txt, package.json, go.mod."""
     findings = lambda_agent.scan_sbom(payload.content, payload.filename)
-    return {"findings": findings, "total": len(findings),
-            "by_severity": {s: sum(1 for f in findings if f["severity"] == s)
-                            for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")}}
+    return {
+        "findings": findings,
+        "total": len(findings),
+        "by_severity": {
+            s: sum(1 for f in findings if f["severity"] == s) for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+        },
+    }

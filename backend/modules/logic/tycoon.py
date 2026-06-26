@@ -11,11 +11,12 @@ Hardened gating (Architecture §17, §25):
     different vuln class (SQL error, /etc/passwd, executable XSS reflection,
     CMDI output) suppresses Tycoon findings.
 """
+
 import copy
 import logging
-import time
+
 from backend.core.base import BaseArsenalModule
-from backend.core.protocol import JobPacket, Vulnerability, TaskTarget
+from backend.core.protocol import JobPacket, TaskTarget, Vulnerability
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +28,46 @@ def _get_cortex():
     global _cortex
     if _cortex is None:
         from backend.ai.cortex import get_cortex_engine
+
         _cortex = get_cortex_engine()
     return _cortex
 
+
 _FINANCIAL_FIELDS = (
-    "price", "quantity", "qty", "amount", "cost", "total", "subtotal",
-    "currency", "discount", "voucher", "coupon", "balance", "fee",
-    "tax", "rate", "value",
+    "price",
+    "quantity",
+    "qty",
+    "amount",
+    "cost",
+    "total",
+    "subtotal",
+    "currency",
+    "discount",
+    "voucher",
+    "coupon",
+    "balance",
+    "fee",
+    "tax",
+    "rate",
+    "value",
 )
 _FINANCIAL_URL_HINTS = (
-    "checkout", "cart", "payment", "pay", "order", "purchase", "buy",
-    "billing", "invoice", "wallet", "transfer", "refund", "subscribe",
-    "subscription", "plan", "pricing",
+    "checkout",
+    "cart",
+    "payment",
+    "pay",
+    "order",
+    "purchase",
+    "buy",
+    "billing",
+    "invoice",
+    "wallet",
+    "transfer",
+    "refund",
+    "subscribe",
+    "subscription",
+    "plan",
+    "pricing",
 )
 
 
@@ -51,7 +80,7 @@ def preconditions_met(packet: JobPacket) -> bool:
         return False
     payload = getattr(target, "payload", None) or {}
     if isinstance(payload, dict):
-        keys = {str(k).lower() for k in payload.keys()}
+        keys = {str(k).lower() for k in payload}
         if keys & set(_FINANCIAL_FIELDS):
             return True
     url = (getattr(target, "url", "") or "").lower()
@@ -67,6 +96,7 @@ class TheTycoon(BaseArsenalModule):
     2. Floating Point Rounding (0.1 + 0.2 != 0.3)
     3. Currency Arbitrage
     """
+
     def __init__(self):
         super().__init__()
         self.name = "The Tycoon"
@@ -78,10 +108,10 @@ class TheTycoon(BaseArsenalModule):
 
         target = packet.target
         targets = []
-        
+
         # HYBRID AI: Generate financial attack vectors
         ai_vectors = await _get_cortex().generate_financial_vectors(target.url, target.payload)
-        
+
         # VECTOR 1: Standard + AI-generated financial attacks
         test_values = [(-1, "Negative Quantity"), (2147483648, "Integer Overflow")]
         for vec in ai_vectors:
@@ -90,29 +120,28 @@ class TheTycoon(BaseArsenalModule):
                     test_values.append((vec["value"], str(vec.get("attack", "AI_Generated"))[:100]))
             except Exception as vec_exc:
                 import logging as _log
+
                 _log.getLogger("Tycoon").debug("Malformed AI vector skipped: %s", vec_exc)
                 continue  # HIGH-55: skip malformed AI vectors without crashing
-        
-        for qty, attack_name in test_values:
+
+        for qty, _attack_name in test_values:
             payload_qty = copy.deepcopy(target.payload) if target.payload else {}
             payload_qty["quantity"] = qty
-            targets.append(TaskTarget(
-                url=target.url, method="POST", headers=target.headers, payload=payload_qty
-            ))
+            targets.append(TaskTarget(url=target.url, method="POST", headers=target.headers, payload=payload_qty))
 
         # VECTOR 2: FLOATING POINT ROUNDING
         payload_float = copy.deepcopy(target.payload) if target.payload else {}
         payload_float["price"] = 0.00001
         payload_float["amount"] = 1000
-        targets.append(TaskTarget(
-            url=target.url, method="POST", headers=target.headers, payload=payload_float
-        ))
-        
+        targets.append(TaskTarget(url=target.url, method="POST", headers=target.headers, payload=payload_float))
+
         return targets
 
-    async def analyze_responses(self, interactions: list[tuple[TaskTarget, str]], packet: JobPacket) -> list[Vulnerability]:
+    async def analyze_responses(
+        self, interactions: list[tuple[TaskTarget, str]], packet: JobPacket
+    ) -> list[Vulnerability]:
         """Confirm financial logic flaws with >= 2 independent signals (Architecture §9.3)."""
-        from backend.modules.evidence import logic_confirm, classify_response_evidence
+        from backend.modules.evidence import classify_response_evidence, logic_confirm
 
         # PRECONDITION GATE re-enforced on the analyze side.
         if not preconditions_met(packet):
@@ -135,19 +164,23 @@ class TheTycoon(BaseArsenalModule):
                 continue
             if target.payload and "quantity" in target.payload:
                 qty = target.payload.get("quantity")
-                vulns.append(Vulnerability(
-                    name="Financial Logic Flaw (Qty)",
-                    severity="CRITICAL",
-                    description=f"Server accepted quantity {qty}, potentially refunding or overflowing.",
-                    evidence=f"{target.payload}. {ev.summary}",
-                    remediation="Perform strict validation on quantity and ensure it is > 0."
-                ))
+                vulns.append(
+                    Vulnerability(
+                        name="Financial Logic Flaw (Qty)",
+                        severity="CRITICAL",
+                        description=f"Server accepted quantity {qty}, potentially refunding or overflowing.",
+                        evidence=f"{target.payload}. {ev.summary}",
+                        remediation="Perform strict validation on quantity and ensure it is > 0.",
+                    )
+                )
             elif target.payload and "price" in target.payload:
-                vulns.append(Vulnerability(
-                    name="Precision Rounding Bypass",
-                    severity="HIGH",
-                    description="Server accepted sub-atomic currency values.",
-                    evidence=f"{target.payload}. {ev.summary}",
-                    remediation="Validate decimal precision matches currency constraints."
-                ))
+                vulns.append(
+                    Vulnerability(
+                        name="Precision Rounding Bypass",
+                        severity="HIGH",
+                        description="Server accepted sub-atomic currency values.",
+                        evidence=f"{target.payload}. {ev.summary}",
+                        remediation="Validate decimal precision matches currency constraints.",
+                    )
+                )
         return vulns

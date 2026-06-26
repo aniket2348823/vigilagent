@@ -1,20 +1,17 @@
 import asyncio
 import json
-from backend.core.content_boundary import content_boundary
-import os
-import math
-import re
-import aiohttp
-import time as _time
-from backend.core.hive import EventType, HiveEvent
-from backend.core.browser_agent import BrowserEnabledAgent
-from backend.core.protocol import JobPacket, ResultPacket, AgentID
-from backend.core.memory import memory_store, cosine_similarity
-from backend.core.sandbox import TempWorkspace
-from backend.core.queue import command_lane
 import logging
+import os
+import re
+import time as _time
+
+from backend.core.browser_agent import BrowserEnabledAgent
+from backend.core.content_boundary import content_boundary
+from backend.core.hive import EventType, HiveEvent
+from backend.core.memory import cosine_similarity, memory_store
 
 logger = logging.getLogger("AgentKappa")
+
 
 class KappaAgent(BrowserEnabledAgent):
     """
@@ -27,19 +24,21 @@ class KappaAgent(BrowserEnabledAgent):
     - Browser session archival and replay
     - Session correlation with exploits
     """
+
     def __init__(self, bus):
         super().__init__("agent_kappa", bus)
         base_dir = os.getcwd()
         self.memory_file = os.path.join(base_dir, "brain", "exploit_vectors.json")
-        
+
         # Initialize Cortex AI
         try:
-            from backend.ai.cortex import CortexEngine, get_cortex_engine
+            from backend.ai.cortex import get_cortex_engine
+
             self.truth_kernel = get_cortex_engine()
         except Exception as e:
             logger.debug(f"[{self.name}] Cortex AI init deferred: {e}")
             self.truth_kernel = None
-            
+
         self._embeddings_disabled = False
         # Track background archive tasks so stop() can drain them and we don't
         # leave orphaned coroutines (the embedding/learning calls can take
@@ -58,9 +57,11 @@ class KappaAgent(BrowserEnabledAgent):
 
     async def _get_embedding(self, text: str) -> list[float]:
         """Generate vector embedding using Gemini text-embedding-004."""
-        if self._embeddings_disabled: return []
+        if self._embeddings_disabled:
+            return []
         try:
             from backend.ai.gemini import gemini_client
+
             if not gemini_client.is_available:
                 self._embeddings_disabled = True
                 return []
@@ -68,7 +69,7 @@ class KappaAgent(BrowserEnabledAgent):
             if not embedding:
                 self._embeddings_disabled = True
             return embedding
-        except Exception as e:
+        except Exception:
             self._embeddings_disabled = True
         return []
 
@@ -106,12 +107,14 @@ class KappaAgent(BrowserEnabledAgent):
         await memory_store.remember_episode(event.scan_id, {"type": "vulnerability", "payload": archive_data})
 
         # Test compatibility: publish LOG event immediately for test compatibility
-        await self.bus.publish(HiveEvent(
-            type=EventType.LOG,
-            source=self.name,
-            scan_id=event.scan_id,
-            payload={"message": f"Vulnerability archived: {archive_data['type']} at {archive_data['url']}"}
-        ))
+        await self.bus.publish(
+            HiveEvent(
+                type=EventType.LOG,
+                source=self.name,
+                scan_id=event.scan_id,
+                payload={"message": f"Vulnerability archived: {archive_data['type']} at {archive_data['url']}"},
+            )
+        )
 
         # Slow path runs out-of-band. We don't await it here.
         task = asyncio.create_task(self._slow_archive(archive_data, payload, event.scan_id))
@@ -123,8 +126,7 @@ class KappaAgent(BrowserEnabledAgent):
         feedback in the background. Failures here must NOT take the bus down.
         """
         try:
-            text_rep = (f"TYPE: {archive_data['type']} | URL: {archive_data['url']} | "
-                        f"PAYLOAD: {archive_data['payload']}")
+            text_rep = f"TYPE: {archive_data['type']} | URL: {archive_data['url']} | PAYLOAD: {archive_data['payload']}"
             embedding = await self._get_embedding(text_rep)
             archive_data["vector"] = embedding
             if embedding:
@@ -134,16 +136,20 @@ class KappaAgent(BrowserEnabledAgent):
                 self._save_record({**archive_data, "embedded": True})
                 await memory_store.remember_semantic(archive_data)
 
-            await self.bus.publish(HiveEvent(
-                type=EventType.LOG,
-                source=self.name,
-                payload={"message": f"Vector Memory {archive_data['type']} stored "
-                                    f"with {len(embedding)}-dim embedding."}
-            ))
+            await self.bus.publish(
+                HiveEvent(
+                    type=EventType.LOG,
+                    source=self.name,
+                    payload={
+                        "message": f"Vector Memory {archive_data['type']} stored with {len(embedding)}-dim embedding."
+                    },
+                )
+            )
 
             # CONTINUOUS LEARNING: feed the learning engine off the hot path.
             try:
                 from backend.core.learning_engine import learning_engine
+
                 await learning_engine.learn_from_vulnerability(archive_data, scan_id)
             except Exception as le_err:
                 logger.error(f"[{self.name}] [LEARN] background learning error: {le_err}")
@@ -157,15 +163,16 @@ class KappaAgent(BrowserEnabledAgent):
                     "vuln_type": vuln_type,
                     "endpoint_pattern": self._extract_pattern(url),
                     "confidence": confidence,
-                    "timestamp": _time.time()
+                    "timestamp": _time.time(),
                 }
-                await self.bus.publish(HiveEvent(
-                    type=EventType.PATTERN_LEARNED,
-                    source=self.name,
-                    scan_id=scan_id,
-                    payload={"pattern": pattern}
-                ))
-                logger.debug(f"[{self.name}] [PATTERN] Fed pattern '{vuln_type}' back to Omega for adaptive replanning.")
+                await self.bus.publish(
+                    HiveEvent(
+                        type=EventType.PATTERN_LEARNED, source=self.name, scan_id=scan_id, payload={"pattern": pattern}
+                    )
+                )
+                logger.debug(
+                    f"[{self.name}] [PATTERN] Fed pattern '{vuln_type}' back to Omega for adaptive replanning."
+                )
         except Exception as exc:
             logger.error(f"[{self.name}] [ARCHIVE-BG] background archive error: {exc}")
 
@@ -183,8 +190,8 @@ class KappaAgent(BrowserEnabledAgent):
 
     def _extract_pattern(self, url: str) -> str:
         """Convert specific URL to a reusable pattern for cross-scan intelligence."""
-        pattern = re.sub(r'/\d+', '/{id}', url)
-        pattern = re.sub(r'/[a-f0-9-]{36}', '/{uuid}', pattern)
+        pattern = re.sub(r"/\d+", "/{id}", url)
+        pattern = re.sub(r"/[a-f0-9-]{36}", "/{uuid}", pattern)
         return pattern
 
     def _save_record(self, record):
@@ -202,7 +209,8 @@ class KappaAgent(BrowserEnabledAgent):
         """Vector memory Semantic Search."""
         logger.debug(f"[{self.name}] Semantic search for: {query}")
         query_vec = await self._get_embedding(query)
-        if not query_vec: return []
+        if not query_vec:
+            return []
 
         semantic_hits = await memory_store.recall_semantic(query_vec, top_k=top_k)
         sanitized_hits = []
@@ -220,20 +228,27 @@ class KappaAgent(BrowserEnabledAgent):
         recs = []
         try:
             from backend.core.skill_library import skill_library
-            recs = skill_library.get_recommendations(
-                target_url=target_url, vuln_class=vuln_class, limit=top_k)
+
+            recs = skill_library.get_recommendations(target_url=target_url, vuln_class=vuln_class, limit=top_k)
         except Exception as e:
             logger.debug(f"[{self.name}] Skill library recall failed: {e}")
             recs = []
         try:
             from backend.skills import skill_catalog
+
             needle = (vuln_class or "").lower()
             for meta in skill_catalog.all():
                 blob = f"{meta.name} {meta.description} {meta.domain}".lower()
                 if not needle or needle in blob:
-                    recs.append({"skill_id": meta.skill_id, "name": meta.name,
-                                 "domain": meta.domain, "promotion_state": meta.promotion_state.value,
-                                 "source": "catalog"})
+                    recs.append(
+                        {
+                            "skill_id": meta.skill_id,
+                            "name": meta.name,
+                            "domain": meta.domain,
+                            "promotion_state": meta.promotion_state.value,
+                            "source": "catalog",
+                        }
+                    )
         except Exception as e:
             logger.debug(f"[{self.name}] Skill catalog recall failed: {e}")
         return recs[:top_k]
@@ -244,129 +259,113 @@ class KappaAgent(BrowserEnabledAgent):
         return []
 
     # ============ BROWSER SESSION PERSISTENCE (Phase 4) ============
-    
+
     async def _store_browser_session(self, scan_id: str, vuln_id: str, session_data: dict):
         """Archive browser session for later replay."""
         try:
             logger.debug(f"[{self.name}] Archiving browser session for {vuln_id}")
-            
+
             # Save session with correlation to vulnerability
             success = await self.session_manager.save_session(
                 session_id=f"{scan_id}_{vuln_id}",
                 engine="openclaw",  # Prefer OpenClaw for replay
                 session_data=session_data,
-                metadata={
-                    "scan_id": scan_id,
-                    "vuln_id": vuln_id,
-                    "timestamp": _time.time(),
-                    "type": "exploit_session"
-                }
+                metadata={"scan_id": scan_id, "vuln_id": vuln_id, "timestamp": _time.time(), "type": "exploit_session"},
             )
-            
+
             if success:
                 logger.debug(f"[{self.name}] Session archived successfully")
-            
+
             return success
-            
+
         except Exception as e:
             logger.error(f"[{self.name}] Session archival failed: {e}")
             return False
-    
+
     async def _load_browser_session(self, scan_id: str, vuln_id: str) -> dict:
         """Load archived browser session."""
         try:
             session_data = await self.session_manager.restore_session(
-                session_id=f"{scan_id}_{vuln_id}",
-                engine="openclaw"
+                session_id=f"{scan_id}_{vuln_id}", engine="openclaw"
             )
-            
+
             if session_data:
                 logger.debug(f"[{self.name}] Session restored for {vuln_id}")
-            
+
             return session_data or {}
-            
+
         except Exception as e:
             logger.error(f"[{self.name}] Session restoration failed: {e}")
             return {}
-    
+
     async def _export_session(self, scan_id: str, vuln_id: str) -> str:
         """Export session to portable format."""
         try:
             session_data = await self._load_browser_session(scan_id, vuln_id)
-            
+
             if not session_data:
                 return ""
-            
+
             # Export to JSON
-            export_data = {
-                "scan_id": scan_id,
-                "vuln_id": vuln_id,
-                "session": session_data,
-                "exported_at": _time.time()
-            }
-            
+            export_data = {"scan_id": scan_id, "vuln_id": vuln_id, "session": session_data, "exported_at": _time.time()}
+
             export_path = f"scan_states/sessions/export_{scan_id}_{vuln_id}.json"
-            with open(export_path, 'w') as f:
+            with open(export_path, "w") as f:
                 json.dump(export_data, f, indent=2)
-            
+
             logger.debug(f"[{self.name}] Session exported to {export_path}")
-            
+
             return export_path
-            
+
         except Exception as e:
             logger.error(f"[{self.name}] Session export failed: {e}")
             return ""
-    
+
     async def _import_session(self, export_path: str) -> bool:
         """Import session from exported file."""
         try:
-            with open(export_path, 'r') as f:
+            with open(export_path) as f:
                 export_data = json.load(f)
-            
+
             scan_id = export_data.get("scan_id")
             vuln_id = export_data.get("vuln_id")
             session_data = export_data.get("session")
-            
+
             if not all([scan_id, vuln_id, session_data]):
                 return False
-            
+
             # Import session
             success = await self._store_browser_session(scan_id, vuln_id, session_data)
-            
+
             if success:
                 logger.debug(f"[{self.name}] Session imported from {export_path}")
-            
+
             return success
-            
+
         except Exception as e:
             logger.error(f"[{self.name}] Session import failed: {e}")
             return False
-    
+
     async def recall_session(self, scan_id: str, vuln_id: str) -> dict:
         """Recall and replay a browser session."""
         try:
             logger.debug(f"[{self.name}] Replaying session for {vuln_id}")
-            
+
             # Load session
             session_data = await self._load_browser_session(scan_id, vuln_id)
-            
+
             if not session_data:
                 return {"success": False, "error": "Session not found"}
-            
+
             # Replay session (navigate to URL with restored session)
             url = session_data.get("url", "")
             if url:
                 result = await self.browser.navigate(url, stealth=False)
-                
-                return {
-                    "success": True,
-                    "url": url,
-                    "session_restored": True,
-                    "result": result
-                }
-            
+
+                return {"success": True, "url": url, "session_restored": True, "result": result}
+
             return {"success": False, "error": "No URL in session"}
-            
+
         except Exception as e:
             logger.error(f"[{self.name}] Session replay failed: {e}")
             return {"success": False, "error": str(e)}

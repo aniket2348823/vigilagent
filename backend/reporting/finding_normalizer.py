@@ -11,6 +11,7 @@ deterministic placeholder ("<no captured traffic>"). Cortex enrichment is
 only allowed for narrative fields (description, impact, explanation,
 remediation, code fix) — not for technical evidence.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,66 +23,66 @@ logger = logging.getLogger(__name__)
 
 # ── Lightweight CWE lookup (mirror of backend.core.reporting.SecurityReportPDF.CWE_MAP) ──
 _CWE_MAP: dict[str, dict[str, Any]] = {
-    "SQL_INJECTION":          {"cwe": "CWE-89",  "base_cvss": 9.8},
-    "SQLI":                   {"cwe": "CWE-89",  "base_cvss": 9.8},
-    "TECH_SQLI":              {"cwe": "CWE-89",  "base_cvss": 9.8},
-    "SQLI_BLIND":             {"cwe": "CWE-89",  "base_cvss": 8.1},
-    "NOSQL_INJECTION":        {"cwe": "CWE-943", "base_cvss": 9.3},
-    "CROSS_SITE_SCRIPTING":   {"cwe": "CWE-79",  "base_cvss": 6.1},
-    "XSS":                    {"cwe": "CWE-79",  "base_cvss": 6.1},
-    "REFLECTED_XSS":          {"cwe": "CWE-79",  "base_cvss": 6.1},
-    "STORED_XSS":             {"cwe": "CWE-79",  "base_cvss": 7.6},
-    "DOM_XSS":                {"cwe": "CWE-79",  "base_cvss": 6.5},
-    "UNAUTHORIZED_ACCESS":    {"cwe": "CWE-284", "base_cvss": 7.5},
-    "IDOR":                   {"cwe": "CWE-639", "base_cvss": 8.6},
-    "BOLA":                   {"cwe": "CWE-639", "base_cvss": 8.6},
-    "LOGIC_IDOR":             {"cwe": "CWE-639", "base_cvss": 8.6},
-    "LOGIC_ESCALATOR":        {"cwe": "CWE-269", "base_cvss": 7.2},
-    "PRIVILEGE_ESCALATION":   {"cwe": "CWE-269", "base_cvss": 9.3},
-    "FORCED_BROWSING":        {"cwe": "CWE-284", "base_cvss": 6.5},
-    "COMMAND_INJECTION":      {"cwe": "CWE-78",  "base_cvss": 9.8},
-    "RCE":                    {"cwe": "CWE-78",  "base_cvss": 9.8},
-    "CODE_INJECTION":         {"cwe": "CWE-94",  "base_cvss": 8.8},
-    "SSTI":                   {"cwe": "CWE-1336","base_cvss": 9.8},
-    "PATH_TRAVERSAL":         {"cwe": "CWE-22",  "base_cvss": 7.5},
-    "LFI":                    {"cwe": "CWE-22",  "base_cvss": 7.5},
-    "RFI":                    {"cwe": "CWE-98",  "base_cvss": 8.8},
-    "FILE_INCLUSION":         {"cwe": "CWE-98",  "base_cvss": 8.1},
-    "FILE_UPLOAD":            {"cwe": "CWE-434", "base_cvss": 9.8},
-    "SSRF":                   {"cwe": "CWE-918", "base_cvss": 8.6},
+    "SQL_INJECTION": {"cwe": "CWE-89", "base_cvss": 9.8},
+    "SQLI": {"cwe": "CWE-89", "base_cvss": 9.8},
+    "TECH_SQLI": {"cwe": "CWE-89", "base_cvss": 9.8},
+    "SQLI_BLIND": {"cwe": "CWE-89", "base_cvss": 8.1},
+    "NOSQL_INJECTION": {"cwe": "CWE-943", "base_cvss": 9.3},
+    "CROSS_SITE_SCRIPTING": {"cwe": "CWE-79", "base_cvss": 6.1},
+    "XSS": {"cwe": "CWE-79", "base_cvss": 6.1},
+    "REFLECTED_XSS": {"cwe": "CWE-79", "base_cvss": 6.1},
+    "STORED_XSS": {"cwe": "CWE-79", "base_cvss": 7.6},
+    "DOM_XSS": {"cwe": "CWE-79", "base_cvss": 6.5},
+    "UNAUTHORIZED_ACCESS": {"cwe": "CWE-284", "base_cvss": 7.5},
+    "IDOR": {"cwe": "CWE-639", "base_cvss": 8.6},
+    "BOLA": {"cwe": "CWE-639", "base_cvss": 8.6},
+    "LOGIC_IDOR": {"cwe": "CWE-639", "base_cvss": 8.6},
+    "LOGIC_ESCALATOR": {"cwe": "CWE-269", "base_cvss": 7.2},
+    "PRIVILEGE_ESCALATION": {"cwe": "CWE-269", "base_cvss": 9.3},
+    "FORCED_BROWSING": {"cwe": "CWE-284", "base_cvss": 6.5},
+    "COMMAND_INJECTION": {"cwe": "CWE-78", "base_cvss": 9.8},
+    "RCE": {"cwe": "CWE-78", "base_cvss": 9.8},
+    "CODE_INJECTION": {"cwe": "CWE-94", "base_cvss": 8.8},
+    "SSTI": {"cwe": "CWE-1336", "base_cvss": 9.8},
+    "PATH_TRAVERSAL": {"cwe": "CWE-22", "base_cvss": 7.5},
+    "LFI": {"cwe": "CWE-22", "base_cvss": 7.5},
+    "RFI": {"cwe": "CWE-98", "base_cvss": 8.8},
+    "FILE_INCLUSION": {"cwe": "CWE-98", "base_cvss": 8.1},
+    "FILE_UPLOAD": {"cwe": "CWE-434", "base_cvss": 9.8},
+    "SSRF": {"cwe": "CWE-918", "base_cvss": 8.6},
     "SERVER_SIDE_REQUEST_FORGERY": {"cwe": "CWE-918", "base_cvss": 8.6},
-    "OPEN_REDIRECT":          {"cwe": "CWE-601", "base_cvss": 5.4},
+    "OPEN_REDIRECT": {"cwe": "CWE-601", "base_cvss": 5.4},
     "INFORMATION_DISCLOSURE": {"cwe": "CWE-200", "base_cvss": 6.5},
-    "DATA_LEAK":              {"cwe": "CWE-200", "base_cvss": 8.1},
-    "SENSITIVE_DATA_EXPOSURE":{ "cwe": "CWE-200", "base_cvss": 8.1},
-    "BROKEN_AUTH":            {"cwe": "CWE-287", "base_cvss": 8.1},
-    "AUTH_BYPASS":            {"cwe": "CWE-287", "base_cvss": 9.3},
-    "JWT_BYPASS":             {"cwe": "CWE-287", "base_cvss": 9.3},
-    "SESSION_FIXATION":       {"cwe": "CWE-384", "base_cvss": 8.1},
-    "CSRF":                   {"cwe": "CWE-352", "base_cvss": 6.8},
-    "PROMPT_INJECTION":       {"cwe": "CWE-77",  "base_cvss": 7.5},
-    "ARITHMETIC_OVERFLOW":    {"cwe": "CWE-190", "base_cvss": 7.5},
-    "RACE_CONDITION":         {"cwe": "CWE-362", "base_cvss": 6.5},
-    "BUSINESS_LOGIC":         {"cwe": "CWE-840", "base_cvss": 6.5},
+    "DATA_LEAK": {"cwe": "CWE-200", "base_cvss": 8.1},
+    "SENSITIVE_DATA_EXPOSURE": {"cwe": "CWE-200", "base_cvss": 8.1},
+    "BROKEN_AUTH": {"cwe": "CWE-287", "base_cvss": 8.1},
+    "AUTH_BYPASS": {"cwe": "CWE-287", "base_cvss": 9.3},
+    "JWT_BYPASS": {"cwe": "CWE-287", "base_cvss": 9.3},
+    "SESSION_FIXATION": {"cwe": "CWE-384", "base_cvss": 8.1},
+    "CSRF": {"cwe": "CWE-352", "base_cvss": 6.8},
+    "PROMPT_INJECTION": {"cwe": "CWE-77", "base_cvss": 7.5},
+    "ARITHMETIC_OVERFLOW": {"cwe": "CWE-190", "base_cvss": 7.5},
+    "RACE_CONDITION": {"cwe": "CWE-362", "base_cvss": 6.5},
+    "BUSINESS_LOGIC": {"cwe": "CWE-840", "base_cvss": 6.5},
     "FINANCIAL_MANIPULATION": {"cwe": "CWE-840", "base_cvss": 7.2},
-    "WEAK_CRYPTO":            {"cwe": "CWE-327", "base_cvss": 5.9},
+    "WEAK_CRYPTO": {"cwe": "CWE-327", "base_cvss": 5.9},
     "INSECURE_DESERIALIZATION": {"cwe": "CWE-502", "base_cvss": 9.8},
-    "MISCONFIG":              {"cwe": "CWE-16",  "base_cvss": 6.5},
-    "DEBUG_MODE":             {"cwe": "CWE-489", "base_cvss": 6.5},
-    "DEFAULT_CREDENTIALS":    {"cwe": "CWE-798", "base_cvss": 9.8},
-    "DIRECTORY_LISTING":      {"cwe": "CWE-548", "base_cvss": 6.5},
-    "VERBOSE_ERROR":          {"cwe": "CWE-209", "base_cvss": 6.5},
+    "MISCONFIG": {"cwe": "CWE-16", "base_cvss": 6.5},
+    "DEBUG_MODE": {"cwe": "CWE-489", "base_cvss": 6.5},
+    "DEFAULT_CREDENTIALS": {"cwe": "CWE-798", "base_cvss": 9.8},
+    "DIRECTORY_LISTING": {"cwe": "CWE-548", "base_cvss": 6.5},
+    "VERBOSE_ERROR": {"cwe": "CWE-209", "base_cvss": 6.5},
 }
 
 
 _CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-    ("Injection & Fuzzing",     ("SQL", "INJECTION", "FUZZ", "XSS", "SSTI", "COMMAND", "TEMPLATE")),
-    ("Authentication Gates",    ("AUTH", "JWT", "TOKEN", "LOGIN", "SESSION", "CREDENTIAL", "CSRF")),
+    ("Injection & Fuzzing", ("SQL", "INJECTION", "FUZZ", "XSS", "SSTI", "COMMAND", "TEMPLATE")),
+    ("Authentication Gates", ("AUTH", "JWT", "TOKEN", "LOGIN", "SESSION", "CREDENTIAL", "CSRF")),
     ("Object References (IDOR)", ("IDOR", "BOLA", "OBJECT_REF")),
-    ("Privilege Escalation",    ("PRIVILEGE", "ADMIN", "ROLE", "ESCALAT", "UNAUTHORIZED")),
-    ("Information Disclosure",  ("DISCLOSURE", "LEAK", "EXPOSURE", "TRAVERSAL", "LFI", "SSRF", "REDIRECT")),
-    ("Concurrency & Timing",    ("RACE", "TIMING", "TOCTOU")),
-    ("Workflow Integrity",     ("WORKFLOW", "STEP", "LOGIC", "BUSINESS")),
+    ("Privilege Escalation", ("PRIVILEGE", "ADMIN", "ROLE", "ESCALAT", "UNAUTHORIZED")),
+    ("Information Disclosure", ("DISCLOSURE", "LEAK", "EXPOSURE", "TRAVERSAL", "LFI", "SSRF", "REDIRECT")),
+    ("Concurrency & Timing", ("RACE", "TIMING", "TOCTOU")),
+    ("Workflow Integrity", ("WORKFLOW", "STEP", "LOGIC", "BUSINESS")),
 ]
 
 
@@ -147,6 +148,7 @@ def _compute_cvss(raw: dict, vuln_type: str) -> tuple[float, str]:
         return score, _severity_band(score)
     try:
         from backend.reporting.cvss_engine import CVSSCalculator
+
         body = ""
         ev = raw.get("evidence")
         if isinstance(ev, dict):
@@ -170,6 +172,7 @@ def _enrich_with_cortex(vuln_type: str, url: str, payload: str) -> dict[str, Any
     """Fetch narrative fields from Cortex. Returns ``{}`` on any error."""
     try:
         from backend.ai.cortex import get_cortex_engine
+
         cortex = get_cortex_engine()
     except Exception as exc:
         logger.debug("Cortex unavailable for normalizer: %s", exc)
@@ -237,16 +240,8 @@ def normalize_finding(raw: dict, scan_record: dict) -> dict:
 
     # Evidence — captured traffic only. Never invent.
     evidence = raw.get("evidence") if isinstance(raw.get("evidence"), dict) else {}
-    http_request = str(
-        _first_present(raw, "http_request", "request")
-        or evidence.get("request")
-        or ""
-    )
-    http_response = str(
-        _first_present(raw, "http_response", "response")
-        or evidence.get("response")
-        or ""
-    )
+    http_request = str(_first_present(raw, "http_request", "request") or evidence.get("request") or "")
+    http_response = str(_first_present(raw, "http_response", "response") or evidence.get("response") or "")
     reproduction_curl = str(_first_present(raw, "reproduction_curl", "curl", "poc") or evidence.get("curl") or "")
     payload_specs = _first_present(raw, "payload_specs", "payloads")
     if payload_specs is None:

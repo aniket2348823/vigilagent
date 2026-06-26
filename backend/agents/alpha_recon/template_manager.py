@@ -4,11 +4,11 @@ Alpha V6 Nuclei Template Manager.
 Manages custom and community templates for targeted validation.
 Extracts template paths from the local nuclei repo at D:\\projects\\nuclei.
 """
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 from backend.core.config import settings
 
@@ -39,8 +39,10 @@ class NucleiTemplateManager:
             "laravel": ["http/technologies/laravel/"],
             "django": ["http/technologies/django/"],
             "express": ["http/technologies/express/"],
-            "graphql": ["http/exposed-panels/graphql-playground.yaml",
-                         "http/misconfiguration/graphql-introspection.yaml"],
+            "graphql": [
+                "http/exposed-panels/graphql-playground.yaml",
+                "http/misconfiguration/graphql-introspection.yaml",
+            ],
             "jenkins": ["http/cves/jenkins/", "http/default-logins/jenkins/"],
             "gitlab": ["http/cves/gitlab/"],
             "jira": ["http/cves/jira/"],
@@ -88,9 +90,13 @@ class NucleiTemplateManager:
             return [str(year_dir)] if year_dir.exists() else ["-tags", f"cve{year}"]
         return [str(cve_dir)]
 
-    def build_nuclei_args(self, *, technologies: list[str] | None = None,
-                           severity: str = "critical,high,medium",
-                           tags: list[str] | None = None) -> list[str]:
+    def build_nuclei_args(
+        self,
+        *,
+        technologies: list[str] | None = None,
+        severity: str = "critical,high,medium",
+        tags: list[str] | None = None,
+    ) -> list[str]:
         """Build nuclei CLI args for targeted scanning."""
         args = ["-severity", severity]
         if tags:
@@ -106,7 +112,7 @@ class PayloadManager:
     """Manages payload lists from PayloadsAllTheThings."""
 
     def __init__(self, tool_root: Path | None = None):
-        self.root = (tool_root or Path(getattr(settings, "ALPHA_TOOL_ROOT", r"D:\projects")))
+        self.root = tool_root or Path(getattr(settings, "ALPHA_TOOL_ROOT", r"D:\projects"))
         self.payloads_dir = self.root / "PayloadsAllTheThings"
 
     def get_sqli_payloads(self, max_count: int = 100) -> list[str]:
@@ -151,7 +157,7 @@ class SecListsManager:
     """Manages wordlists from SecLists."""
 
     def __init__(self, tool_root: Path | None = None):
-        self.root = (tool_root or Path(getattr(settings, "ALPHA_TOOL_ROOT", r"D:\projects")))
+        self.root = tool_root or Path(getattr(settings, "ALPHA_TOOL_ROOT", r"D:\projects"))
         self.seclists_dir = self.root / "SecLists"
 
     def get_wordlist(self, category: str, name: str) -> Path | None:

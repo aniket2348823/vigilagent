@@ -4,17 +4,23 @@ Alpha V6 Entity Relationship & Confidence Engine.
 Manages relationships between recon entities, deduplication with
 confidence merging, and graph construction for attack surface mapping.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from backend.agents.alpha_recon.models import ReconEntity, SourceRef, stable_id
 from backend.core.database import db_manager
 from backend.core.unified_knowledge_graph import (
-    EdgeKind, KGEdge, KGNode, NodeKind, knowledge_graph,
+    EdgeKind,
+    KGNode,
+    NodeKind,
+    knowledge_graph,
 )
-from backend.parsers.recon.base import ParsedEntity
+
+if TYPE_CHECKING:
+    from backend.parsers.recon.base import ParsedEntity
 
 logger = logging.getLogger("alpha.entity_engine")
 
@@ -94,8 +100,7 @@ class EntityEngine:
                 label=entity.label,
                 scan_id=self.scan_id,
                 confidence=entity.confidence,
-                sources=[SourceRef(tool=entity.source_tool, phase=entity.phase,
-                                   confidence=entity.confidence)],
+                sources=[SourceRef(tool=entity.source_tool, phase=entity.phase, confidence=entity.confidence)],
                 properties=entity.properties,
             ).ensure_id()
 
@@ -111,9 +116,16 @@ class EntityEngine:
 
             # Update knowledge graph
             node_kind = _KIND_MAP.get(entity.kind, NodeKind.EVIDENCE)
-            node = KGNode(node_kind, entity.label,
-                         {"scan_id": self.scan_id, "confidence": entity.confidence,
-                          "source": entity.source_tool, **_safe_props(entity.properties)})
+            node = KGNode(
+                node_kind,
+                entity.label,
+                {
+                    "scan_id": self.scan_id,
+                    "confidence": entity.confidence,
+                    "source": entity.source_tool,
+                    **_safe_props(entity.properties),
+                },
+            )
             knowledge_graph.upsert_node(node)
 
             persisted.append(recon_entity)
@@ -152,8 +164,12 @@ class EntityEngine:
                     await self._persist_relationship(host_entity, port_entity, "exposes", 0.9)
 
         # HTTP Service -> Endpoints
-        for ep in (by_kind.get("crawled_endpoint", []) + by_kind.get("discovered_path", [])
-                   + by_kind.get("browser_endpoint", []) + by_kind.get("api_route", [])):
+        for ep in (
+            by_kind.get("crawled_endpoint", [])
+            + by_kind.get("discovered_path", [])
+            + by_kind.get("browser_endpoint", [])
+            + by_kind.get("api_route", [])
+        ):
             host = ep.properties.get("host", "")
             if host:
                 svc = self._entities.get(f"http_service:{host}") or self._entities.get(f"subdomain:{host}")
@@ -171,8 +187,9 @@ class EntityEngine:
                         await self._persist_relationship(ep, vuln, "has_vuln", 0.7)
                         break
 
-    async def _persist_relationship(self, src: ParsedEntity, dst: ParsedEntity,
-                                      relationship: str, confidence: float) -> None:
+    async def _persist_relationship(
+        self, src: ParsedEntity, dst: ParsedEntity, relationship: str, confidence: float
+    ) -> None:
         """Persist a relationship to the database and knowledge graph."""
         rel_id = stable_id(self.scan_id, src.dedup_key, dst.dedup_key, relationship)
 
@@ -196,10 +213,12 @@ class EntityEngine:
 
         # Persist to DB
         await db_manager.create_recon_relationship(
-            id=rel_id, scan_id=self.scan_id,
+            id=rel_id,
+            scan_id=self.scan_id,
             src_entity_id=stable_id(self.scan_id, src.kind, src.label),
             dst_entity_id=stable_id(self.scan_id, dst.kind, dst.label),
-            relationship=relationship, confidence=confidence,
+            relationship=relationship,
+            confidence=confidence,
             evidence={"src_kind": src.kind, "dst_kind": dst.kind},
         )
 

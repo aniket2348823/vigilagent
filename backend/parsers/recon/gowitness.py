@@ -4,8 +4,11 @@ gowitness v3 emits ``--write-jsonl`` records (one JSON per line). Old gowitness
 (< v3) wrote a single JSON array via ``--json``. Handle both forms: prefer
 JSONL if the file has multiple lines, fall back to whole-file JSON.
 """
+
 from __future__ import annotations
+
 from pathlib import Path
+
 from backend.parsers.recon.base import ParsedEntity, safe_json_file, safe_json_lines
 
 
@@ -32,7 +35,14 @@ def parse_gowitness_json(path: Path | str) -> list[ParsedEntity]:
         screenshot = str(r.get("filename", r.get("screenshot", r.get("screenshot_path", ""))))
         title = str(r.get("title", r.get("page_title", "")))
         status = int(r.get("response_code", r.get("status_code", r.get("status", 0))) or 0)
-        entities.append(ParsedEntity(kind="visual_artifact", label=url, confidence=0.9,
-            properties={"screenshot_file": screenshot, "title": title, "status_code": status},
-            source_tool="gowitness", phase="visual_documentation"))
+        entities.append(
+            ParsedEntity(
+                kind="visual_artifact",
+                label=url,
+                confidence=0.9,
+                properties={"screenshot_file": screenshot, "title": title, "status_code": status},
+                source_tool="gowitness",
+                phase="visual_documentation",
+            )
+        )
     return entities

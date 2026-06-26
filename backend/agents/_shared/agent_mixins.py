@@ -25,7 +25,10 @@ The mixins make NO assumptions about the agent's base class beyond what
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable, Optional
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 logger = logging.getLogger("AgentMixins")
 
@@ -71,9 +74,9 @@ class SkillRecallMixin:
     def recall_skills(
         self,
         target_url: str = "",
-        vuln_classes: Optional[Iterable[str]] = None,
+        vuln_classes: Iterable[str] | None = None,
         *,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list:
         """Return cached skill recommendations for ``target_url``.
 

@@ -3,22 +3,23 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Optional, Sequence
+from typing import Any
 
 from backend.core.approval import approval_store
+from backend.core.content_boundary import content_boundary
 from backend.core.database import db_manager
 from backend.core.guard_layer import PromptInjectionBlocked, guard_layer
 from backend.core.memory import memory_store
+from backend.core.queue import command_lane
 from backend.core.stdout_watchdog import watch_output
 from backend.core.telemetry import telemetry
 from backend.core.tool_registry import ToolDefinition, tool_registry
 from backend.core.tool_types import BarrierException, ToolType, is_barrier_tool
-from backend.core.queue import command_lane
-from backend.core.content_boundary import content_boundary
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ _RISKY_TOOL_TYPES = {ToolType.SCAN, ToolType.ENVIRONMENT}
 # Callback invoked on tool lifecycle transitions. Signature:
 #   callback(event: str, tool_name: str, payload: dict) -> None | Awaitable
 # ``event`` is one of "tool.started" / "tool.completed". Sync or async.
-ProgressCallback = Callable[[str, str, dict[str, Any]], Optional[Awaitable[None]]]
+ProgressCallback = Callable[[str, str, dict[str, Any]], Awaitable[None] | None]
 
 
 @dataclass
@@ -106,19 +107,30 @@ class ToolExecutor:
         started = time.time()
         definition = self.registry.get(tool_name)
 
-        with telemetry.span("tool.execute", kind="tool", scan_id=scan_id, tool_name=tool_name, agent=agent, call_id=call_id):
+        with telemetry.span(
+            "tool.execute", kind="tool", scan_id=scan_id, tool_name=tool_name, agent=agent, call_id=call_id
+        ):
             try:
                 guard_layer.assert_safe_text(json.dumps(args, default=str))
             except PromptInjectionBlocked as exc:
                 await db_manager.create_toolcall(
-                    call_id=call_id, scan_id=scan_id, tool_name=tool_name,
-                    agent=agent, args=args, status="blocked", error=str(exc),
+                    call_id=call_id,
+                    scan_id=scan_id,
+                    tool_name=tool_name,
+                    agent=agent,
+                    args=args,
+                    status="blocked",
+                    error=str(exc),
                 )
                 return ToolExecutionResult(call_id, tool_name, "blocked", error=str(exc))
 
             await db_manager.create_toolcall(
-                call_id=call_id, scan_id=scan_id, tool_name=tool_name,
-                agent=agent, args=args, status="running",
+                call_id=call_id,
+                scan_id=scan_id,
+                tool_name=tool_name,
+                agent=agent,
+                args=args,
+                status="running",
             )
 
             # Per-tool availability check (TTL-cached). No-op for tools that
@@ -128,58 +140,114 @@ class ToolExecutor:
                 await db_manager.finish_toolcall(call_id=call_id, status="unavailable", error=reason)
                 return ToolExecutionResult(call_id, tool_name, "unavailable", error=reason)
 
-            if (definition.requires_approval or definition.mutates_state) and not approval_store.is_approved(approval_id):
+            if (definition.requires_approval or definition.mutates_state) and not approval_store.is_approved(
+                approval_id
+            ):
                 reason = f"Tool '{tool_name}' requires approval before execution."
                 ticket = approval_store.request(scan_id=scan_id, tool_name=tool_name, reason=reason, payload=args)
                 await db_manager.create_approval(
-                    approval_id=ticket.id, scan_id=scan_id, tool_name=tool_name,
-                    reason=reason, payload=args, status="pending",
+                    approval_id=ticket.id,
+                    scan_id=scan_id,
+                    tool_name=tool_name,
+                    reason=reason,
+                    payload=args,
+                    status="pending",
                 )
-                await db_manager.finish_toolcall(call_id=call_id, status="approval_required", result={"approval_id": ticket.id})
+                await db_manager.finish_toolcall(
+                    call_id=call_id, status="approval_required", result={"approval_id": ticket.id}
+                )
                 return ToolExecutionResult(call_id, tool_name, "approval_required", approval_id=ticket.id)
 
             # Approval/scope gates have passed and the tool is about to run:
             # checkpoint before risky/mutating tools so a crash resumes from a
             # safe boundary (§29.3). Never blocks execution on failure.
             self._maybe_checkpoint(definition, scan_id)
-            await self._emit_progress("tool.started", tool_name, args=args, scan_id=scan_id, agent=agent, call_id=call_id)
+            await self._emit_progress(
+                "tool.started", tool_name, args=args, scan_id=scan_id, agent=agent, call_id=call_id
+            )
 
             try:
                 async with command_lane.slot():
                     raw_result = await self._call(definition, args, scan_id=scan_id, agent=agent)
-                    
-                watched = await watch_output(raw_result) if definition.summarize_result else await watch_output(raw_result, max_bytes=10**9)
+
+                watched = (
+                    await watch_output(raw_result)
+                    if definition.summarize_result
+                    else await watch_output(raw_result, max_bytes=10**9)
+                )
                 guard_layer.assert_safe_text(watched.content, output=True)
-                
+
                 result: Any = watched.content
                 if definition.store_result:
                     result = content_boundary.wrap_scan_output(tool_name, str(result))
-                    
+
                 duration_ms = int((time.time() - started) * 1000)
                 logger.info(f"CommandLane telemetry: {command_lane.telemetry}")
                 await db_manager.finish_toolcall(
-                    call_id=call_id, status="finished", result=result, duration_ms=duration_ms,
-                    result_bytes=watched.original_bytes, result_sha256=watched.sha256,
+                    call_id=call_id,
+                    status="finished",
+                    result=result,
+                    duration_ms=duration_ms,
+                    result_bytes=watched.original_bytes,
+                    result_sha256=watched.sha256,
                 )
                 if definition.store_result:
-                    await memory_store.remember_semantic({
-                        "memory_type": "tool_result",
-                        "tool_name": tool_name,
-                        "scan_id": scan_id,
-                        "content": str(result)[:8000],
-                        "vector": [],
-                    })
-                await self._emit_progress("tool.completed", tool_name, status="finished", duration_ms=duration_ms, is_error=False, truncated=watched.truncated, call_id=call_id)
-                return ToolExecutionResult(call_id, tool_name, "finished", result=result, duration_ms=duration_ms, truncated=watched.truncated)
+                    await memory_store.remember_semantic(
+                        {
+                            "memory_type": "tool_result",
+                            "tool_name": tool_name,
+                            "scan_id": scan_id,
+                            "content": str(result)[:8000],
+                            "vector": [],
+                        }
+                    )
+                await self._emit_progress(
+                    "tool.completed",
+                    tool_name,
+                    status="finished",
+                    duration_ms=duration_ms,
+                    is_error=False,
+                    truncated=watched.truncated,
+                    call_id=call_id,
+                )
+                return ToolExecutionResult(
+                    call_id, tool_name, "finished", result=result, duration_ms=duration_ms, truncated=watched.truncated
+                )
             except BarrierException as exc:
                 duration_ms = int((time.time() - started) * 1000)
-                await db_manager.finish_toolcall(call_id=call_id, status="approval_required", result=exc.payload, duration_ms=duration_ms)
-                await self._emit_progress("tool.completed", tool_name, status="approval_required", duration_ms=duration_ms, is_error=False, call_id=call_id)
-                return ToolExecutionResult(call_id, tool_name, "approval_required", error=exc.reason, duration_ms=duration_ms, approval_id=exc.payload.get("approval_id", ""))
+                await db_manager.finish_toolcall(
+                    call_id=call_id, status="approval_required", result=exc.payload, duration_ms=duration_ms
+                )
+                await self._emit_progress(
+                    "tool.completed",
+                    tool_name,
+                    status="approval_required",
+                    duration_ms=duration_ms,
+                    is_error=False,
+                    call_id=call_id,
+                )
+                return ToolExecutionResult(
+                    call_id,
+                    tool_name,
+                    "approval_required",
+                    error=exc.reason,
+                    duration_ms=duration_ms,
+                    approval_id=exc.payload.get("approval_id", ""),
+                )
             except Exception as exc:
                 duration_ms = int((time.time() - started) * 1000)
-                await db_manager.finish_toolcall(call_id=call_id, status="failed", error=str(exc), duration_ms=duration_ms)
-                await self._emit_progress("tool.completed", tool_name, status="failed", duration_ms=duration_ms, is_error=True, error=str(exc), call_id=call_id)
+                await db_manager.finish_toolcall(
+                    call_id=call_id, status="failed", error=str(exc), duration_ms=duration_ms
+                )
+                await self._emit_progress(
+                    "tool.completed",
+                    tool_name,
+                    status="failed",
+                    duration_ms=duration_ms,
+                    is_error=True,
+                    error=str(exc),
+                    call_id=call_id,
+                )
                 return ToolExecutionResult(call_id, tool_name, "failed", error=str(exc), duration_ms=duration_ms)
 
     async def execute_batch(
@@ -281,15 +349,12 @@ class ToolExecutor:
         """Checkpoint before a risky/mutating tool runs. Never blocks execution."""
         if not scan_id or scan_id == "GLOBAL":
             return
-        risky = (
-            definition.mutates_state
-            or definition.requires_approval
-            or definition.tool_type in _RISKY_TOOL_TYPES
-        )
+        risky = definition.mutates_state or definition.requires_approval or definition.tool_type in _RISKY_TOOL_TYPES
         if not risky:
             return
         try:
             from backend.core.scan_state_db import scan_state_db
+
             scan_state_db.checkpoint_before_validation(scan_id, phase=f"pre_tool:{definition.name}")
         except Exception as exc:
             logger.debug(f"Pre-tool checkpoint skipped for {definition.name}: {exc}")

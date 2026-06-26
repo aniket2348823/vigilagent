@@ -23,6 +23,7 @@ Execution still flows through the governed TerminalEngine: guardrails, scope
 extraction, budget, watchdog, and audit all run on the original host argv before
 this module ever builds a container command.
 """
+
 from __future__ import annotations
 
 import functools
@@ -31,10 +32,13 @@ import os
 import re
 import shutil
 import subprocess
-from pathlib import Path, PureWindowsPath, PurePosixPath
-from typing import Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from backend.core.config import settings
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +67,17 @@ def docker_daemon_available() -> bool:
     if shutil.which("docker") is None:
         return False
     try:
-        p = subprocess.run(["docker", "info", "--format", "{{.OSType}}"],
-                           capture_output=True, text=True, timeout=15,
-                           encoding="utf-8", errors="replace")
+        p = subprocess.run(
+            ["docker", "info", "--format", "{{.OSType}}"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
+        )
         return p.returncode == 0 and "linux" in (p.stdout or "").lower()
     except Exception as exc:
-        logger.debug('docker_daemon_available check failed: %s', exc)
+        logger.debug("docker_daemon_available check failed: %s", exc)
         return False
 
 
@@ -79,12 +88,17 @@ def recon_image_present(image: str | None = None) -> bool:
     if shutil.which("docker") is None:
         return False
     try:
-        p = subprocess.run(["docker", "image", "inspect", img],
-                           capture_output=True, text=True, timeout=15,
-                           encoding="utf-8", errors="replace")
+        p = subprocess.run(
+            ["docker", "image", "inspect", img],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
+        )
         return p.returncode == 0
     except Exception as exc:
-        logger.debug('recon_image_present check failed: %s', exc)
+        logger.debug("recon_image_present check failed: %s", exc)
         return False
     return False
 
@@ -113,13 +127,18 @@ def _running_recon_container_cached(image: str, override: str) -> str:
     # 1. Explicit override (VIGILAGENT_RECON_CONTAINER) wins if it is running.
     if override:
         try:
-            p = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", override],
-                               capture_output=True, text=True, timeout=10,
-                               encoding="utf-8", errors="replace")
+            p = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Running}}", override],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                encoding="utf-8",
+                errors="replace",
+            )
             if p.returncode == 0 and "true" in (p.stdout or "").lower():
                 return override
         except Exception as exc:
-            logger.debug('container inspect failed: %s', exc)
+            logger.debug("container inspect failed: %s", exc)
             pass
     # 2. Otherwise pick the first running container based on the recon image.
     #    The ancestor filter matches by image ID, so it MISSES containers whose
@@ -128,33 +147,46 @@ def _running_recon_container_cached(image: str, override: str) -> str:
     #    the image ID the tag currently resolves to.
     candidate_images = {image}
     try:
-        idp = subprocess.run(["docker", "image", "inspect", "-f", "{{.Id}}", image],
-                             capture_output=True, text=True, timeout=10,
-                             encoding="utf-8", errors="replace")
+        idp = subprocess.run(
+            ["docker", "image", "inspect", "-f", "{{.Id}}", image],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
+        )
         if idp.returncode == 0 and idp.stdout.strip():
             candidate_images.add(idp.stdout.strip())
             candidate_images.add(idp.stdout.strip().replace("sha256:", "")[:12])
     except Exception as exc:
-        logger.debug('image inspect failed: %s', exc)
+        logger.debug("image inspect failed: %s", exc)
     for img in candidate_images:
         try:
             p = subprocess.run(
                 ["docker", "ps", "--filter", f"ancestor={img}", "--format", "{{.Names}}"],
-                capture_output=True, text=True, timeout=10,
-                encoding="utf-8", errors="replace")
+                capture_output=True,
+                text=True,
+                timeout=10,
+                encoding="utf-8",
+                errors="replace",
+            )
             if p.returncode == 0:
                 names = [n.strip() for n in (p.stdout or "").splitlines() if n.strip()]
                 if names:
                     return names[0]
         except Exception as exc:
-            logger.debug('docker ps ancestor filter failed: %s', exc)
+            logger.debug("docker ps ancestor filter failed: %s", exc)
     # 3. Last-resort: scan running containers and match any whose image (by
     #    name or short ID) looks like the recon image. Survives commit/re-tag.
     try:
         p = subprocess.run(
             ["docker", "ps", "--format", "{{.Names}}\t{{.Image}}"],
-            capture_output=True, text=True, timeout=10,
-            encoding="utf-8", errors="replace")
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
+        )
         if p.returncode == 0:
             image_repo = image.split(":")[0]
             short_ids = {c.replace("sha256:", "")[:12] for c in candidate_images}
@@ -167,7 +199,7 @@ def _running_recon_container_cached(image: str, override: str) -> str:
                 if image_repo in img or img in short_ids:
                     return name
     except Exception as exc:
-        logger.debug('docker ps scan failed: %s', exc)
+        logger.debug("docker ps scan failed: %s", exc)
     return ""
 
 
@@ -184,6 +216,7 @@ def reset_container_cache() -> None:
 
 
 # ── Startup readiness probe ──────────────────────────────────────────────
+
 
 async def probe_docker_readiness(
     *,
@@ -218,13 +251,16 @@ async def probe_docker_readiness(
         # Check: CLI exists AND daemon answers
         if shutil.which("docker") is None:
             logger.info(
-                "[DOCKER-PROBE] docker CLI not found on PATH — "
-                "skipping probe (attempt %d/%d)", attempt, max_retries)
+                "[DOCKER-PROBE] docker CLI not found on PATH — skipping probe (attempt %d/%d)", attempt, max_retries
+            )
             break
 
         try:
             proc = await _aio.create_subprocess_exec(
-                "docker", "info", "--format", "{{.ServerVersion}}",
+                "docker",
+                "info",
+                "--format",
+                "{{.ServerVersion}}",
                 stdout=_aio.subprocess.PIPE,
                 stderr=_aio.subprocess.PIPE,
             )
@@ -238,10 +274,13 @@ async def probe_docker_readiness(
                 _image_ok = recon_image_present()
                 _container = running_recon_container()
                 logger.info(
-                    "[DOCKER-PROBE] Docker %s ready (daemon=%s, "
-                    "image=%s, container=%r) after %d attempt(s)",
-                    version, _daemon_ok, _image_ok,
-                    _container or "none", attempt)
+                    "[DOCKER-PROBE] Docker %s ready (daemon=%s, image=%s, container=%r) after %d attempt(s)",
+                    version,
+                    _daemon_ok,
+                    _image_ok,
+                    _container or "none",
+                    attempt,
+                )
                 return {
                     "ready": True,
                     "version": version,
@@ -250,14 +289,10 @@ async def probe_docker_readiness(
                     "container": _container or None,
                     "attempts": attempt,
                 }
-        except _aio.TimeoutError:
-            logger.debug(
-                "[DOCKER-PROBE] attempt %d/%d timed out",
-                attempt, max_retries)
+        except TimeoutError:
+            logger.debug("[DOCKER-PROBE] attempt %d/%d timed out", attempt, max_retries)
         except Exception as exc:
-            logger.debug(
-                "[DOCKER-PROBE] attempt %d/%d failed: %s",
-                attempt, max_retries, exc)
+            logger.debug("[DOCKER-PROBE] attempt %d/%d failed: %s", attempt, max_retries, exc)
 
         await _aio.sleep(delay)
         delay = min(delay * 1.5, max_delay)
@@ -266,7 +301,8 @@ async def probe_docker_readiness(
         "[DOCKER-PROBE] Docker not ready after %d attempts — "
         "backend will run in local-only mode. Recon tools that require "
         "Docker will be skipped until Docker becomes available.",
-        max_retries)
+        max_retries,
+    )
     return {"ready": False, "attempts": max_retries}
 
 
@@ -305,15 +341,20 @@ def build_exec_argv(
     """
     raw_dir = raw_dir.resolve()
     container_argv = _rewrite_for_exec(
-        inner_argv, raw_dir, tool_root, container_out,
-        extra_raw_prefixes=extra_raw_prefixes)
+        inner_argv, raw_dir, tool_root, container_out, extra_raw_prefixes=extra_raw_prefixes
+    )
     exec_flags = ["-i"] if has_stdin else []
     return ["docker", "exec", *exec_flags, "-w", EXEC_WORKDIR, container, *container_argv]
 
 
-def _rewrite_for_exec(argv: Sequence[str], raw_dir: Path, tool_root: Path,
-                      container_out: str,
-                      *, extra_raw_prefixes: Sequence[str | Path] = ()) -> list[str]:
+def _rewrite_for_exec(
+    argv: Sequence[str],
+    raw_dir: Path,
+    tool_root: Path,
+    container_out: str,
+    *,
+    extra_raw_prefixes: Sequence[str | Path] = (),
+) -> list[str]:
     """Rewrite host paths for the exec backend: raw_dir paths -> /scan/<name>,
     tool_root paths -> /tools/<rel>. Other tokens pass through unchanged.
 
@@ -344,7 +385,7 @@ def _rewrite_for_exec(argv: Sequence[str], raw_dir: Path, tool_root: Path,
         if not Path(raw_dir).is_absolute():
             prefixes_raw.add(str(raw_dir))
     except Exception as exc:
-        logger.debug('path normalization failed: %s', exc)
+        logger.debug("path normalization failed: %s", exc)
     for extra in extra_raw_prefixes or ():
         if extra:
             prefixes_raw.add(str(extra))
@@ -367,11 +408,11 @@ def _rewrite_for_exec(argv: Sequence[str], raw_dir: Path, tool_root: Path,
                 if best_prefix is None or len(pref_norm) > len(best_prefix):
                     best_prefix = pref_norm
         if best_prefix is not None:
-            rel = norm[len(best_prefix):].lstrip("/")
+            rel = norm[len(best_prefix) :].lstrip("/")
             out.append(f"{EXEC_WORKDIR}/{rel}".rstrip("/"))
             replaced = True
         elif norm_low.startswith(tool_s.replace("\\", "/").lower()):
-            rel = norm[len(tool_s):].lstrip("\\/").replace("\\", "/")
+            rel = norm[len(tool_s) :].lstrip("\\/").replace("\\", "/")
             out.append(f"{TOOLS_MNT}/{rel}".rstrip("/"))
             replaced = True
         if not replaced:
@@ -390,28 +431,59 @@ def _rewrite_loopback_host(token: str) -> str:
     replaced = token
     # URL or host:port forms — replace the host component only.
     for needle in ("127.0.0.1", "localhost", "[::1]"):
-        replaced = re.sub(rf"(?<![\w.-]){re.escape(needle)}(?![\w.-])",
-                          "host.docker.internal", replaced, flags=re.IGNORECASE)
+        replaced = re.sub(
+            rf"(?<![\w.-]){re.escape(needle)}(?![\w.-])", "host.docker.internal", replaced, flags=re.IGNORECASE
+        )
     return replaced
 
 
 # Tools that live INSIDE the recon image, owned by Alpha (recon commander).
 # 34 recon tools — Alpha-exclusive. Sigma NEVER dispatches these.
 DOCKER_RECON_TOOLS: set[str] = {
-    "subfinder", "amass", "assetfinder", "github-subdomains", "gau", "waybackurls",
-    "cloudlist", "spiderfoot", "dnsx", "shuffledns", "puredns", "cdncheck",
-    "naabu", "masscan", "nmap", "tlsx", "testssl", "httprobe",
-    "katana", "gospider", "hakrawler", "linkfinder",
-    "secretfinder", "arjun", "paramspider", "feroxbuster", "ffuf", "dirsearch",
-    "gobuster", "kiterunner", "inql", "gowitness", "aquatone",
+    "subfinder",
+    "amass",
+    "assetfinder",
+    "github-subdomains",
+    "gau",
+    "waybackurls",
+    "cloudlist",
+    "spiderfoot",
+    "dnsx",
+    "shuffledns",
+    "puredns",
+    "cdncheck",
+    "naabu",
+    "masscan",
+    "nmap",
+    "tlsx",
+    "testssl",
+    "httprobe",
+    "katana",
+    "gospider",
+    "hakrawler",
+    "linkfinder",
+    "secretfinder",
+    "arjun",
+    "paramspider",
+    "feroxbuster",
+    "ffuf",
+    "dirsearch",
+    "gobuster",
+    "kiterunner",
+    "inql",
+    "gowitness",
+    "aquatone",
     "interactsh",
 }
 
 # Tools that live INSIDE the recon image, owned by Sigma (validation commander).
 # 5 validation tools — Sigma-exclusive. Alpha NEVER dispatches these.
 DOCKER_SIGMA_TOOLS: set[str] = {
-    "nuclei", "dalfox",          # vulnerability validation
-    "httpx", "whatweb", "wafw00f",  # fingerprinting & WAF detection
+    "nuclei",
+    "dalfox",  # vulnerability validation
+    "httpx",
+    "whatweb",
+    "wafw00f",  # fingerprinting & WAF detection
 }
 
 # Combined set for availability checks (all 39 tools in the image).
@@ -430,21 +502,20 @@ def _to_container_path(host_path: str, raw_dir: Path, tool_root: Path) -> str | 
         if not Path(raw_dir).is_absolute():
             raw_candidates.add(str(raw_dir))
     except Exception as path_exc:
-        logger.debug('path normalization failed: %s', path_exc)
+        logger.debug("path normalization failed: %s", path_exc)
     tool_s = str(tool_root)
     norm = host_path.replace("\\", "/")
     norm_low = norm.lower()
 
     def _rel_posix(child: str, parent: str) -> str:
-        rel = child[len(parent):].lstrip("/")
+        rel = child[len(parent) :].lstrip("/")
         return rel
 
     best: tuple[int, str] | None = None
     for pref in raw_candidates:
         pref_norm = pref.replace("\\", "/")
-        if norm_low.startswith(pref_norm.lower()):
-            if best is None or len(pref_norm) > best[0]:
-                best = (len(pref_norm), pref_norm)
+        if norm_low.startswith(pref_norm.lower()) and (best is None or len(pref_norm) > best[0]):
+            best = (len(pref_norm), pref_norm)
     if best is not None:
         return f"{SCAN_MNT}/{_rel_posix(norm, best[1])}".rstrip("/")
     if norm_low.startswith(tool_s.replace("\\", "/").lower()):
@@ -489,11 +560,19 @@ def build_docker_argv(
     name = f"vigil-recon-{scan_id.lower().replace('/', '-')}-{os.urandom(4).hex()}"
 
     docker_argv = [
-        "docker", "run", "--rm", "--name", name,
-        "--network", net,
-        "--memory", memory,
-        "--cpus", cpus,
-        "-v", f"{raw_dir}:{SCAN_MNT}",
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        name,
+        "--network",
+        net,
+        "--memory",
+        memory,
+        "--cpus",
+        cpus,
+        "-v",
+        f"{raw_dir}:{SCAN_MNT}",
     ]
     if tool_root.exists():
         docker_argv += ["-v", f"{tool_root}:{TOOLS_MNT}:ro"]

@@ -6,32 +6,32 @@ any normalized entity is created. Parsers are fixture-tested and never
 call external services.
 """
 
-from backend.parsers.recon.subfinder import parse_subfinder_jsonl
 from backend.parsers.recon.amass import parse_amass_json
-from backend.parsers.recon.url_parser import (
-    parse_url_lines,
-    extract_subdomains_from_urls,
-    extract_params_from_urls,
-    classify_historical_paths,
-)
+from backend.parsers.recon.aquatone import parse_aquatone_json
+from backend.parsers.recon.arjun import parse_arjun_json
+from backend.parsers.recon.cdncheck import parse_cdncheck_jsonl
+from backend.parsers.recon.cloudlist import parse_cloudlist_lines
+from backend.parsers.recon.dalfox import parse_dalfox_json
+from backend.parsers.recon.dirsearch import parse_dirsearch_json
 from backend.parsers.recon.dnsx import parse_dnsx_jsonl
-from backend.parsers.recon.httpx import parse_httpx_jsonl
-from backend.parsers.recon.katana import parse_katana_jsonl
+from backend.parsers.recon.feroxbuster import parse_feroxbuster_jsonl
+from backend.parsers.recon.ffuf import parse_ffuf_json
+from backend.parsers.recon.gobuster import parse_gobuster_lines
+from backend.parsers.recon.gospider import parse_gospider_jsonl
+from backend.parsers.recon.gowitness import parse_gowitness_json
 from backend.parsers.recon.hakrawler import parse_hakrawler_lines
+from backend.parsers.recon.httprobe import parse_httprobe_lines
+from backend.parsers.recon.httpx import parse_httpx_jsonl
+from backend.parsers.recon.inql import parse_inql_output
+from backend.parsers.recon.interactsh import parse_interactsh_jsonl
+from backend.parsers.recon.katana import parse_katana_jsonl
+from backend.parsers.recon.kiterunner import parse_kiterunner_lines
+from backend.parsers.recon.linkfinder import parse_linkfinder_output
+from backend.parsers.recon.masscan import parse_masscan_json
 from backend.parsers.recon.naabu import parse_naabu_jsonl
 from backend.parsers.recon.nmap import parse_nmap_xml
-from backend.parsers.recon.tlsx import parse_tlsx_jsonl
 from backend.parsers.recon.nuclei import parse_nuclei_jsonl
-from backend.parsers.recon.ffuf import parse_ffuf_json
-from backend.parsers.recon.feroxbuster import parse_feroxbuster_jsonl
-from backend.parsers.recon.dirsearch import parse_dirsearch_json
-from backend.parsers.recon.gobuster import parse_gobuster_lines
-from backend.parsers.recon.linkfinder import parse_linkfinder_output
 from backend.parsers.recon.secretfinder import parse_secretfinder_output
-from backend.parsers.recon.kiterunner import parse_kiterunner_lines
-from backend.parsers.recon.gowitness import parse_gowitness_json
-from backend.parsers.recon.interactsh import parse_interactsh_jsonl
-from backend.parsers.recon.cloudlist import parse_cloudlist_lines
 from backend.parsers.recon.spiderfoot import parse_spiderfoot_json
 from backend.parsers.recon.subdomain_lines import (
     parse_assetfinder_lines,
@@ -39,17 +39,17 @@ from backend.parsers.recon.subdomain_lines import (
     parse_puredns_lines,
     parse_shuffledns_lines,
 )
-from backend.parsers.recon.cdncheck import parse_cdncheck_jsonl
-from backend.parsers.recon.masscan import parse_masscan_json
+from backend.parsers.recon.subfinder import parse_subfinder_jsonl
 from backend.parsers.recon.testssl import parse_testssl_json
-from backend.parsers.recon.httprobe import parse_httprobe_lines
-from backend.parsers.recon.whatweb import parse_whatweb_json
+from backend.parsers.recon.tlsx import parse_tlsx_jsonl
+from backend.parsers.recon.url_parser import (
+    classify_historical_paths,
+    extract_params_from_urls,
+    extract_subdomains_from_urls,
+    parse_url_lines,
+)
 from backend.parsers.recon.wafw00f import parse_wafw00f_json
-from backend.parsers.recon.gospider import parse_gospider_jsonl
-from backend.parsers.recon.arjun import parse_arjun_json
-from backend.parsers.recon.dalfox import parse_dalfox_json
-from backend.parsers.recon.aquatone import parse_aquatone_json
-from backend.parsers.recon.inql import parse_inql_output
+from backend.parsers.recon.whatweb import parse_whatweb_json
 
 PARSER_REGISTRY = {
     "subfinder": parse_subfinder_jsonl,

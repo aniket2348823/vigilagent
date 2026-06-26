@@ -3,15 +3,16 @@ XYTHERION COMMAND MATRIX (MASTER NODE)
 Role: Central task coordination and worker management for the distributed cluster.
 Extracted from orchestrator.py for clean architecture.
 """
+
 import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Any
 
 from backend.core.database import db_manager
-from backend.core.unified_knowledge_graph import GraphEngine
 from backend.core.task_manager import TaskManager
+from backend.core.unified_knowledge_graph import GraphEngine
 
 logger = logging.getLogger("MasterNode")
 
@@ -24,18 +25,20 @@ class MasterNode:
         self.supabase = None  # Optional — populated below if creds provided.
         if supabase_url and supabase_key:
             try:
-                from supabase import create_client, Client  # noqa: F401
+                from supabase import Client, create_client  # noqa: F401
+
                 self.supabase = create_client(supabase_url, supabase_key)
             except Exception as exc:
                 logger.warning(
                     "MasterNode: Supabase init failed (%s) — running without "
                     "persistent task ledger; cluster keeps coordinating via "
-                    "Redis alone.", exc)
+                    "Redis alone.",
+                    exc,
+                )
                 self.supabase = None
         else:
-            logger.info("MasterNode: Supabase creds not configured — running "
-                        "in Redis-only mode (Architecture §29.13).")
-        self.workers: Dict[str, Dict[str, Any]] = {}
+            logger.info("MasterNode: Supabase creds not configured — running in Redis-only mode (Architecture §29.13).")
+        self.workers: dict[str, dict[str, Any]] = {}
         self.attack_graph = GraphEngine()
         self._task_manager = TaskManager("MasterNode")
         self.active = False
@@ -43,6 +46,7 @@ class MasterNode:
     async def start(self):
         self.active = True
         from backend.core.redis_client import get_redis_client
+
         rc = await get_redis_client()
         self.redis_client = rc.client
         await self._discover_swarm()
@@ -89,25 +93,30 @@ class MasterNode:
         except Exception as e:
             logger.debug("MasterNode swarm discovery failed: %s", e)
 
-    async def register_worker(self, worker_id: str, specialty: str, capabilities: List[str]):
+    async def register_worker(self, worker_id: str, specialty: str, capabilities: list[str]):
         worker_info = {
-            "id": worker_id, "specialty": specialty, "capabilities": capabilities,
-            "status": "active", "last_heartbeat": datetime.now().isoformat(), "current_tasks": []
+            "id": worker_id,
+            "specialty": specialty,
+            "capabilities": capabilities,
+            "status": "active",
+            "last_heartbeat": datetime.now().isoformat(),
+            "current_tasks": [],
         }
         self.workers[worker_id] = worker_info
         await self.redis_client.hset("workers", worker_id, json.dumps(worker_info))
 
-    def select_optimal_worker(self, task: Dict) -> Optional[str]:
+    def select_optimal_worker(self, task: dict) -> str | None:
         required_type = task.get("worker_requirements", {}).get("type", "hybrid")
         eligible_workers = [
-            wid for wid, w in self.workers.items()
+            wid
+            for wid, w in self.workers.items()
             if (w["specialty"] in [required_type, "hybrid"]) and w["status"] == "active"
         ]
         if not eligible_workers:
             return None
         return min(eligible_workers, key=lambda w: len(self.workers[w].get("current_tasks", [])))
 
-    async def distribute_tasks(self, tasks: List[Dict]):
+    async def distribute_tasks(self, tasks: list[dict]):
         for task in tasks:
             worker_id = self.select_optimal_worker(task)
             if worker_id:
@@ -121,14 +130,21 @@ class MasterNode:
                     await db_manager.initialize()
                     if db_manager.supabase is not None:
                         await db_manager._run_sync(
-                            lambda: db_manager.supabase.table("distributed_tasks").insert({
-                                "scan_id": task.get("scan_id", "GLOBAL"),
-                                "task_id": task["task_id"],
-                                "worker_id": worker_id,
-                                "status": "RUNNING",
-                                "locked_by": worker_id,
-                                "lock_time": datetime.now().isoformat()
-                            }).execute())
+                            lambda: (
+                                db_manager.supabase.table("distributed_tasks")
+                                .insert(
+                                    {
+                                        "scan_id": task.get("scan_id", "GLOBAL"),
+                                        "task_id": task["task_id"],
+                                        "worker_id": worker_id,
+                                        "status": "RUNNING",
+                                        "locked_by": worker_id,
+                                        "lock_time": datetime.now().isoformat(),
+                                    }
+                                )
+                                .execute()
+                            )
+                        )
                 except Exception as exc:
                     logger.debug("Supabase task ledger write skipped: %s", exc)
 

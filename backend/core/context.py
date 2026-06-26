@@ -3,7 +3,7 @@ import json
 import uuid
 from collections import deque
 from datetime import datetime
-from typing import Dict, Any, Set
+from typing import Any
 
 # Cap the per-scan event transcript so long-running scans don't grow an
 # unbounded list (a long scan emits 5000+ events; without a cap memory and
@@ -19,26 +19,26 @@ _RECENT_EVENTS_MAXLEN = 2000
 class ScanContext:
     def __init__(self, scan_id: str = None):
         self.scan_id = scan_id or str(uuid.uuid4())
-        
+
         # 1. State Isolation Barriers (Fixes Invariant 8: Cross-Scan Bleed)
-        self.baseline_cache: Dict[str, Any] = {}
-        self.diff_cache: Dict[str, Any] = {}
-        
+        self.baseline_cache: dict[str, Any] = {}
+        self.diff_cache: dict[str, Any] = {}
+
         # 1.5 Chronological Transcript (Replaces global workflow_state Blackboard)
         # Bounded ring buffer: deque(maxlen=...) gives O(1) append + auto-evict
         # of the oldest entry once the cap is reached. Consumers either iterate
         # or slice via ``transcript_text(tail=...)`` so the deque is drop-in.
         self.transcript: deque[str] = deque(maxlen=_TRANSCRIPT_MAXLEN)
-        
+
         # 2. Causal Ordering (Fixes Invariant 21)
         self.event_queue = asyncio.Queue()
-        
+
         # 3. Deduplication Window (Fixes Invariant 7)
         # FIX: Use a bounded deque instead of an unbounded set to prevent
         # memory leaks on long-running scans.  The deque gives FIFO eviction.
         self._recent_events: deque[str] = deque(maxlen=_RECENT_EVENTS_MAXLEN)
-        self._recent_events_set: Set[str] = set()  # O(1) membership check companion
-        
+        self._recent_events_set: set[str] = set()  # O(1) membership check companion
+
         # 4. Cancellation Propagation (Fixes Invariant 24)
         self.is_cancelled: bool = False
 
@@ -47,7 +47,7 @@ class ScanContext:
         payload = getattr(event, "payload", {})
         try:
             payload_text = json.dumps(payload, sort_keys=True, default=str)
-        except Exception as exc:
+        except Exception:
             payload_text = str(payload)  # Fallback for non-serializable payloads
         if len(payload_text) > max_payload_chars:
             payload_text = payload_text[:max_payload_chars] + "...[truncated]"

@@ -30,6 +30,7 @@ Memory fencing format (Architecture §13.1):
 No target-controlled content is injected into an agent prompt without
 content-boundary wrapping (Architecture §13.1).
 """
+
 from __future__ import annotations
 
 import logging
@@ -176,8 +177,10 @@ class SkillMemoryProvider(BaseMemoryProvider):
             for meta in skill_catalog.all():
                 blob = f"{meta.name} {meta.description} {meta.domain}".lower()
                 if (not vuln_class and not domain) or vuln_class in blob or domain in (meta.domain or "").lower():
-                    out.append(f"skill[{meta.promotion_state.value}]: {meta.name} "
-                               f"(domain={meta.domain}, risk={meta.risk_class.value})")
+                    out.append(
+                        f"skill[{meta.promotion_state.value}]: {meta.name} "
+                        f"(domain={meta.domain}, risk={meta.risk_class.value})"
+                    )
         except Exception as exc:
             logger.debug("SkillMemoryProvider prefetch iteration failed: %s", exc)
             return []
@@ -230,7 +233,7 @@ class AgentPerformanceMemoryProvider(BaseMemoryProvider):
         for agent, s in self._stats.items():
             total = s.get("ok", 0) + s.get("fail", 0)
             if total:
-                out.append(f"agent {agent}: success={s.get('ok',0)}/{total}")
+                out.append(f"agent {agent}: success={s.get('ok', 0)}/{total}")
         return out[:10]
 
     async def sync(self, outcome: dict) -> None:
@@ -287,21 +290,25 @@ class MemoryManager:
             try:
                 await provider.sync(outcome)
             except Exception as exc:
-                logger.debug("MemoryManager sync failed for provider %s: %s", getattr(provider, 'name', 'unknown'), exc)
+                logger.debug("MemoryManager sync failed for provider %s: %s", getattr(provider, "name", "unknown"), exc)
 
     async def before_compression(self) -> None:
         for provider in self._providers.values():
             try:
                 await provider.before_compression()
             except Exception as exc:
-                logger.debug("MemoryManager before_compression failed for %s: %s", getattr(provider, 'name', 'unknown'), exc)
+                logger.debug(
+                    "MemoryManager before_compression failed for %s: %s", getattr(provider, "name", "unknown"), exc
+                )
 
     async def on_delegation_complete(self, result: dict) -> None:
         for provider in self._providers.values():
             try:
                 await provider.on_delegation_complete(result)
             except Exception as exc:
-                logger.debug("MemoryManager on_delegation_complete failed for %s: %s", getattr(provider, 'name', 'unknown'), exc)
+                logger.debug(
+                    "MemoryManager on_delegation_complete failed for %s: %s", getattr(provider, "name", "unknown"), exc
+                )
 
 
 def build_default_memory_manager() -> MemoryManager:
@@ -309,12 +316,14 @@ def build_default_memory_manager() -> MemoryManager:
     mgr = MemoryManager()
     try:
         from backend.core.scan_state_db import scan_state_db
+
         mgr.register(ScanMemoryProvider(scan_state_db))
     except Exception as exc:
         logger.debug("build_default_memory_manager: scan_state_db unavailable: %s", exc)
         mgr.register(ScanMemoryProvider(None))
     try:
         from backend.core.memory import memory_store
+
         store = getattr(memory_store, "dual", None) or getattr(memory_store, "_dual", None)
         mgr.register(SemanticSecurityMemoryProvider(store))
     except Exception as exc:

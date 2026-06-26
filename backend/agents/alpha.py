@@ -15,13 +15,15 @@ Responsibilities (Architecture §5.1.1 — Alpha Unified):
   - Emit live events; produce recon confidence scores.
   - Hand validated surface data to Omega and Sigma.
 """
+
 import logging
-from backend.core.hive import EventType, HiveEvent
-from backend.core.browser_agent import BrowserEnabledAgent
-from backend.core.protocol import JobPacket, ResultPacket, AgentID, ModuleConfig, TaskTarget
-from backend.core.config import settings
+
 from backend.agents.alpha_recon import AlphaOrchestrator
-from backend.ai.cortex import CortexEngine, get_cortex_engine
+from backend.ai.cortex import get_cortex_engine
+from backend.core.browser_agent import BrowserEnabledAgent
+from backend.core.config import settings
+from backend.core.hive import EventType, HiveEvent
+from backend.core.protocol import AgentID, JobPacket, ModuleConfig
 
 logger = logging.getLogger("AgentAlpha")
 
@@ -37,8 +39,7 @@ class AlphaAgent(BrowserEnabledAgent):
         # spine's browser_recon module can drive OpenClaw/PinchTab during the
         # async HTTP phase without forcing browser init at construction time
         # (Architecture §5.1.1).
-        self.alpha_recon = AlphaOrchestrator(
-            bus, agent_name=self.name, browser_provider=lambda: self.browser)
+        self.alpha_recon = AlphaOrchestrator(bus, agent_name=self.name, browser_provider=lambda: self.browser)
         # Governance: throttle flag from Zeta (Architecture §5.2/§29.4).
         self._throttled = False
 
@@ -105,10 +106,19 @@ class AlphaAgent(BrowserEnabledAgent):
             return
 
         logger.info(f"[{self.name}] TARGET ACQUIRED: {target_url}. Initiating unified recon...")
-        await self.bus.publish(HiveEvent(
-            type=EventType.LIVE_ATTACK, source=self.name, scan_id=event.scan_id,
-            payload={"url": target_url, "arsenal": "Unified Recon Engine",
-                     "action": "Initiating HTTP + Browser Recon", "payload": "N/A"}))
+        await self.bus.publish(
+            HiveEvent(
+                type=EventType.LIVE_ATTACK,
+                source=self.name,
+                scan_id=event.scan_id,
+                payload={
+                    "url": target_url,
+                    "arsenal": "Unified Recon Engine",
+                    "action": "Initiating HTTP + Browser Recon",
+                    "payload": "N/A",
+                },
+            )
+        )
 
         mode = self._resolve_mode(event.payload.get("scan_mode"), event.payload.get("mode"))
         try:
@@ -140,10 +150,19 @@ class AlphaAgent(BrowserEnabledAgent):
             except Exception as exc:
                 status, error = "FAILED", str(exc)[:300]
                 logger.error(f"[{self.name}] Unified recon failed: {exc}")
-            await self.bus.publish(HiveEvent(
-                type=EventType.JOB_COMPLETED, source=self.name, scan_id=event.scan_id,
-                payload={"job_id": packet.id, "status": status,
-                         "module_id": packet.config.module_id, **({"error": error} if error else {})}))
+            await self.bus.publish(
+                HiveEvent(
+                    type=EventType.JOB_COMPLETED,
+                    source=self.name,
+                    scan_id=event.scan_id,
+                    payload={
+                        "job_id": packet.id,
+                        "status": status,
+                        "module_id": packet.config.module_id,
+                        **({"error": error} if error else {}),
+                    },
+                )
+            )
             return
 
         # Non-recon module jobs are delegated to Sigma for arsenal execution.
@@ -152,11 +171,14 @@ class AlphaAgent(BrowserEnabledAgent):
             priority=packet.priority,
             target=packet.target,
             config=ModuleConfig(
-                module_id=packet.config.module_id, agent_id=AgentID.SIGMA,
-                params=packet.config.params, aggression=packet.config.aggression,
-                session_id=packet.config.session_id))
-        await self.bus.publish(HiveEvent(
-            type=EventType.JOB_ASSIGNED, source=self.name, payload=sigma_job.model_dump()))
+                module_id=packet.config.module_id,
+                agent_id=AgentID.SIGMA,
+                params=packet.config.params,
+                aggression=packet.config.aggression,
+                session_id=packet.config.session_id,
+            ),
+        )
+        await self.bus.publish(HiveEvent(type=EventType.JOB_ASSIGNED, source=self.name, payload=sigma_job.model_dump()))
 
 
 # Architecture §5.1.1 unified naming.

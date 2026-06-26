@@ -1,7 +1,7 @@
 """
-Vigilagent Scanner Report Generator (V8)
+Vigilagent Report Generator (V8)
 ================================================================================
-Per-scan PDF generator that mirrors the uploaded "Vigilagent Scanner" layout
+Per-scan PDF generator that mirrors the uploaded "Vigilagent" layout
 exactly:
 
   * Page 1:  EXECUTIVE SUMMARY  (real Target / Scan ID / Date / Findings)
@@ -20,10 +20,11 @@ Public API preserved:
 The output path stays at <REPORTS_DIR>/Scan_Report_<scan_id>.pdf so the
 existing /api/reports/download/<file> endpoint keeps working.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from backend.ai.cortex import get_cortex_engine
 from backend.reporting.scan_pdf import VigilagentReportBuilder
@@ -42,11 +43,11 @@ class ReportGenerator:
     async def generate_report(
         self,
         scan_id: str,
-        events: List[Dict[str, Any]],
+        events: list[dict[str, Any]],
         target_url: str,
-        telemetry: Optional[Dict[str, Any]] = None,
+        telemetry: dict[str, Any] | None = None,
         manager: Any = None,
-    ) -> Optional[str]:
+    ) -> str | None:
         try:
             cortex = get_cortex_engine()
         except Exception as exc:  # pragma: no cover - never fatal
@@ -63,8 +64,8 @@ class ReportGenerator:
         )
         try:
             out_path = await builder.build()
-            logger.info("[REPORTER] Vigilagent Scanner report generated: %s", out_path)
+            logger.info("[REPORTER] Vigilagent report generated: %s", out_path)
             return out_path
         except Exception as exc:
-            logger.exception("[REPORTER] Failed to generate Vigilagent Scanner report: %s", exc)
+            logger.exception("[REPORTER] Failed to generate Vigilagent report: %s", exc)
             return None

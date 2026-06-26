@@ -2,8 +2,9 @@ import hashlib
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ async def watch_output(
             summary = await summarizer(text)
         except Exception as sum_exc:
             import logging as _log
+
             _log.getLogger("StdoutWatchdog").debug("Summarizer failed: %s", sum_exc)
             summary = ""  # Summarizer failure is non-fatal; use fallback.
     if not summary:
@@ -70,4 +72,3 @@ async def watch_output(
         f"{tail}"
     )
     return WatchdogResult(guarded, True, len(encoded), digest, summary)
-

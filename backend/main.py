@@ -1,24 +1,25 @@
-import asyncio
 import argparse
+import asyncio
 import hmac
+import json
 import logging
+import os
+import re
 import signal
 import sys
-import uuid
-import os
-import json
 import time
+import uuid
 import warnings
-from contextlib import asynccontextmanager
-from typing import Optional, List, Dict, Any
+from contextlib import asynccontextmanager, suppress
 from json import JSONDecodeError
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query, HTTPException
+import uvicorn
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-import uvicorn
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+
 
 # Structured logging setup
 class StructuredFormatter(logging.Formatter):
@@ -38,6 +39,7 @@ class StructuredFormatter(logging.Formatter):
             log_entry["exception"] = self.formatException(record.exc_info)
         return json.dumps(log_entry)
 
+
 # Setup structured logging
 log_handler = logging.StreamHandler(sys.stdout)
 log_handler.setFormatter(StructuredFormatter())
@@ -48,22 +50,22 @@ root_logger.handlers = [log_handler]
 logger = logging.getLogger(__name__)
 
 # Vigilagent Core Imports
-from backend.core.config import settings, ConfigManager
-from backend.core.default_tools import register_default_tools
-from backend.core.orchestrator import HiveOrchestrator, MasterNode, WorkerNode
-from backend.api.socket_manager import manager
-from backend.core.state import stats_db_manager
-from backend.api.endpoints import recon, attack, reports, dashboard, ai, runtime
+from backend.api import defense
+from backend.api.endpoints import ai, attack, dashboard, recon, reports, runtime
+from backend.api.endpoints.bridge import router as bridge_router
 from backend.api.endpoints.code_analysis import router as code_analysis_router
 from backend.api.endpoints.data import router as data_router
+from backend.api.endpoints.scans import router as scans_router
 from backend.api.endpoints.self_awareness import router as self_awareness_router
 from backend.api.endpoints.skills import router as skills_router
-from backend.api.endpoints.bridge import router as bridge_router
-from backend.api.endpoints.scans import router as scans_router
-from backend.api import defense
+from backend.api.socket_manager import manager
+from backend.core.config import ConfigManager, settings
+from backend.core.csrf_protection import csrf_protection, get_session_id, start_csrf_cleanup_task
+from backend.core.default_tools import register_default_tools
+from backend.core.orchestrator import MasterNode, WorkerNode
+from backend.core.rate_limiter import rate_limiter, start_cleanup_task
+from backend.core.state import stats_db_manager
 from backend.core.task_manager import TaskManager
-from backend.core.rate_limiter import start_cleanup_task, rate_limiter
-from backend.core.csrf_protection import start_csrf_cleanup_task, csrf_protection, get_session_id
 
 # Global TaskManager for background tasks
 _background_task_manager = TaskManager("BackgroundTasks")
@@ -72,30 +74,33 @@ _background_task_manager = TaskManager("BackgroundTasks")
 # that use Field(validate_default=True) which is unsupported in v2.
 try:
     from pydantic.errors import UnsupportedFieldAttributeWarning as _UFAWarning
+
     warnings.filterwarnings("ignore", category=_UFAWarning, message=".*validate_default.*")
 except ImportError:
     warnings.filterwarnings("ignore", message=".*validate_default.*")
 
 # FIX: Windows charmap encoding crash
-if sys.platform == 'win32':
+if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception as exc:
         import logging as _log
-        _log.getLogger('main').debug('UTF-8 reconfigure failed: %s', exc)
+
+        _log.getLogger("main").debug("UTF-8 reconfigure failed: %s", exc)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("\n" + "="*50)
+    logger.info("\n" + "=" * 50)
     logger.info("VIGILAGENT: UNIFIED LIFECYCLE START")
-    logger.info("="*50)
-    
+    logger.info("=" * 50)
+
     # Clean up zombie scans from ungraceful shutdowns
     cleaned = stats_db_manager.reset_stale_scans()
     if cleaned > 0:
         logger.info(f"[LIFECYCLE] Reset {cleaned} stale scan(s) from previous session.")
-    
+
     # Pillar Initiation (GSD, Ralph, TestSprite)
     logger.info("[PILLAR] Activating Governance Frameworks...")
     register_default_tools()
@@ -104,36 +109,44 @@ async def lifespan(app: FastAPI):
     # all Docker caches so the first scan finds tools immediately.
     try:
         from backend.tools.recon.docker_runtime import probe_docker_readiness
+
         _docker_probe = await probe_docker_readiness()
         if _docker_probe.get("ready"):
             logger.info(
                 f"[BOOT] Docker probe: ready={_docker_probe['ready']} "
                 f"version={_docker_probe.get('version')} "
                 f"image={_docker_probe.get('image')} "
-                f"attempts={_docker_probe.get('attempts')}")
+                f"attempts={_docker_probe.get('attempts')}"
+            )
             # Refresh terminal engine so its internal `_docker_ok` flag
             # picks up the now-warm daemon cache.
             try:
                 from backend.core.terminal_engine import terminal_engine
+
                 terminal_engine._docker_ok = _docker_probe["daemon"]
             except Exception as _te_exc:
                 logger.debug(f"[BOOT] terminal engine refresh skipped: {_te_exc}")
         else:
             logger.warning(
-                "[BOOT] Docker probe: NOT ready — backend runs local-only. "
-                "Docker recon tools will be skipped.")
+                "[BOOT] Docker probe: NOT ready — backend runs local-only. Docker recon tools will be skipped."
+            )
     except Exception as _dp:
         logger.info(f"[BOOT] Docker probe skipped: {_dp}")
 
     # Runtime self-check on boot (Architecture §24): scope authorization,
     # recon tool + Docker availability, configured LLMs, skill catalog.
     try:
+        from backend.core.config import settings as _settings
         from backend.core.scope import scope_guard
         from backend.core.terminal_engine import terminal_engine
-        from backend.core.config import settings as _settings
-        logger.info(f"[BOOT] Engagement '{scope_guard.engagement_name}' authorization={scope_guard.authorization} authorized_now={scope_guard.is_authorized()}")
+
+        logger.info(
+            f"[BOOT] Engagement '{scope_guard.engagement_name}' authorization={scope_guard.authorization} authorized_now={scope_guard.is_authorized()}"
+        )
         _tt = terminal_engine.get_telemetry()
-        logger.info(f"[BOOT] Terminal Engine: docker_available={_tt['docker_available']} prefer_docker={_tt['prefer_docker']}")
+        logger.info(
+            f"[BOOT] Terminal Engine: docker_available={_tt['docker_available']} prefer_docker={_tt['prefer_docker']}"
+        )
         logger.info(f"[BOOT] LLMs: strategic={_settings.STRATEGIC_MODEL} tactical={_settings.TACTICAL_MODEL}")
     except Exception as _e:
         logger.info(f"[BOOT] self-check warning: {_e}")
@@ -141,6 +154,7 @@ async def lifespan(app: FastAPI):
     # Ingest skill catalog (Architecture §5.3 skill ingestion pipeline).
     try:
         from backend.skills import ingest_skills
+
         n = ingest_skills()
         logger.info(f"[BOOT] Skill catalog ingested: {n} skills")
     except Exception as _e:
@@ -151,22 +165,35 @@ async def lifespan(app: FastAPI):
     try:
         import backend.agents.commanders  # noqa: F401
         from backend.core.delegation_manager import DelegationManager
-        logger.info(f"[BOOT] Delegation child runners ready: NetworkChild={DelegationManager.has_runner('NetworkChild')}")
+
+        logger.info(
+            f"[BOOT] Delegation child runners ready: NetworkChild={DelegationManager.has_runner('NetworkChild')}"
+        )
     except Exception as _e:
         logger.info(f"[BOOT] commander runner registration skipped: {_e}")
-    
+
     # Start rate limiter cleanup task
     cleanup_task = _background_task_manager.create_task(start_cleanup_task(), name="rate_limiter_cleanup")
     logger.info("[RATE_LIMITER] Background cleanup task started")
-    
+
     # Start CSRF protection cleanup task
     csrf_cleanup_task = _background_task_manager.create_task(start_csrf_cleanup_task(), name="csrf_cleanup")
     logger.info("[CSRF_PROTECTION] Background cleanup task started")
+
+    # Start session expiry cleanup task
+    try:
+        from backend.api.dashboard import start_session_cleanup
+        session_cleanup_task = _background_task_manager.create_task(start_session_cleanup(), name="session_cleanup")
+        logger.info("[SESSION] Expiry cleanup task started")
+    except Exception as _sc:
+        logger.info(f"[SESSION] cleanup task skipped: {_sc}")
+        session_cleanup_task = None
 
     # Eager Redis client init (singleton in backend.core.redis_client) so the
     # health monitor reflects real connectivity from t=0.
     try:
         from backend.core.redis_client import get_redis_client
+
         await get_redis_client()
         logger.info("[REDIS] Distributed client initialized")
     except Exception as _re:
@@ -176,6 +203,7 @@ async def lifespan(app: FastAPI):
     # cost on the hot path (Architecture §29.13).
     try:
         from backend.core.database import db_manager
+
         await db_manager.initialize()
         logger.info("[DB] Elite DB manager initialized")
     except Exception as _de:
@@ -188,6 +216,7 @@ async def lifespan(app: FastAPI):
     # when both engines are offline.
     try:
         from backend.core.browser_orchestrator import get_browser_orchestrator
+
         _bo = get_browser_orchestrator()
         _bo_health = await _bo.health_check()
         logger.info(
@@ -197,26 +226,23 @@ async def lifespan(app: FastAPI):
         )
     except Exception as _bhe:
         logger.info(f"[BROWSER] health_check skipped: {_bhe}")
-    
-    await manager.broadcast({
-        "type": "LIFECYCLE_EVENT",
-        "payload": {"state": "ACTIVE", "mode": "Unified"}
-    })
-    
+
+    await manager.broadcast({"type": "LIFECYCLE_EVENT", "payload": {"state": "ACTIVE", "mode": "Unified"}})
+
     try:
         yield
     finally:
         logger.info("[LIFECYCLE] Shutting down background tasks...")
         cleanup_task.cancel()
         csrf_cleanup_task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await cleanup_task
-        except asyncio.CancelledError:
-            pass
-        try:
+        with suppress(asyncio.CancelledError):
             await csrf_cleanup_task
-        except asyncio.CancelledError:
-            pass
+        if session_cleanup_task is not None:
+            session_cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await session_cleanup_task
         # Cancel the StateManager background writer cleanly so we don't see
         # the "Task was destroyed but it is pending" warning on Windows.
         try:
@@ -227,23 +253,28 @@ async def lifespan(app: FastAPI):
         # Close DB + Redis clients (Architecture §29.13).
         try:
             from backend.core.database import db_manager as _dbm
+
             await _dbm.close()
         except Exception as _ce:
             logger.info(f"[LIFECYCLE] db_manager.close warning: {_ce}")
         try:
             from backend.core.redis_client import shutdown_redis_client
+
             await shutdown_redis_client()
         except Exception as _re:
             logger.info(f"[LIFECYCLE] redis_client shutdown warning: {_re}")
         # Create final backup of scan states before shutdown
         try:
-            from backend.core.backup_manager import backup_manager
             logger.info("[LIFECYCLE] Backup manager ready")
         except Exception as _bme:
             logger.info(f"[LIFECYCLE] backup_manager init skipped: {_bme}")
         logger.info("[LIFECYCLE] Shutdown complete.")
 
-app = FastAPI(title="Vigilagent Scanner", lifespan=lifespan)
+
+app = FastAPI(title="Vigilagent", lifespan=lifespan)
+# SECURITY: Limit request body size to 10MB to prevent memory exhaustion attacks
+_MAX_BODY = int(os.getenv("MAX_CONTENT_LENGTH", str(10 * 1024 * 1024)))  # 10MB default
+
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -254,24 +285,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     _safe_errors = [{"msg": str(e)} for e in _raw_errors]
 
     if request.url.path.endswith("/api/attack/fire"):
-        return JSONResponse(
-            status_code=422,
-            content={"detail": _safe_errors}
-        )
+        return JSONResponse(status_code=422, content={"detail": _safe_errors})
     # Return detailed validation errors for scan endpoints (preserve loc/msg
     # for frontend display, but strip non-JSON-serializable ctx objects).
     if request.url.path.rstrip("/").endswith("/api/scans"):
         _scan_errors = [{"loc": list(e.get("loc", ())), "msg": e.get("msg", str(e))} for e in _raw_errors]
         logger.error(f"Validation error on /api/scans: {_scan_errors}")
-        return JSONResponse(
-            status_code=400,
-            content={"detail": "Invalid or missing payload.", "errors": _scan_errors}
-        )
+        return JSONResponse(status_code=400, content={"detail": "Invalid or missing payload.", "errors": _scan_errors})
     logger.error(f"Validation error: {_safe_errors}")
     return JSONResponse(
-        status_code=400,
-        content={"detail": "Invalid or missing payload. Expected a valid request structure."}
+        status_code=400, content={"detail": "Invalid or missing payload. Expected a valid request structure."}
     )
+
 
 # FIX-006: Secure CORS — explicit allowlist, never wildcard with credentials
 _DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000"
@@ -286,14 +311,13 @@ if _is_production:
     _localhost_origins = [o for o in ALLOWED_ORIGINS if "localhost" in o or "127.0.0.1" in o]
     if _localhost_origins:
         import logging as _log
+
         _log.getLogger("main").warning(
-            "[SECURITY] Production mode with localhost CORS origins: %s. "
-            "Set CORS_ORIGINS to your production domain.",
-            _localhost_origins
+            "[SECURITY] Production mode with localhost CORS origins: %s. Set CORS_ORIGINS to your production domain.",
+            _localhost_origins,
         )
 
 # Security headers middleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 # TrustedHostMiddleware — use env-configurable allowlist instead of hardcoded
 # localhost-only list which breaks production deployments.
@@ -301,33 +325,77 @@ _trusted_hosts_env = os.getenv("TRUSTED_HOSTS", "localhost,127.0.0.1,0.0.0.0").s
 ALLOWED_HOSTS = [h.strip() for h in _trusted_hosts_env.split(",") if h.strip()]
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
-# Security headers middleware
+
+# SECURITY (#14): HTTPS redirect middleware — redirects HTTP to HTTPS in production.
+@app.middleware("http")
+async def _https_redirect_middleware(request: Request, call_next):
+    # SECURITY: Only trust x-forwarded-proto when behind a known proxy.
+    # Prevents attackers from spoofing the header to trigger redirect loops.
+    _trusted_proxy = os.getenv("TRUSTED_PROXY", "")
+    if _is_production and _trusted_proxy and request.headers.get("x-forwarded-proto", "http") == "http":
+        https_url = str(request.url).replace("http://", "https://", 1)
+        return RedirectResponse(url=https_url, status_code=301)
+    return await call_next(request)
+
+
+# Security headers middleware with CSP nonces (#7)
 @app.middleware("http")
 async def _security_headers_middleware(request: Request, call_next):
+    # SECURITY (#7): Generate per-request cryptographic nonce for CSP.
+    import base64 as _b64
+    _csp_nonce = _b64.b64encode(os.urandom(16)).decode("ascii")
+    request.state.csp_nonce = _csp_nonce
+
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    # SECURITY: Remove 'unsafe-eval' in production (biggest XSS risk).
-    # 'unsafe-inline' is kept as a pragmatic fallback since the frontend uses
-    # inline scripts and no CSP nonce infrastructure is in place yet.
-    # WARNING: Removing 'unsafe-inline' WITHOUT adding nonce/hash-based CSP
-    # will break all inline scripts. Add per-request nonces or hash-based
-    # allowlisting before removing 'unsafe-inline'.
     _dev_mode = os.getenv("VIGILAGENT_DEV_MODE", "false").lower() == "true"
-    _script_src = "'self' 'unsafe-inline' 'unsafe-eval'" if _dev_mode else "'self' 'unsafe-inline'"
-    _style_src = "'self' 'unsafe-inline'"
+    _prod_mode = os.getenv("VIGILAGENT_ENV", "development").lower() == "production"
+    # #7: In production, nonces fully replace unsafe-inline.
+    # The SPA catch-all route injects nonces into every <script> tag served
+    # by the backend, so 'unsafe-inline' is no longer needed in prod mode.
+    # Dev mode keeps unsafe-inline for Vite HMR inline scripts.
+    if _prod_mode:
+        _script_src = f"'self' 'nonce-{_csp_nonce}'"
+    elif _dev_mode:
+        _script_src = "'self' 'unsafe-inline' 'unsafe-eval'"
+    else:
+        _script_src = f"'self' 'nonce-{_csp_nonce}'"
+    # In production, nonces fully replace unsafe-inline for both scripts and styles.
+    # Dev mode keeps unsafe-inline for Vite HMR and browser devtools.
+    if _prod_mode:
+        _style_src = f"'self' 'nonce-{_csp_nonce}'"
+    elif _dev_mode:
+        _style_src = "'self' 'unsafe-inline'"
+    else:
+        _style_src = f"'self' 'nonce-{_csp_nonce}'"
+    # SECURITY (#7): Nonces only work for <script> and <style> elements.
+    # For React inline style={} props and element.style.* manipulation
+    # (GlobalBackground.jsx, Modal.jsx, etc.), we need style-src-attr.
+    # This only allows the style="..." HTML attribute, not <style> elements.
+    _nonce_val = f"'nonce-{_csp_nonce}'"
+    _style_elem = f"'self' {_nonce_val}" if _prod_mode else ("'self' 'unsafe-inline'" if _dev_mode else f"'self' {_nonce_val}")
+    _style_attr = "'unsafe-inline'"  # Required for React style={{}}, element.style.*
+    # SECURITY (#18): Modern Reporting API — use report-to instead of legacy report-uri.
+    # Reporting-Endpoints header defines the endpoint; report-to references it by name.
+    response.headers["Reporting-Endpoints"] = 'csp-endpoint="/api/v1/report"'
     response.headers["Content-Security-Policy"] = (
-        f"default-src 'self'; script-src 'self' {_script_src}; "
-        f"style-src 'self' {_style_src}; img-src 'self' data: https:; "
-        f"font-src 'self' data:; connect-src 'self' wss: https:; "
-        f"frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+        f"default-src 'self'; "
+        f"script-src 'self' {_script_src}; "
+        f"style-src {_style_elem}; style-src-attr {_style_attr}; "
+        f"img-src 'self' data: https:; "
+        f"font-src 'self' data:; "
+        f"connect-src 'self' wss: https:; "
+        f"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
+        f"report-to csp-endpoint; report-uri /api/v1/csp-report"
     )
     response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     return response
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -339,10 +407,42 @@ app.add_middleware(
     max_age=3600,
 )
 
+
+# SECURITY: Reject requests exceeding MAX_CONTENT_LENGTH to prevent memory exhaustion
+@app.middleware("http")
+async def _body_size_limit_middleware(request: Request, call_next):
+    if request.method in ("POST", "PUT", "PATCH"):
+        content_length = request.headers.get("content-length")
+        transfer_encoding = request.headers.get("transfer-encoding", "")
+        # Block requests with explicit body exceeding limit
+        if content_length and int(content_length) > _MAX_BODY:
+            logger.warning(
+                "[SECURITY] Body too large: path=%s size=%s limit=%s",
+                request.url.path, content_length, _MAX_BODY,
+            )
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"Request body too large. Maximum size is {_MAX_BODY} bytes."},
+            )
+        # SECURITY: Block chunked encoding WITHOUT Content-Length to prevent
+        # bypassing the Content-Length size check. When both headers are
+        # present, parsers may disagree on which to trust (request smuggling).
+        if "chunked" in transfer_encoding.lower() and not content_length:
+            logger.warning(
+                "[SECURITY] Chunked encoding without Content-Length blocked: path=%s",
+                request.url.path,
+            )
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Chunked transfer encoding without Content-Length not allowed."},
+            )
+    return await call_next(request)
+
 # HIGH-43: API key authentication middleware (required by default)
-_app_api_key = os.getenv('API_AUTH_KEY')
+_app_api_key = os.getenv("API_AUTH_KEY")
 if not _app_api_key:
     raise RuntimeError("API_AUTH_KEY environment variable is required. Set a secure API key for production use.")
+
 
 @app.middleware("http")
 async def _api_key_middleware(request: Request, call_next):
@@ -351,18 +451,22 @@ async def _api_key_middleware(request: Request, call_next):
     # endpoints.  The extension runs locally and its recon/bridge endpoints are
     # already protected by scope-guard + CORS middleware.
     _api_key_skip = (
-        path in ('/api/health', '/docs', '/openapi.json', '/', '/redoc')
-        or not path.startswith('/api/')
-        or path.startswith('/api/recon/')
-        or path.startswith('/api/bridge/')
-        or path.startswith('/api/defense/')
+        path in ("/api/health", "/docs", "/openapi.json", "/", "/redoc")
+        or not path.startswith("/api/")
+        or path.startswith("/api/defense/")
     )
     if _api_key_skip:
         return await call_next(request)
-    provided = request.headers.get('X-API-Key', '') or request.headers.get('Authorization', '').replace('Bearer ', '')
+    provided = request.headers.get("X-API-Key", "") or request.headers.get("Authorization", "").replace("Bearer ", "")
     if not provided or not hmac.compare_digest(provided, _app_api_key):
-        return JSONResponse(status_code=401, content={'detail': 'Invalid or missing API key'})
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning(
+            "[SECURITY] Auth failure: ip=%s path=%s key_present=%s",
+            client_ip, path, bool(provided),
+        )
+        return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
     return await call_next(request)
+
 
 # Correlation ID middleware for request tracing
 @app.middleware("http")
@@ -373,7 +477,9 @@ async def _correlation_id_middleware(request: Request, call_next):
     response.headers["X-Correlation-ID"] = correlation_id
     return response
 
+
 app.include_router(runtime.router, prefix="/api")
+
 
 # CRIT-17 / HIGH-43: Global rate-limiting middleware applied to ALL API routes.
 @app.middleware("http")
@@ -387,10 +493,13 @@ async def _rate_limit_middleware(request: Request, call_next):
             raise  # Let FastAPI's HTTPException propagate with Retry-After header
         except Exception as exc:
             import logging as _log
+
             _log.getLogger("main").debug("Rate limiter error: %s", exc)
-            from fastapi.responses import JSONResponse as _JSONResponse
+            from fastapi.responses import JSONResponse, RedirectResponse as _JSONResponse
+
             return _JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
     return await call_next(request)
+
 
 # CRIT-28: Scope-guard middleware — validates target URLs against engagement scope
 # before they reach individual API handlers. This closes the gap where scope_guard
@@ -413,6 +522,7 @@ async def _scope_guard_middleware(request: Request, call_next):
                 body = await request.body()  # Starlette caches internally
                 if body:
                     import json as _json
+
                     data = _json.loads(body)
                     target = (
                         data.get("target_url")
@@ -420,7 +530,9 @@ async def _scope_guard_middleware(request: Request, call_next):
                         or (data.get("target", {}).get("url") if isinstance(data.get("target"), dict) else None)
                     )
                     if target and isinstance(target, str):
-                        from backend.core.scope import scope_guard as _sg, ScopeViolation
+                        from backend.core.scope import ScopeViolation
+                        from backend.core.scope import scope_guard as _sg
+
                         try:
                             _sg.assert_allowed(target, action="api_request")
                         except ScopeViolation as sv:
@@ -429,9 +541,11 @@ async def _scope_guard_middleware(request: Request, call_next):
                 pass  # Non-JSON bodies pass through
             except Exception as exc:
                 import logging as _log
+
                 _log.getLogger("main").debug("Scope guard middleware error: %s", exc)
                 pass  # Other errors pass through to handler
     return await call_next(request)
+
 
 # CSRF Protection Middleware - protects all state-changing endpoints
 @app.middleware("http")
@@ -447,21 +561,28 @@ async def _csrf_middleware(request: Request, call_next):
         # SECURITY FIX (C-8): Instead of skipping CSRF for write endpoints,
         # require API key auth as alternative. This prevents CSRF on attack/
         # recon endpoints that were previously unprotected.
-        skip_paths = ['/api/attack/fire', '/api/recon/ingest', '/api/recon/keys', '/api/bridge/', '/api/defense/analyze']
+        skip_paths = [
+            "/api/attack/fire",
+            "/api/defense/analyze",
+        ]
         if any(request.url.path.startswith(p) for p in skip_paths):
             # Extension bridge/recon endpoints run over localhost only and are
             # protected by scope-guard + CORS.  Skip CSRF+API-key for these.
-            if request.url.path.startswith('/api/recon/') or request.url.path.startswith('/api/bridge/') or request.url.path.startswith('/api/defense/'):
+            if (
+                request.url.path.startswith("/api/recon/")
+                or request.url.path.startswith("/api/bridge/")
+                or request.url.path.startswith("/api/defense/")
+            ):
                 return await call_next(request)
             # Other skip paths: require X-API-Key as CSRF alternative
-            api_key = request.headers.get('X-API-Key', '')
+            api_key = request.headers.get("X-API-Key", "")
             if not api_key or not hmac.compare_digest(api_key, _app_api_key):
                 return JSONResponse(
                     status_code=403,
-                    content={"detail": "API key required for this endpoint (CSRF protection alternative)."}
+                    content={"detail": "API key required for this endpoint (CSRF protection alternative)."},
                 )
             return await call_next(request)
-        
+
         # Get CSRF token from header or form
         csrf_token = request.headers.get("X-CSRF-Token")
         if not csrf_token:
@@ -471,48 +592,108 @@ async def _csrf_middleware(request: Request, call_next):
                 csrf_token = form.get("csrf_token")
             except Exception:
                 pass
-        
+
         if not csrf_token:
             return JSONResponse(
-                status_code=403,
-                content={"detail": "CSRF validation failed. Missing X-CSRF-Token header."}
+                status_code=403, content={"detail": "CSRF validation failed. Missing X-CSRF-Token header."}
             )
-        
+
         session_id = get_session_id(request)
         is_valid = await csrf_protection.validate_token(csrf_token, session_id, consume=True)
-        
+
         if not is_valid:
             return JSONResponse(
-                status_code=403,
-                content={"detail": "CSRF validation failed. Invalid or expired token."}
+                status_code=403, content={"detail": "CSRF validation failed. Invalid or expired token."}
             )
-    
+
     return await call_next(request)
+
+
+# SECURITY (#18): Modern Reporting API endpoint — receives CSP violations,
+# deprecation warnings, and other browser reports via the Reporting API v1.
+# Replaces the legacy report-uri endpoint with the standards-compliant
+# Reporting-Endpoints / report-to mechanism.
+@app.post("/api/v1/report")
+@app.post("/api/v1/csp-report")  # Backward compat for legacy browsers
+async def report_endpoint(request: Request):
+    """Receive browser reports via the Reporting API v1.
+
+    Handles CSP violations, deprecation reports, and other report types.
+    Browsers send an array of report objects in the request body.
+    Always returns 204 — report endpoints must not return errors.
+    """
+    try:
+        body = await request.json()
+        # Reporting API v1 sends an array of reports
+        reports = body if isinstance(body, list) else [body]
+        for report in reports:
+            # CSP Level 3 format (via report-to)
+            if "type" in report and "url" in report:
+                _type = report.get("type", "")
+                _body = report.get("body", {})
+                if _type == "csp-violation":
+                    logger.warning(
+                        "[CSP-VIOLATION] uri=%s directive=%s blocked=%s sample=%s",
+                        _body.get("documentURL", ""),
+                        _body.get("violatedDirective", ""),
+                        _body.get("blockedURL", ""),
+                        (_body.get("sample", "") or "")[:200],
+                    )
+                elif _type == "deprecation":
+                    logger.info(
+                        "[DEPRECATION] url=%s id=%s message=%s",
+                        report.get("url", ""),
+                        _body.get("id", ""),
+                        (_body.get("message", "") or "")[:200],
+                    )
+                else:
+                    logger.info("[REPORT] type=%s url=%s body=%s", _type, report.get("url", ""), json.dumps(_body)[:300])
+            # Legacy CSP Level 2 format (via report-uri)
+            elif "csp-report" in report:
+                _csp = report["csp-report"]
+                logger.warning(
+                    "[CSP-VIOLATION] uri=%s directive=%s blocked=%s sample=%s",
+                    _csp.get("document-uri", ""),
+                    _csp.get("violated-directive", ""),
+                    _csp.get("blocked-uri", ""),
+                    (_csp.get("script-sample", "") or "")[:200],
+                )
+            else:
+                logger.info("[REPORT] unknown format: %s", json.dumps(report)[:300])
+    except Exception as exc:
+        logger.debug("[REPORT] Failed to parse report: %s", exc)
+    return JSONResponse(status_code=204, content=None)
+
 
 # Routes
 @app.get("/api/v1/health")
 async def health_check():
     """Production health check — tests infra components."""
     import time as _t
+
     start = _t.time()
     comps = {}
     try:
         comps["supabase"] = "healthy" if settings.SUPABASE_URL else "not_configured"
     except Exception as exc:
         import logging as _log
+
         _log.getLogger("main").debug("Supabase health check failed: %s", exc)
         comps["supabase"] = "unhealthy"
 
     try:
         if settings.REDIS_URL:
             import redis.asyncio as aioredis
+
             r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-            await r.ping(); await r.aclose()
+            await r.ping()
+            await r.aclose()
             comps["redis"] = "healthy"
         else:
             comps["redis"] = "not_configured"
     except Exception as exc:
         import logging as _log
+
         _log.getLogger("main").debug("Redis health check failed: %s", exc)
         comps["redis"] = "unhealthy"
     comps["alpha"] = "enabled" if getattr(settings, "ALPHA_ENABLE_V6", False) else "disabled"
@@ -523,25 +704,30 @@ async def health_check():
     _extensions_active = 0
     try:
         from backend.api.socket_manager import manager as _mgr
+
         _spy_connected = _mgr.is_spy_online()
-        _extensions_active = len(getattr(_mgr, 'spy_connections', []))
+        _extensions_active = len(getattr(_mgr, "spy_connections", []))
     except Exception:
         pass
-    return {"status": overall,
-            "latency_ms": round((_t.time() - start) * 1000, 1),
-            "spy_connected": _spy_connected,
-            "extensions_active": _extensions_active}
+    return {
+        "status": overall,
+        "latency_ms": round((_t.time() - start) * 1000, 1),
+        "spy_connected": _spy_connected,
+        "extensions_active": _extensions_active,
+    }
 
 
 @app.get("/metrics")
 async def prometheus_metrics():
     """Prometheus-compatible metrics endpoint for monitoring."""
-    from backend.core.metrics import metrics as _metrics
     from fastapi.responses import PlainTextResponse
+
+    from backend.core.metrics import metrics as _metrics
 
     # Sync gauge values from live state
     try:
         from backend.api.socket_manager import manager as _mgr
+
         _ui_conns = list(_mgr.ui_connections)  # snapshot to avoid concurrent mutation
         _spy_conns = list(_mgr.spy_connections)
         _metrics.ws_ui_connections.set(len(_ui_conns))
@@ -551,6 +737,7 @@ async def prometheus_metrics():
 
     try:
         from backend.core.redis_client import get_redis_client
+
         rc = await get_redis_client()
         _metrics.redis_connected.set(1 if rc.is_healthy else 0)
         # Sync pool utilization from the centralized client
@@ -563,12 +750,14 @@ async def prometheus_metrics():
 
     try:
         from backend.core.orchestrator import HiveOrchestrator
+
         _metrics.agents_active.set(len(HiveOrchestrator.active_agents))
     except Exception:
         pass
 
     try:
         from backend.ai.cortex import get_cortex_engine
+
         cortex = get_cortex_engine()
         t = cortex.get_telemetry()
         _metrics.llm_calls_total.set_value(t.get("llm_calls", 0))
@@ -585,27 +774,38 @@ async def list_tools_v1():
     """Recon tool inventory + availability (Architecture §7, §22)."""
     try:
         from backend.tools.recon.registry import RECON_TOOLS, check_tool_availability
+
         tools = []
         for name, spec in RECON_TOOLS.items():
             avail = check_tool_availability(name)
-            tools.append({"name": name, "phase": spec.get("phase"),
-                          "binary": spec.get("binary"), "modes": spec.get("modes", []),
-                          "installed": avail.get("installed", False),
-                          "source": avail.get("source", ""), "reason": avail.get("reason", "")})
+            tools.append(
+                {
+                    "name": name,
+                    "phase": spec.get("phase"),
+                    "binary": spec.get("binary"),
+                    "modes": spec.get("modes", []),
+                    "installed": avail.get("installed", False),
+                    "source": avail.get("source", ""),
+                    "reason": avail.get("reason", ""),
+                }
+            )
         installed = sum(1 for t in tools if t["installed"])
         return {"tools": tools, "total": len(tools), "installed": installed}
     except Exception as e:
         return {"tools": [], "error": str(e)}
+
 
 @app.get("/api/tools")
 async def list_tools():
     """Recon tool inventory + availability (non-versioned for test compatibility)."""
     return await list_tools_v1()
 
+
 @app.get("/api/health")
 async def health_check_compat():
     """Backward-compatible health check (non-versioned for test compatibility)."""
     return await health_check()
+
 
 app.include_router(recon.router, prefix="/api/v1/recon", tags=["Recon"])
 app.include_router(attack.router, prefix="/api/v1/attack", tags=["Attack"])
@@ -636,6 +836,80 @@ from backend.agents.alpha_recon.api_routes import router as alpha_recon_router
 app.include_router(alpha_recon_router, prefix="/api/v1", tags=["Alpha Recon"])
 app.include_router(alpha_recon_router, prefix="/api", tags=["Alpha Recon"])
 
+
+# ── SPA Serving with CSP Nonce Injection (#7) ───────────────────────────
+# Registered AFTER all API routes so it only handles non-API paths.
+# In production, nginx proxies SPA routes here so the backend injects
+# per-request cryptographic nonces into <script> tags.
+_spa_index_cache: str | None = None
+_spa_index_mtime: float = 0.0
+
+
+def _load_spa_index() -> str:
+    """Read and cache the SPA index.html from the frontend dist directory.
+
+    Re-reads when the file changes on disk (dev mode rebuilds). Falls
+    back to a minimal HTML page if the frontend hasn't been built yet.
+    """
+    global _spa_index_cache, _spa_index_mtime
+    for candidate in [
+        os.path.join(settings.FRONTEND_DIST_DIR, "index.html"),
+        os.path.join(settings.PROJECT_ROOT, "index.html"),
+    ]:
+        try:
+            st = os.stat(candidate)
+            if _spa_index_cache is not None and st.st_mtime <= _spa_index_mtime:
+                return _spa_index_cache
+            with open(candidate, "r", encoding="utf-8") as fh:
+                _spa_index_cache = fh.read()
+            _spa_index_mtime = st.st_mtime
+            return _spa_index_cache
+        except (OSError, FileNotFoundError):
+            continue
+    return (
+        '<!doctype html><html><body>'
+        '<h1>Vigilagent</h1>'
+        '<p>Frontend not built. Run: npm run build</p>'
+        '</body></html>'
+    )
+
+
+def _inject_nonce(html: str, nonce: str) -> str:
+    """Inject nonce attribute into every <script> and <style> tag for CSP compliance."""
+    html = re.sub(r'<script\b', f'<script nonce="{nonce}"', html, flags=re.IGNORECASE)
+    html = re.sub(r'<style\b', f'<style nonce="{nonce}"', html, flags=re.IGNORECASE)
+    return html
+
+
+@app.get("/")
+async def serve_spa_root(request: Request):
+    """Serve SPA index.html with nonce for the root path."""
+    html = _load_spa_index()
+    nonce = getattr(request.state, "csp_nonce", "")
+    injected = _inject_nonce(html, nonce) if nonce else html
+    return HTMLResponse(content=injected)
+
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str, request: Request):
+    """SPA catch-all with CSP nonce injection.
+
+    Registered AFTER all API routes so API paths are matched first.
+    Returns 404 for static assets and API paths so nginx handles them.
+    """
+    _skip = ("api/", "ws/", "stream", "metrics")
+    _exts = (".js", ".css", ".png", ".jpg", ".ico", ".svg", ".woff", ".woff2")
+    if (
+        any(full_path.startswith(p) for p in _skip)
+        or any(full_path.endswith(e) for e in _exts)
+    ):
+        return HTMLResponse(status_code=404, content="Not found")
+    html = _load_spa_index()
+    nonce = getattr(request.state, "csp_nonce", "")
+    injected = _inject_nonce(html, nonce) if nonce else html
+    return HTMLResponse(content=injected)
+
+
 @app.websocket("/stream")
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"), token: str = Query(None)):
@@ -646,10 +920,12 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
     origin = websocket.headers.get("origin", "")
     if origin:
         from urllib.parse import urlparse as _urlparse
+
         try:
             origin_host = (_urlparse(origin).hostname or "").lower()
         except Exception as exc:
             import logging as _log
+
             _log.getLogger("main").debug("CORS origin parse failed: %s", exc)
             origin_host = ""
         # SECURITY FIX (C-7): Origin validation was dead code (inside except block)
@@ -662,6 +938,7 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
                         _allowed_hosts.add(_h.lower())
                 except Exception as exc:
                     import logging as _log
+
                     _log.getLogger("main").debug("CORS port parse failed: %s", exc)
             if origin_host not in _allowed_hosts:
                 await websocket.close(code=1008, reason="Policy Violation: Disallowed Origin")
@@ -672,41 +949,48 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
         config = load_config() or {}
     except Exception as exc:
         import logging as _log
+
         _log.getLogger("main").debug("CORS config load failed: %s", exc)
         config = {}
-    
+
     # SECURITY: WebSocket authentication enforcement.
-    # The old VULAGENT_TEST_MODE bypass has been replaced with a
+    # The old VIGILAGENT_TEST_MODE bypass has been replaced with a
     # strict CI-only guard that requires BOTH the env var AND an
     # explicit internal key to bypass auth (defense in depth).
-    # SECURITY: CI test bypass is gated behind BOTH an env var AND a runtime
-    # production guard. In production builds (VIGILAGENT_ENV=production),
-    # the bypass is completely disabled regardless of CI keys.
-    _is_production = os.getenv('VIGILAGENT_ENV', 'development').lower() == 'production'
+    # SECURITY: CI test bypass is gated behind THREE conditions:
+    # 1. Not in production mode
+    # 2. VIGILAGENT_TEST_MODE=true AND VIGILAGENT_CI_TEST_KEY >= 32 chars
+    # 3. VIGILAGENT_CI_BYPASS_SECRET must be set AND >= 16 chars
+    # This ensures no single env var can disable auth in staging/production.
+    _is_production = os.getenv("VIGILAGENT_ENV", "development").lower() == "production"
+    _ci_bypass_secret = os.getenv("VIGILAGENT_CI_BYPASS_SECRET", "")
     _ci_test_mode = (
         not _is_production
-        and os.getenv('VULAGENT_TEST_MODE', 'false').lower() == 'true'
-        and len(os.getenv('VIGILAGENT_CI_TEST_KEY', '')) >= 32
+        and os.getenv("VIGILAGENT_TEST_MODE", "false").lower() == "true"
+        and len(os.getenv("VIGILAGENT_CI_TEST_KEY", "")) >= 32
+        and len(_ci_bypass_secret) >= 16
     )
     if _ci_test_mode:
         import logging as _log
-        _log.getLogger('main').warning(
-            'SECURITY: WebSocket auth bypassed via CI test key. '
-            'This must NEVER be enabled in production.')
+
+        _log.getLogger("main").warning(
+            "SECURITY: WebSocket auth bypassed via CI test key. This must NEVER be enabled in production."
+        )
     else:
         # FIX: Also verify a TOTP secret exists — enabled=true without a
         # secret is a misconfiguration that should not block WebSocket access.
-        auth_required = bool(config.get('enabled', True)) and bool(config.get('secret'))
+        auth_required = bool(config.get("enabled", True)) and bool(config.get("secret"))
         if auth_required:
             try:
                 session = load_session() or {}
             except Exception as exc:
                 import logging as _log
-                _log.getLogger('main').debug('session load failed: %s', exc)
+
+                _log.getLogger("main").debug("session load failed: %s", exc)
                 session = {}
             # Disconnect any unauthenticated or token-mismatched websockets
-            if not session.get('authenticated') or session.get('token') != token:
-                await websocket.close(code=1008, reason='Policy Violation: Invalid Auth Token')
+            if not session.get("authenticated") or session.get("token") != token:
+                await websocket.close(code=1008, reason="Policy Violation: Invalid Auth Token")
                 return
 
     # HIGH-42: WebSocket auth is already enforced via load_config/load_session token check above
@@ -717,43 +1001,42 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
+
 # --- INTEGRATED CLUSTER ORCHESTRATOR ---
+
 
 class DistributedAttackCluster:
     """Orchestrates the lifecycle of the distributed cluster components."""
+
     def __init__(self, mode: str):
         self.mode = mode
         self.config = ConfigManager()
         self.running = False
-        self.master_node: Optional[MasterNode] = None
-        self.worker_node: Optional[WorkerNode] = None
+        self.master_node: MasterNode | None = None
+        self.worker_node: WorkerNode | None = None
         self._task_manager = TaskManager("DistributedCluster")
-        
+
         try:
             signal.signal(signal.SIGINT, self._signal_handler)
             signal.signal(signal.SIGTERM, self._signal_handler)
         except (ValueError, NotImplementedError):
             pass
-    
+
     def _signal_handler(self, signum, frame):
         logger.info(f"🛑 Received signal {signum}, initiating clean cluster extraction...")
         self.running = False
-    
+
     async def start_master(self):
         try:
-            self.master_node = MasterNode(
-                self.config.redis.url,
-                self.config.supabase.url,
-                self.config.supabase.key
-            )
+            self.master_node = MasterNode(self.config.redis.url, self.config.supabase.url, self.config.supabase.key)
             self.running = True
             logger.info("📡 VIGILAGENT: Master Node Activated.")
             await self.master_node.start()
         except Exception as e:
             logger.info(f"❌ Master start error: {e}")
             raise
-    
-    async def start_worker(self, worker_id: Optional[str] = None):
+
+    async def start_worker(self, worker_id: str | None = None):
         try:
             worker_id = worker_id or self.config.worker.worker_id or f"worker-{uuid.uuid4().hex[:6]}"
             self.worker_node = WorkerNode(
@@ -761,7 +1044,7 @@ class DistributedAttackCluster:
                 self.config.worker.specialty,
                 self.config.redis.url,
                 self.config.supabase.url,
-                self.config.supabase.key
+                self.config.supabase.key,
             )
             self.running = True
             logger.info(f"🦾 VIGILAGENT: Worker Node Activated ({worker_id})")
@@ -771,34 +1054,29 @@ class DistributedAttackCluster:
             raise
 
     async def start_cluster(self, num_workers: int = 5):
-        master_task = self._task_manager.create_task(
-            self.start_master(),
-            name="master_node"
-        )
+        master_task = self._task_manager.create_task(self.start_master(), name="master_node")
         await asyncio.sleep(2)
         worker_tasks = []
         for i in range(num_workers):
-            wid = f"worker-{i+1}-{uuid.uuid4().hex[:4]}"
-            worker_task = self._task_manager.create_task(
-                self.start_worker(wid),
-                name=f"worker_{wid}"
-            )
+            wid = f"worker-{i + 1}-{uuid.uuid4().hex[:4]}"
+            worker_task = self._task_manager.create_task(self.start_worker(wid), name=f"worker_{wid}")
             worker_tasks.append(worker_task)
             await asyncio.sleep(0.5)
         logger.info(f"🔗 Cluster Handshake: 1 Master + {num_workers} Workers Linked.")
         await asyncio.gather(master_task, *worker_tasks)
 
+
 # --- EXECUTION KERNEL ---
 
-async def vulagent_serve(args):
+
+async def vigilagent_serve(args):
     if args.mode == "serve":
         logger.info(f"🚀 Launching Vigilagent API Gateway on {args.host}:{args.port}")
         # Increase timeouts and limits for high-load test scenarios (TC011)
-        import os
         config = uvicorn.Config(
-            app, 
-            host=args.host, 
-            port=args.port, 
+            app,
+            host=args.host,
+            port=args.port,
             log_level="info",
             limit_concurrency=100,
             limit_max_requests=None,
@@ -821,24 +1099,29 @@ async def vulagent_serve(args):
             logger.info(f"🚨 Cluster Hard Crash: {e}")
             sys.exit(1)
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Vigilagent: Unified Entry Point")
-    parser.add_argument("--mode", choices=["serve", "master", "worker", "cluster"], default="serve", help="Execution mode.")
+    parser.add_argument(
+        "--mode", choices=["serve", "master", "worker", "cluster"], default="serve", help="Execution mode."
+    )
     parser.add_argument("--host", default="127.0.0.1", help="API Host.")
     parser.add_argument("--port", type=int, default=8000, help="API Port.")
     # Cluster worker count default comes from config/workers.yaml (Architecture §29.10).
     try:
         from backend.core.config import load_workers_config
+
         _default_workers = int(load_workers_config().get("default_num_workers", 3))
     except Exception as exc:
         import logging as _log
-        _log.getLogger('main').debug('workers config fallback: %s', exc)
+
+        _log.getLogger("main").debug("workers config fallback: %s", exc)
         _default_workers = 3
     parser.add_argument("--num-workers", type=int, default=_default_workers, help="Cluster worker count.")
     parser.add_argument("--worker-id", help="Override worker ID.")
-    
+
     args = parser.parse_args()
     try:
-        asyncio.run(vulagent_serve(args))
+        asyncio.run(vigilagent_serve(args))
     except KeyboardInterrupt:
         print("\n[VIGILAGENT] Service shutdown by user.")

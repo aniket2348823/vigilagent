@@ -19,6 +19,7 @@ Endpoints (Architecture §19):
 All ingest is additive and governed; out-of-scope or disallowed captures are
 rejected with a clear reason (never silently stored).
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,7 +28,7 @@ from typing import Any
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
-from backend.core.scope import scope_guard, ScopeViolation
+from backend.core.scope import ScopeViolation, scope_guard
 
 logger = logging.getLogger("api.bridge")
 router = APIRouter()
@@ -70,8 +71,9 @@ async def _ingest(capture_class: str, request: Request) -> JSONResponse:
 
     # 1. The capture class must be allowed by the engagement scope (Architecture §19).
     if not scope_guard.allows_extension_capture(capture_class):
-        return JSONResponse(status_code=403, content={
-            "accepted": False, "reason": f"capture_class_not_allowed:{capture_class}"})
+        return JSONResponse(
+            status_code=403, content={"accepted": False, "reason": f"capture_class_not_allowed:{capture_class}"}
+        )
 
     # 2. The observed URL/origin must be in scope (Architecture §9).
     url = _scope_url(payload)
@@ -79,8 +81,7 @@ async def _ingest(capture_class: str, request: Request) -> JSONResponse:
         try:
             scope_guard.assert_allowed(url, action="request")
         except ScopeViolation as exc:
-            return JSONResponse(status_code=403, content={
-                "accepted": False, "reason": f"out_of_scope:{exc}"})
+            return JSONResponse(status_code=403, content={"accepted": False, "reason": f"out_of_scope:{exc}"})
 
     masked = _mask(payload)
     logger.info("[Bridge] ingested %s capture (scope-checked)", capture_class)
@@ -88,6 +89,7 @@ async def _ingest(capture_class: str, request: Request) -> JSONResponse:
     scan_id = payload.get("scan_id", "GLOBAL")
     try:
         from backend.core.scan_state_db import scan_state_db
+
         scan_state_db.add_event(scan_id, f"bridge_{capture_class}", "extension", masked)
     except Exception as e:
         logger.debug("[Bridge] scan_state_db persist failed: %s", e)
@@ -129,14 +131,16 @@ async def bridge_commands():
     """Approved instructions for the extension. The extension is passive by
     default; commands here are operator-approved, scope-bounded directives only
     (Architecture §19 — the extension does not independently attack)."""
-    return JSONResponse(content={
-        "commands": [],
-        "capture_paused": False,
-        "scope": {
-            "authorized": scope_guard.is_authorized(),
-            "allowed_captures": sorted(scope_guard.extension_capture_allowlist),
-        },
-    })
+    return JSONResponse(
+        content={
+            "commands": [],
+            "capture_paused": False,
+            "scope": {
+                "authorized": scope_guard.is_authorized(),
+                "allowed_captures": sorted(scope_guard.extension_capture_allowlist),
+            },
+        }
+    )
 
 
 @router.websocket("/live")
@@ -151,14 +155,16 @@ async def bridge_live(websocket: WebSocket):
     try:
         # Send the initial scope/status snapshot so the extension can render
         # operator-visible state and honor the capture-paused flag.
-        await websocket.send_json({
-            "type": "BRIDGE_STATUS",
-            "payload": {
-                "authorized": scope_guard.is_authorized(),
-                "capture_paused": False,
-                "allowed_captures": sorted(scope_guard.extension_capture_allowlist),
-            },
-        })
+        await websocket.send_json(
+            {
+                "type": "BRIDGE_STATUS",
+                "payload": {
+                    "authorized": scope_guard.is_authorized(),
+                    "capture_paused": False,
+                    "allowed_captures": sorted(scope_guard.extension_capture_allowlist),
+                },
+            }
+        )
         while True:
             # Inbound frames are treated as untrusted heartbeats/acks only.
             await websocket.receive_text()

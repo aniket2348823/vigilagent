@@ -28,6 +28,7 @@ Architecture §17/§25 reinforcement:
     module suppresses any finding it produced. Skipper MUST NOT confirm a
     workflow bypass on /brute/, /sqli/, /fi/, /xss_r/, /exec/.
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,8 +40,18 @@ from backend.core.protocol import JobPacket, TaskTarget, Vulnerability
 logger = logging.getLogger("TheSkipper")
 
 _WORKFLOW_HINTS = (
-    "checkout", "payment", "confirm", "success", "complete", "order",
-    "review", "wizard", "step", "thank", "summary", "finalize",
+    "checkout",
+    "payment",
+    "confirm",
+    "success",
+    "complete",
+    "order",
+    "review",
+    "wizard",
+    "step",
+    "thank",
+    "summary",
+    "finalize",
 )
 
 
@@ -80,9 +91,10 @@ class TheSkipper(BaseArsenalModule):
         # Resolve the workflow chain via Cortex (best effort).
         success_url = target.url
         try:
-            cortex_engine = getattr(self, 'cortex', None)
+            cortex_engine = getattr(self, "cortex", None)
             if cortex_engine is None:
                 from backend.ai.cortex import get_cortex_engine
+
                 cortex_engine = get_cortex_engine()
             workflow_steps = await cortex_engine.infer_workflow_chain(target.url)
             if workflow_steps:
@@ -95,17 +107,19 @@ class TheSkipper(BaseArsenalModule):
 
         # Index 0: BASELINE — direct fetch of the final step with NO Referer
         #   and NO spoofed cookies. A real workflow rejects this.
-        targets.append(TaskTarget(
-            url=success_url, method="GET",
-            headers={k: v for k, v in (target.headers or {}).items()
-                     if k.lower() not in ("referer",)},
-            payload=target.payload))
+        targets.append(
+            TaskTarget(
+                url=success_url,
+                method="GET",
+                headers={k: v for k, v in (target.headers or {}).items() if k.lower() not in ("referer",)},
+                payload=target.payload,
+            )
+        )
 
         # Index 1: STEP-JUMPING with same headers (still no Referer).
-        targets.append(TaskTarget(
-            url=success_url, method="GET",
-            headers=dict(target.headers or {}),
-            payload=target.payload))
+        targets.append(
+            TaskTarget(url=success_url, method="GET", headers=dict(target.headers or {}), payload=target.payload)
+        )
 
         # Index 2: REFERER-SPOOFING — pretend we came from the previous step.
         spoofed = dict(target.headers or {})
@@ -113,15 +127,13 @@ class TheSkipper(BaseArsenalModule):
         parsed = urlparse(target.url)
         prev_step_path = "checkout" if parsed.path != "/checkout" else "cart"
         spoofed["Referer"] = f"{parsed.scheme}://{parsed.netloc}/{prev_step_path}"
-        targets.append(TaskTarget(
-            url=success_url, method="GET", headers=spoofed,
-            payload=target.payload))
+        targets.append(TaskTarget(url=success_url, method="GET", headers=spoofed, payload=target.payload))
         return targets
 
-    async def analyze_responses(self, interactions: list[tuple[TaskTarget, str]],
-                                packet: JobPacket) -> list[Vulnerability]:
-        from backend.modules.evidence import (differential, logic_confirm,
-                                              classify_response_evidence)
+    async def analyze_responses(
+        self, interactions: list[tuple[TaskTarget, str]], packet: JobPacket
+    ) -> list[Vulnerability]:
+        from backend.modules.evidence import classify_response_evidence, differential, logic_confirm
 
         # PRECONDITION GATE re-enforced on the analyze side. If the worker
         # somehow handed us interactions for a non-workflow target, refuse to
@@ -146,8 +158,9 @@ class TheSkipper(BaseArsenalModule):
         # If the BASELINE itself shows post-workflow markers, the endpoint is
         # public and has no workflow to bypass — bail out, no finding.
         baseline_ev = logic_confirm(
-            baseline_text, positive_markers=["order confirmed", "payment received",
-                                             "purchase complete", "checkout success"])
+            baseline_text,
+            positive_markers=["order confirmed", "payment received", "purchase complete", "checkout success"],
+        )
         if baseline_ev.verified:
             return []
 
@@ -156,9 +169,16 @@ class TheSkipper(BaseArsenalModule):
             if not isinstance(text, str) or not text:
                 continue
             # Signal 1: post-workflow markers present here AND absent in baseline.
-            ev = logic_confirm(text, positive_markers=[
-                "order confirmed", "payment received", "purchase complete",
-                "checkout success", "thank you for your order"])
+            ev = logic_confirm(
+                text,
+                positive_markers=[
+                    "order confirmed",
+                    "payment received",
+                    "purchase complete",
+                    "checkout success",
+                    "thank you for your order",
+                ],
+            )
             if not ev.verified:
                 continue
             # Signal 2: structural divergence vs baseline.
@@ -167,21 +187,27 @@ class TheSkipper(BaseArsenalModule):
                 continue
 
             if idx == 1:
-                vulns.append(Vulnerability(
-                    name="Workflow Bypass (Direct Access)",
-                    severity="HIGH",
-                    description="Post-workflow page accessible by direct request without "
-                                "completing the prior steps.",
-                    evidence=f"URL: {target.url}. Skipper baseline rejected. {ev.summary}; {diff.summary}",
-                    remediation="Enforce server-side state machine checks at every workflow step.",
-                ))
+                vulns.append(
+                    Vulnerability(
+                        name="Workflow Bypass (Direct Access)",
+                        severity="HIGH",
+                        description="Post-workflow page accessible by direct request without "
+                        "completing the prior steps.",
+                        evidence=f"URL: {target.url}. Skipper baseline rejected. {ev.summary}; {diff.summary}",
+                        remediation="Enforce server-side state machine checks at every workflow step.",
+                    )
+                )
             elif idx == 2:
-                vulns.append(Vulnerability(
-                    name="Workflow Bypass (Referer Spoofing)",
-                    severity="CRITICAL",
-                    description="Post-workflow page accessible by spoofing the Referer header.",
-                    evidence=(f"URL: {target.url}; Referer: {target.headers.get('Referer', '')}. "
-                              f"{ev.summary}; {diff.summary}"),
-                    remediation="Never trust Referer for authorization; use signed/anti-CSRF tokens.",
-                ))
+                vulns.append(
+                    Vulnerability(
+                        name="Workflow Bypass (Referer Spoofing)",
+                        severity="CRITICAL",
+                        description="Post-workflow page accessible by spoofing the Referer header.",
+                        evidence=(
+                            f"URL: {target.url}; Referer: {target.headers.get('Referer', '')}. "
+                            f"{ev.summary}; {diff.summary}"
+                        ),
+                        remediation="Never trust Referer for authorization; use signed/anti-CSRF tokens.",
+                    )
+                )
         return vulns

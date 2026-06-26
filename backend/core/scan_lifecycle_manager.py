@@ -10,28 +10,38 @@ Responsibilities:
   4. Phase transitions with lifecycle event broadcasting
   5. Scan finalization (telemetry collection, report generation)
 """
+
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
-from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections import deque
 
 logger = logging.getLogger(__name__)
 
 # Canonical phase order — used by advance_phase for index calculations
 # and by the frontend for progress bar rendering.
-_PHASE_ORDER = ["PLANNING", "RECONNAISSANCE", "ASSESSMENT",
-                "EXPLOITATION", "REPORTING", "COMPLETED"]
+_PHASE_ORDER = ["PLANNING", "RECONNAISSANCE", "ASSESSMENT", "EXPLOITATION", "REPORTING", "COMPLETED"]
 
 
 class ScanLifecycleManager:
     """Manages scan lifecycle: registration, agent bootstrapping, phase transitions, finalization."""
 
-    def __init__(self, *, manager: Any, stats_db: Any, phase_gate: Any,
-                 event_bus: Any, scan_id: str, target_config: Dict[str, Any],
-                 scan_events: deque, broadcast_throttle: Any):
+    def __init__(
+        self,
+        *,
+        manager: Any,
+        stats_db: Any,
+        phase_gate: Any,
+        event_bus: Any,
+        scan_id: str,
+        target_config: dict[str, Any],
+        scan_events: deque,
+        broadcast_throttle: Any,
+    ):
         self._manager = manager
         self._stats_db = stats_db
         self._phase_gate = phase_gate
@@ -41,7 +51,7 @@ class ScanLifecycleManager:
         self._scan_events = scan_events
         self._broadcast_throttle = broadcast_throttle
         self._start_time: float = time.time()
-        self._phase_durations: Dict[str, float] = {}
+        self._phase_durations: dict[str, float] = {}
 
     # -- 1. Scan Registration -------------------------------------------
 
@@ -74,21 +84,24 @@ class ScanLifecycleManager:
             logger.warning("[Lifecycle] register_scan failed: %s", exc)
 
         await self._broadcast_scan_update("Initializing")
-        await self._broadcast_live_feed("SCAN_INITIALIZED", {
-            "action": "Target Acquired",
-            "url": self._target_config["url"],
-            "scan_id": self._scan_id,
-            "timestamp": time.strftime("%H:%M:%S"),
-            "agent": "Orchestrator",
-            "threat_type": "LIFECYCLE",
-            "severity": "INFO", "risk_score": 0,
-        })
+        await self._broadcast_live_feed(
+            "SCAN_INITIALIZED",
+            {
+                "action": "Target Acquired",
+                "url": self._target_config["url"],
+                "scan_id": self._scan_id,
+                "timestamp": time.strftime("%H:%M:%S"),
+                "agent": "Orchestrator",
+                "threat_type": "LIFECYCLE",
+                "severity": "INFO",
+                "risk_score": 0,
+            },
+        )
         return True
 
     # -- 2. Agent Activation & Registry Wiring --------------------------
 
-    async def activate_agents(self, agents: List[Any], *,
-                              mission_config: Dict[str, Any]) -> None:
+    async def activate_agents(self, agents: list[Any], *, mission_config: dict[str, Any]) -> None:
         """Start all agents and register them in the global active_agents registry.
 
         This replaces the inline ``for agent in agents:`` loop that was
@@ -106,7 +119,7 @@ class ScanLifecycleManager:
         """
         from backend.core.orchestrator import HiveOrchestrator
 
-        activated: List[Any] = []  # successfully started agents
+        activated: list[Any] = []  # successfully started agents
         # Per-scan registry: track which agents belong to this scan
         async with HiveOrchestrator._get_lock():
             if self._scan_id not in HiveOrchestrator._scan_agents:
@@ -126,18 +139,21 @@ class ScanLifecycleManager:
                     # Per-scan registry: track which agents belong to this scan
                     if self._scan_id in HiveOrchestrator._scan_agents:
                         HiveOrchestrator._scan_agents[self._scan_id][agent_name] = agent
-                await self._broadcast_live_feed("AGENT_ACTIVATED", {
-                    "action": f"Agent {agent_name} online",
-                    "url": self._target_config.get("url", ""),
-                    "scan_id": self._scan_id,
-                    "timestamp": time.strftime("%H:%M:%S"),
-                    "agent": agent_name or "unknown",
-                    "threat_type": "LIFECYCLE",
-                    "severity": "INFO", "risk_score": 0,
-                })
+                await self._broadcast_live_feed(
+                    "AGENT_ACTIVATED",
+                    {
+                        "action": f"Agent {agent_name} online",
+                        "url": self._target_config.get("url", ""),
+                        "scan_id": self._scan_id,
+                        "timestamp": time.strftime("%H:%M:%S"),
+                        "agent": agent_name or "unknown",
+                        "threat_type": "LIFECYCLE",
+                        "severity": "INFO",
+                        "risk_score": 0,
+                    },
+                )
             except Exception as exc:
-                logger.error("[Lifecycle] Failed to start agent %s: %s",
-                             agent_name or "?", exc)
+                logger.error("[Lifecycle] Failed to start agent %s: %s", agent_name or "?", exc)
 
         # Replace the caller's list content so downstream code (self-healing,
         # shutdown loop) only sees agents that actually started.
@@ -145,13 +161,11 @@ class ScanLifecycleManager:
         agents.clear()
         agents.extend(activated)
 
-        logger.info("[Lifecycle] Activated %d/%d agents for scan %s",
-                    len(activated), original_count, self._scan_id)
+        logger.info("[Lifecycle] Activated %d/%d agents for scan %s", len(activated), original_count, self._scan_id)
 
     # -- 3. Self-Healing Registration -----------------------------------
 
-    def register_self_healing(self, agents: List[Any], *,
-                              healing_engine: Any) -> None:
+    def register_self_healing(self, agents: list[Any], *, healing_engine: Any) -> None:
         """Register restart callbacks for all agents with the healing engine.
 
         This replaces the inline ``for agent in agents: healing_engine.register_restart_callback(...)``
@@ -167,32 +181,29 @@ class ScanLifecycleManager:
         for agent in agents:
             agent_name = getattr(agent, "name", None)
             if not agent_name:
-                logger.warning("[Lifecycle] Skipping self-healing registration for agent without name: %s",
-                               type(agent).__name__)
+                logger.warning(
+                    "[Lifecycle] Skipping self-healing registration for agent without name: %s", type(agent).__name__
+                )
                 continue
 
             async def restart_callback(a=agent):
                 try:
                     await a.start()
                     a._is_active = True
-                    await self._manager.broadcast({
-                        "type": "GI5_LOG",
-                        "payload": f"SELF-HEALING: Restarted agent {getattr(a, 'name', '?')}"
-                    })
+                    await self._manager.broadcast(
+                        {"type": "GI5_LOG", "payload": f"SELF-HEALING: Restarted agent {getattr(a, 'name', '?')}"}
+                    )
                 except Exception as e:
-                    logger.error("[SelfHealing] Failed to restart %s: %s",
-                                 getattr(a, "name", "?"), e)
+                    logger.error("[SelfHealing] Failed to restart %s: %s", getattr(a, "name", "?"), e)
 
             healing_engine.register_restart_callback(agent_name, restart_callback)
             registered += 1
 
-        logger.info("[Lifecycle] Self-healing callbacks registered for %d agents",
-                    registered)
+        logger.info("[Lifecycle] Self-healing callbacks registered for %d agents", registered)
 
     # -- 4. Phase Transitions -------------------------------------------
 
-    async def advance_phase(self, to_phase: Any, *,
-                            metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def advance_phase(self, to_phase: Any, *, metadata: dict[str, Any] | None = None) -> None:
         """Advance to the next scan phase and broadcast lifecycle events.
 
         Emits three events on each transition:
@@ -213,54 +224,65 @@ class ScanLifecycleManager:
         elapsed = time.time() - self._start_time
         if from_phase != "UNKNOWN":
             self._phase_durations[str(from_phase)] = time.time() - phase_start
-        await self._broadcast_event("PHASE_COMPLETED", {
-            "phase": str(from_phase),
-            "scan_id": self._scan_id,
-            "timestamp": time.strftime("%H:%M:%S"),
-            **(metadata or {}),
-        })
-        await self._broadcast_event("PHASE_STARTED", {
-            "phase": str(to_phase),
-            "scan_id": self._scan_id,
-            "timestamp": time.strftime("%H:%M:%S"),
-        })
+        await self._broadcast_event(
+            "PHASE_COMPLETED",
+            {
+                "phase": str(from_phase),
+                "scan_id": self._scan_id,
+                "timestamp": time.strftime("%H:%M:%S"),
+                **(metadata or {}),
+            },
+        )
+        await self._broadcast_event(
+            "PHASE_STARTED",
+            {
+                "phase": str(to_phase),
+                "scan_id": self._scan_id,
+                "timestamp": time.strftime("%H:%M:%S"),
+            },
+        )
         # Unified PHASE_STATUS: single event the frontend uses to render
         # the current scan phase and overall progress.
         try:
             _cur_idx = _PHASE_ORDER.index(str(to_phase))
         except ValueError:
             _cur_idx = -1
-        await self._broadcast_event("PHASE_STATUS", {
-            "scan_id": self._scan_id,
-            "current_phase": str(to_phase),
-            "previous_phase": str(from_phase),
-            "phase_index": _cur_idx,
-            "total_phases": len(_PHASE_ORDER),
-            "phase_names": list(_PHASE_ORDER),
-            "elapsed_seconds": round(elapsed, 1),
-            "phase_durations": dict(self._phase_durations),
-            "timestamp": time.strftime("%H:%M:%S"),
-            **(metadata or {}),
-        })
+        await self._broadcast_event(
+            "PHASE_STATUS",
+            {
+                "scan_id": self._scan_id,
+                "current_phase": str(to_phase),
+                "previous_phase": str(from_phase),
+                "phase_index": _cur_idx,
+                "total_phases": len(_PHASE_ORDER),
+                "phase_names": list(_PHASE_ORDER),
+                "elapsed_seconds": round(elapsed, 1),
+                "phase_durations": dict(self._phase_durations),
+                "timestamp": time.strftime("%H:%M:%S"),
+                **(metadata or {}),
+            },
+        )
         logger.info("[Lifecycle] Phase: %s -> %s", from_phase, to_phase)
 
-    async def broadcast_phase_feed(self, phase_name: str, message: str,
-                                   **extra: Any) -> None:
+    async def broadcast_phase_feed(self, phase_name: str, message: str, **extra: Any) -> None:
         """Broadcast a LIVE_ATTACK_FEED update for a phase event."""
-        await self._broadcast_live_feed(phase_name, {
-            "action": message,
-            "scan_id": self._scan_id,
-            "timestamp": time.strftime("%H:%M:%S"),
-            "agent": "Orchestrator",
-            "threat_type": "PHASE_TRANSITION",
-            "severity": "INFO", "risk_score": 0,
-            **extra,
-        })
+        await self._broadcast_live_feed(
+            phase_name,
+            {
+                "action": message,
+                "scan_id": self._scan_id,
+                "timestamp": time.strftime("%H:%M:%S"),
+                "agent": "Orchestrator",
+                "threat_type": "PHASE_TRANSITION",
+                "severity": "INFO",
+                "risk_score": 0,
+                **extra,
+            },
+        )
 
     # -- 5. Scan Finalization -------------------------------------------
 
-    async def finalize(self, *, report_generator: Any = None,
-                       ai_cortex: Any = None) -> Dict[str, Any]:
+    async def finalize(self, *, report_generator: Any = None, ai_cortex: Any = None) -> dict[str, Any]:
         """Finalize the scan: collect telemetry, generate report."""
         telemetry = self._collect_telemetry(ai_cortex=ai_cortex)
         if report_generator:
@@ -268,23 +290,26 @@ class ScanLifecycleManager:
                 await report_generator.generate(self._scan_id)
             except Exception as exc:
                 logger.error("[Lifecycle] Report generation failed: %s", exc)
-        await self._broadcast_event("SCAN_COMPLETE", {
-            "scan_id": self._scan_id,
-            "telemetry": telemetry,
-            "timestamp": time.strftime("%H:%M:%S"),
-        })
+        await self._broadcast_event(
+            "SCAN_COMPLETE",
+            {
+                "scan_id": self._scan_id,
+                "telemetry": telemetry,
+                "timestamp": time.strftime("%H:%M:%S"),
+            },
+        )
         return telemetry
 
     # -- Internal helpers -----------------------------------------------
 
-    def _collect_telemetry(self, *, ai_cortex: Any = None) -> Dict[str, Any]:
+    def _collect_telemetry(self, *, ai_cortex: Any = None) -> dict[str, Any]:
         """Collect scan-level telemetry metrics.
 
         This is used by finalize() to produce the telemetry payload.
         ai_cortex is optional — if provided, its get_telemetry() is merged.
         """
         elapsed = time.time() - self._start_time
-        telemetry: Dict[str, Any] = {
+        telemetry: dict[str, Any] = {
             "scan_id": self._scan_id,
             "duration_seconds": round(elapsed, 1),
             "phase_durations": dict(self._phase_durations),
@@ -302,21 +327,25 @@ class ScanLifecycleManager:
 
     async def _broadcast_scan_update(self, status: str) -> None:
         try:
-            await self._manager.broadcast({
-                "type": "SCAN_UPDATE", "scan_id": self._scan_id,
-                "status": status, "timestamp": time.strftime("%H:%M:%S"),
-            })
+            await self._manager.broadcast(
+                {
+                    "type": "SCAN_UPDATE",
+                    "scan_id": self._scan_id,
+                    "status": status,
+                    "timestamp": time.strftime("%H:%M:%S"),
+                }
+            )
         except Exception as exc:
             # HIGH-9: Log at warning level so broadcast failures are visible
             logger.warning("[Lifecycle] broadcast_scan_update failed: %s", exc)
 
-    async def _broadcast_live_feed(self, action: str, data: Dict[str, Any]) -> None:
+    async def _broadcast_live_feed(self, action: str, data: dict[str, Any]) -> None:
         try:
             await self._manager.broadcast({"type": "LIVE_ATTACK_FEED", **data})
         except Exception as exc:
             logger.warning("[Lifecycle] broadcast_live_feed failed: %s", exc)
 
-    async def _broadcast_event(self, event_type: str, data: Dict[str, Any]) -> None:
+    async def _broadcast_event(self, event_type: str, data: dict[str, Any]) -> None:
         try:
             await self._manager.broadcast({"type": event_type, **data})
         except Exception as exc:

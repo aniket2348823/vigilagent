@@ -13,18 +13,21 @@ runner no longer owns subprocess logic. It:
 The public surface (ReconCommandRunner.execute / .run, ReconCommandResult) is
 unchanged so existing callers (alpha_orchestrator) keep working.
 """
+
 from __future__ import annotations
 
 import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from backend.core.database import db_manager
-from backend.core.iteration_budget import IterationBudget
-from backend.tools.recon.commands import ReconCommand
 from backend.tools.recon.guardrails import validate_output_path
+
+if TYPE_CHECKING:
+    from backend.core.iteration_budget import IterationBudget
+    from backend.tools.recon.commands import ReconCommand
 
 logger = logging.getLogger("alpha.runner")
 
@@ -51,38 +54,53 @@ class ReconCommandResult:
 class ReconCommandRunner:
     """Runs recon tools through the governed Terminal Engine."""
 
-    def __init__(self, engine: "TerminalEngine | None" = None) -> None:
+    def __init__(self, engine: TerminalEngine | None = None) -> None:
         # Lazy import avoids a circular dependency: terminal_engine imports
         # tools.recon.guardrails, and the tools.recon package __init__ imports
         # this runner.
         if engine is None:
             from backend.core.terminal_engine import terminal_engine
+
             engine = terminal_engine
         self.engine = engine
 
-    async def execute(self, command: ReconCommand, *, scan_id: str = "GLOBAL",
-                      agent: str = "agent_alpha",
-                      budget: IterationBudget | None = None) -> ReconCommandResult:
+    async def execute(
+        self,
+        command: ReconCommand,
+        *,
+        scan_id: str = "GLOBAL",
+        agent: str = "agent_alpha",
+        budget: IterationBudget | None = None,
+    ) -> ReconCommandResult:
         """Execute a validated recon command via the Terminal Engine."""
         # Output-path traversal guard (kept here as a cheap pre-check).
         if not validate_output_path(str(command.output_path)):
             return ReconCommandResult(
-                tool_name=command.tool_name, phase=command.phase,
-                status="blocked", exit_code=-1,
+                tool_name=command.tool_name,
+                phase=command.phase,
+                status="blocked",
+                exit_code=-1,
                 output_path=str(command.output_path),
-                skipped_reason="output_path_traversal")
+                skipped_reason="output_path_traversal",
+            )
 
         command.output_path.parent.mkdir(parents=True, exist_ok=True)
         call_id = f"recon_{command.tool_name}_{hashlib.sha256(str(command.argv).encode()).hexdigest()[:12]}"
 
         # Register toolcall in database (audit — retained per §29.13).
         await db_manager.create_toolcall(
-            call_id=call_id, scan_id=scan_id,
-            tool_name=command.tool_name, agent=agent,
-            args={"argv": list(command.argv), "stdin": bool(command.stdin),
-                  "output_path": str(command.output_path),
-                  "timeout": command.timeout_seconds},
-            status="running")
+            call_id=call_id,
+            scan_id=scan_id,
+            tool_name=command.tool_name,
+            agent=agent,
+            args={
+                "argv": list(command.argv),
+                "stdin": bool(command.stdin),
+                "output_path": str(command.output_path),
+                "timeout": command.timeout_seconds,
+            },
+            status="running",
+        )
 
         started = time.time()
         term = await self.engine.run(
@@ -121,36 +139,58 @@ class ReconCommandRunner:
 
         if status in ("blocked",):
             await db_manager.finish_toolcall(
-                call_id=call_id, status="blocked",
-                error=term.block_reason, duration_ms=duration_ms)
+                call_id=call_id, status="blocked", error=term.block_reason, duration_ms=duration_ms
+            )
             return ReconCommandResult(
-                tool_name=command.tool_name, phase=command.phase,
-                status="blocked", exit_code=term.exit_code or -1,
+                tool_name=command.tool_name,
+                phase=command.phase,
+                status="blocked",
+                exit_code=term.exit_code or -1,
                 output_path=term.output_path,
                 skipped_reason=term.block_reason,
                 duration_ms=duration_ms,
-                metadata={"backend": term.backend})
+                metadata={"backend": term.backend},
+            )
 
         await db_manager.finish_toolcall(
-            call_id=call_id, status=status,
+            call_id=call_id,
+            status=status,
             result=result_data,
             error="" if status == "finished" else stderr_truncated,
             duration_ms=duration_ms,
-            result_bytes=term.output_bytes, result_sha256=term.sha256)
+            result_bytes=term.output_bytes,
+            result_sha256=term.sha256,
+        )
 
-        logger.info("[RUNNER] %s %s in %dms (%d bytes, %s)",
-                    command.tool_name, status, duration_ms, term.output_bytes, term.backend)
+        logger.info(
+            "[RUNNER] %s %s in %dms (%d bytes, %s)",
+            command.tool_name,
+            status,
+            duration_ms,
+            term.output_bytes,
+            term.backend,
+        )
 
         return ReconCommandResult(
-            tool_name=command.tool_name, phase=command.phase,
-            status=status, exit_code=term.exit_code if term.exit_code is not None else 124,
+            tool_name=command.tool_name,
+            phase=command.phase,
+            status=status,
+            exit_code=term.exit_code if term.exit_code is not None else 124,
             output_path=term.output_path,
             stderr=stderr_truncated,
-            duration_ms=duration_ms, sha256=term.sha256, bytes=term.output_bytes,
-            metadata={"parser_hint": command.parser_hint, "backend": term.backend})
+            duration_ms=duration_ms,
+            sha256=term.sha256,
+            bytes=term.output_bytes,
+            metadata={"parser_hint": command.parser_hint, "backend": term.backend},
+        )
 
     # Legacy compatibility alias
-    async def run(self, command: ReconCommand, *, scan_id: str = "GLOBAL",
-                  agent: str = "agent_alpha",
-                  budget: IterationBudget | None = None) -> ReconCommandResult:
+    async def run(
+        self,
+        command: ReconCommand,
+        *,
+        scan_id: str = "GLOBAL",
+        agent: str = "agent_alpha",
+        budget: IterationBudget | None = None,
+    ) -> ReconCommandResult:
         return await self.execute(command, scan_id=scan_id, agent=agent, budget=budget)

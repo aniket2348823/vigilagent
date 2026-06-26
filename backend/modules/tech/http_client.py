@@ -8,11 +8,11 @@ import aiohttp
 
 from backend.core.content_boundary import content_boundary
 from backend.core.database import db_manager
-from backend.core.unified_knowledge_graph import knowledge_graph
 from backend.core.proxy import network_interceptor
 from backend.core.scope import ScopePolicy
 from backend.core.stdout_watchdog import watch_output
 from backend.core.tool_types import enforce_state_change_barrier
+from backend.core.unified_knowledge_graph import knowledge_graph
 
 
 @dataclass
@@ -39,7 +39,7 @@ class BoundedHTTPHistory:
     def add(self, record: HTTPRecord) -> HTTPRecord:
         # FIX-022: Truncate oversized response bodies to prevent memory exhaustion
         if len(record.response_body) > HTTPRecord._MAX_BODY_LEN:
-            record.response_body = record.response_body[:HTTPRecord._MAX_BODY_LEN] + "\n[TRUNCATED_BY_BOUNDED_HISTORY]"
+            record.response_body = record.response_body[: HTTPRecord._MAX_BODY_LEN] + "\n[TRUNCATED_BY_BOUNDED_HISTORY]"
         self._items[record.id] = record
         self._items.move_to_end(record.id)
         while len(self._items) > self.max_items:
@@ -58,13 +58,15 @@ class BoundedHTTPHistory:
         right = self.get(right_id)
         if not left or not right:
             raise KeyError("Both request ids must exist in history")
-        return "\n".join(difflib.unified_diff(
-            left.response_body.splitlines(),
-            right.response_body.splitlines(),
-            fromfile=left_id,
-            tofile=right_id,
-            lineterm="",
-        ))
+        return "\n".join(
+            difflib.unified_diff(
+                left.response_body.splitlines(),
+                right.response_body.splitlines(),
+                fromfile=left_id,
+                tofile=right_id,
+                lineterm="",
+            )
+        )
 
 
 class ReplayHTTPClient:
@@ -91,7 +93,7 @@ class ReplayHTTPClient:
             self.scope.assert_allowed(url, action=f"{method.upper()} request")
         if self.cookie_jar is None:
             self.cookie_jar = aiohttp.CookieJar(unsafe=False)
-        start = time.time()
+        time.time()
         # Reuse cached session for connection pooling (HIGH-1 fix)
         if self._session is None or self._session.closed:
             if self.cookie_jar is None:

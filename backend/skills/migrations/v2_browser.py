@@ -39,25 +39,25 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 logger = logging.getLogger("v2_browser_migration")
 
 # --- Migration constants -------------------------------------------------
 V2_VERSION_DEFAULT = "1.0.0"
 V2_EXECUTION_CONTEXT_DEFAULT = "http_only"
-V2_REQUIRED_CAPABILITIES_DEFAULT: List[str] = []
+V2_REQUIRED_CAPABILITIES_DEFAULT: list[str] = []
 V2_SENTINEL = ".v2_migration_complete"
 V2_REQUIRED_FIELDS = ("version", "execution_context", "required_capabilities")
 
 
 # --- Internal helpers ----------------------------------------------------
-def _is_v2(record: Dict[str, Any]) -> bool:
+def _is_v2(record: dict[str, Any]) -> bool:
     """Return True if a skill record already carries every v2 field."""
     return all(k in record for k in V2_REQUIRED_FIELDS)
 
 
-def _upgrade_record(record: Dict[str, Any]) -> Dict[str, Any]:
+def _upgrade_record(record: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of ``record`` with any missing v2 field filled in."""
     upgraded = dict(record)
     if "version" not in upgraded:
@@ -92,15 +92,15 @@ def migrate(
     brain_dir: str = "brain",
     apply: bool = False,
     force: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run the v1 -> v2 browser-aware skill migration.
-    
+
     Args:
         brain_dir: Brain directory root (mirrors SkillLibrary's default).
         apply:     When False, returns a report without writing any files.
         force:     When True, ignore the v2 sentinel and re-run the
                    migration even if it was previously completed.
-    
+
     Returns:
         A report dict with: ``files_seen``, ``files_upgraded``,
         ``files_already_v2``, ``files_failed``, ``re_imported``,
@@ -109,8 +109,8 @@ def migrate(
     started = time.time()
     skills_dir = Path(brain_dir) / "skills"
     sentinel_path = skills_dir / V2_SENTINEL
-    
-    report: Dict[str, Any] = {
+
+    report: dict[str, Any] = {
         "files_seen": 0,
         "files_upgraded": 0,
         "files_already_v2": 0,
@@ -121,7 +121,7 @@ def migrate(
         "failed_paths": [],
         "skipped_due_to_sentinel": False,
     }
-    
+
     # Idempotency short-circuit: sentinel present and not --force.
     if not force and sentinel_path.exists():
         report["skipped_due_to_sentinel"] = True
@@ -131,9 +131,9 @@ def migrate(
             sentinel_path,
         )
         return report
-    
+
     # ---- 1. Walk every skill JSON and upgrade in place --------------
-    upgraded_records: List[Tuple[Path, Dict[str, Any]]] = []
+    upgraded_records: list[tuple[Path, dict[str, Any]]] = []
     for skill_path in _iter_skill_files(skills_dir):
         report["files_seen"] += 1
         try:
@@ -144,9 +144,7 @@ def migrate(
             report["failed_paths"].append(str(skill_path))
             continue
         if not isinstance(record, dict):
-            logger.warning(
-                "[v2_browser] %s is not a JSON object; skipping", skill_path
-            )
+            logger.warning("[v2_browser] %s is not a JSON object; skipping", skill_path)
             continue
         if _is_v2(record):
             report["files_already_v2"] += 1
@@ -165,7 +163,7 @@ def migrate(
                 logger.error("[v2_browser] cannot write %s: %s", skill_path, e)
                 report["files_failed"] += 1
                 report["failed_paths"].append(str(skill_path))
-    
+
     # ---- 2. Re-import every upgraded record through SkillLibrary ----
     # so the capability/context/framework indexes get populated. This is
     # done LAST so a partial failure on any single record doesn't corrupt
@@ -177,13 +175,12 @@ def migrate(
             # initialise cleanly (e.g. during tests).
             from backend.core.skill_library import (
                 BrowserSkill,
+            )
+            from backend.core.skill_library import (
                 skill_library as _skill_library,
             )
         except Exception as e:
-            logger.error(
-                "[v2_browser] cannot import SkillLibrary; "
-                "re-import phase skipped: %s", e
-            )
+            logger.error("[v2_browser] cannot import SkillLibrary; re-import phase skipped: %s", e)
         else:
             for skill_path, record in upgraded_records:
                 # Only browser-shape skills go through add_browser_skill;
@@ -195,10 +192,7 @@ def migrate(
                 try:
                     skill = BrowserSkill.from_dict(record)
                 except Exception as e:
-                    logger.error(
-                        "[v2_browser] cannot rehydrate browser skill from "
-                        "%s: %s", skill_path, e
-                    )
+                    logger.error("[v2_browser] cannot rehydrate browser skill from %s: %s", skill_path, e)
                     continue
                 try:
                     # add_browser_skill returns False on duplicate skill_id;
@@ -208,19 +202,19 @@ def migrate(
                 except Exception as e:
                     logger.error(
                         "[v2_browser] add_browser_skill failed for %s: %s",
-                        skill_path, e,
+                        skill_path,
+                        e,
                     )
-            
+
             # Refresh indexes once at the end so http_only skills also pick
             # up their (empty) required_capabilities entry where applicable.
             try:
                 from backend.core.skill_library import browser_skill_library
+
                 browser_skill_library._rebuild_indexes()
             except Exception as e:
-                logger.warning(
-                    "[v2_browser] index rebuild failed (non-fatal): %s", e
-                )
-    
+                logger.warning("[v2_browser] index rebuild failed (non-fatal): %s", e)
+
     # ---- 3. Drop the sentinel so re-runs short-circuit --------------
     if apply and report["files_failed"] == 0:
         try:
@@ -240,7 +234,7 @@ def migrate(
             report["sentinel_written"] = True
         except Exception as e:
             logger.warning("[v2_browser] sentinel write failed: %s", e)
-    
+
     report["elapsed_seconds"] = round(time.time() - started, 4)
     return report
 
@@ -279,20 +273,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: List[str] = None) -> int:
+def main(argv: list[str] = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="[%(asctime)s] %(levelname)-7s %(name)s :: %(message)s",
     )
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
-    
+
     report = migrate(
         brain_dir=args.brain_dir,
         apply=bool(args.apply),
         force=bool(args.force),
     )
-    
+
     print(json.dumps(report, indent=2, default=str))
     # Non-zero exit if any record failed to migrate.
     return 1 if report["files_failed"] > 0 else 0

@@ -4,17 +4,20 @@ Alpha V6 Phase Controller.
 Manages the multi-phase recon pipeline with gates, state tracking,
 and parse-after-run integration. Each phase feeds the next.
 """
+
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from backend.agents.alpha_recon.models import ReconPhase, ReconScope, ScanMode, ToolSkip
-from backend.parsers.recon.base import ParsedEntity
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from backend.parsers.recon.base import ParsedEntity
 
 logger = logging.getLogger("alpha.phases")
 
@@ -41,6 +44,7 @@ class PhaseResult:
 @dataclass
 class PhaseState:
     """Accumulated state that flows between phases."""
+
     subdomains: set[str] = field(default_factory=set)
     ips: set[str] = field(default_factory=set)
     live_hosts: list[str] = field(default_factory=list)
@@ -165,13 +169,19 @@ class PhaseController:
         if entities:
             self.state.add_entities(entities)
             result.entities_produced = len(entities)
-        logger.info(f"[Alpha] Phase {phase.value} completed: {result.entities_produced} entities in {result.duration_ms}ms")
+        logger.info(
+            f"[Alpha] Phase {phase.value} completed: {result.entities_produced} entities in {result.duration_ms}ms"
+        )
         return result
 
     def skip_phase(self, phase: ReconPhase, reason: str) -> PhaseResult:
-        result = PhaseResult(phase=phase, status="skipped",
-                             started_at=time.time(), finished_at=time.time(),
-                             metadata={"skip_reason": reason})
+        result = PhaseResult(
+            phase=phase,
+            status="skipped",
+            started_at=time.time(),
+            finished_at=time.time(),
+            metadata={"skip_reason": reason},
+        )
         self.results[phase] = result
         logger.info(f"[Alpha] Phase {phase.value} skipped: {reason}")
         return result

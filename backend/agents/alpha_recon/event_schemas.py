@@ -4,6 +4,7 @@ Alpha V6 Structured Event Schemas.
 Type-safe Pydantic schemas for all EventBus payloads emitted by Alpha.
 Replaces loose dicts with validated, documented event structures.
 """
+
 from __future__ import annotations
 
 import time
@@ -14,12 +15,14 @@ from pydantic import BaseModel, Field
 
 class ReconEventBase(BaseModel):
     """Base schema for all Alpha recon events."""
+
     scan_id: str
     agent: str = "agent_alpha"
     timestamp: float = Field(default_factory=time.time)
 
 
 # ── Phase Lifecycle Events ────────────────────────────────────
+
 
 class PhaseStartedEvent(ReconEventBase):
     event_type: Literal["RECON_PHASE_STARTED"] = "RECON_PHASE_STARTED"
@@ -39,6 +42,7 @@ class PhaseCompletedEvent(ReconEventBase):
 
 
 # ── Tool Lifecycle Events ─────────────────────────────────────
+
 
 class ToolStartedEvent(ReconEventBase):
     event_type: Literal["RECON_TOOL_STARTED"] = "RECON_TOOL_STARTED"
@@ -67,6 +71,7 @@ class ToolSkippedEvent(ReconEventBase):
 
 
 # ── Entity Discovery Events ──────────────────────────────────
+
 
 class EntityDiscoveredEvent(ReconEventBase):
     event_type: Literal["RECON_ENTITY_DISCOVERED"] = "RECON_ENTITY_DISCOVERED"
@@ -100,6 +105,7 @@ class SecretFoundEvent(ReconEventBase):
 
 # ── Scope & Approval Events ──────────────────────────────────
 
+
 class ScopeViolationEvent(ReconEventBase):
     event_type: Literal["RECON_SCOPE_VIOLATION"] = "RECON_SCOPE_VIOLATION"
     target: str
@@ -125,6 +131,7 @@ class ApprovalResponseEvent(ReconEventBase):
 
 # ── Scan Lifecycle Events ─────────────────────────────────────
 
+
 class ReconStartedEvent(ReconEventBase):
     event_type: Literal["RECON_STARTED"] = "RECON_STARTED"
     target: str
@@ -134,6 +141,7 @@ class ReconStartedEvent(ReconEventBase):
 
 class ReconPacketEvent(ReconEventBase):
     """Incremental recon data packet — sent after each phase."""
+
     event_type: Literal["RECON_PACKET"] = "RECON_PACKET"
     phase: str
     subdomains: list[str] = Field(default_factory=list)
@@ -147,6 +155,7 @@ class ReconPacketEvent(ReconEventBase):
 
 class ReconCompleteEvent(ReconEventBase):
     """Final recon completion event — contains full summary for downstream agents."""
+
     event_type: Literal["RECON_COMPLETE"] = "RECON_COMPLETE"
     target: str
     mode: str
@@ -168,6 +177,7 @@ class ReconCompleteEvent(ReconEventBase):
 
 
 # ── OOB Interaction Events ────────────────────────────────────
+
 
 class OOBInteractionEvent(ReconEventBase):
     event_type: Literal["RECON_OOB_INTERACTION"] = "RECON_OOB_INTERACTION"

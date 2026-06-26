@@ -1,0 +1,19 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: slack
+    receivers:
+      - uid: slack-channel
+        type: slack
+        settings:
+          url: "${SLACK_WEBHOOK_URL}"
+          recipient: "#vigilagent-alerts"
+          title: "{{ len .Alerts.Firing }} firing alert(s)"
+          text: |-
+            {{ range .Alerts }}
+            *{{ .Labels.alertname }}* ({{ .Labels.severity }})
+            {{ .Annotations.summary }}
+            {{ .Annotations.description }}
+            ---
+            {{ end }}

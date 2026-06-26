@@ -20,22 +20,25 @@ Tables (Architecture §5.6):
   events, approvals, findings, evidence, skills, skill_runs, learning_updates,
   graph_nodes, graph_edges, checkpoints
 """
+
 from __future__ import annotations
 
 import json
 import logging
-import os
 import random
 import sqlite3
 import threading
 import time
 import uuid
-from contextlib import contextmanager
-from datetime import datetime, timezone
+from contextlib import contextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any
 
 from backend.core.perf import dumps_fast
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 logger = logging.getLogger("vigilagent.scan_state_db")
 
@@ -247,7 +250,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _loads(value: Any) -> dict:
@@ -262,6 +265,7 @@ def _loads(value: Any) -> dict:
     except Exception as e:
         logger.debug("[ScanStateDB] _loads decode failed: %s", e)
         return {}
+
 
 class ScanStateDB:
     """Durable SQLite state for scan execution (Architecture §5.6)."""
@@ -309,8 +313,7 @@ class ScanStateDB:
         if from_version >= _SCHEMA_VERSION:
             return
         # v1 -> v2: enrich checkpoints with safe-boundary/resume columns (§20).
-        existing = {r["name"] for r in
-                    self._conn.execute("PRAGMA table_info(checkpoints);").fetchall()}
+        existing = {r["name"] for r in self._conn.execute("PRAGMA table_info(checkpoints);").fetchall()}
         for col, ddl in (
             ("boundary", "ALTER TABLE checkpoints ADD COLUMN boundary TEXT;"),
             ("safe", "ALTER TABLE checkpoints ADD COLUMN safe INTEGER DEFAULT 1;"),
@@ -318,10 +321,8 @@ class ScanStateDB:
             ("remaining_tasks", "ALTER TABLE checkpoints ADD COLUMN remaining_tasks TEXT;"),
         ):
             if col not in existing:
-                try:
+                with suppress(sqlite3.OperationalError):
                     self._conn.execute(ddl)
-                except sqlite3.OperationalError:
-                    pass
         self._conn.execute("UPDATE schema_version SET version=?;", (_SCHEMA_VERSION,))
 
     # ── Jittered write retry (Architecture §5.6) ──────────────────────────────
@@ -345,40 +346,55 @@ class ScanStateDB:
     def _index(self, scan_id: str, kind: str, ref_id: str, text: str) -> None:
         if not self._fts_enabled or not text:
             return
-        try:
+        with suppress(sqlite3.OperationalError):
             self._conn.execute(
                 "INSERT INTO search_index (scan_id, kind, ref_id, text) VALUES (?,?,?,?);",
                 (scan_id, kind, ref_id, text[:8000]),
             )
-        except sqlite3.OperationalError:
-            pass
 
     # ── Scans ──────────────────────────────────────────────────────────────────
 
-    def upsert_scan(self, scan_id: str, *, target: str = "", mode: str = "", phase: str = "",
-                    status: str = "running", authorized: bool = False,
-                    parent_scan_id: str | None = None, meta: dict | None = None) -> None:
+    def upsert_scan(
+        self,
+        scan_id: str,
+        *,
+        target: str = "",
+        mode: str = "",
+        phase: str = "",
+        status: str = "running",
+        authorized: bool = False,
+        parent_scan_id: str | None = None,
+        meta: dict | None = None,
+    ) -> None:
         with self._write() as c:
             existing = c.execute("SELECT scan_id FROM scans WHERE scan_id=?;", (scan_id,)).fetchone()
             if existing:
                 c.execute(
                     "UPDATE scans SET target=?, mode=?, phase=?, status=?, authorized=?, "
                     "updated_at=?, meta=? WHERE scan_id=?;",
-                    (target, mode, phase, status, int(authorized), _now(),
-                     json.dumps(meta or {}), scan_id),
+                    (target, mode, phase, status, int(authorized), _now(), json.dumps(meta or {}), scan_id),
                 )
             else:
                 c.execute(
                     "INSERT INTO scans (scan_id, parent_scan_id, target, mode, phase, status, "
                     "authorized, created_at, updated_at, meta) VALUES (?,?,?,?,?,?,?,?,?,?);",
-                    (scan_id, parent_scan_id, target, mode, phase, status, int(authorized),
-                     _now(), _now(), json.dumps(meta or {})),
+                    (
+                        scan_id,
+                        parent_scan_id,
+                        target,
+                        mode,
+                        phase,
+                        status,
+                        int(authorized),
+                        _now(),
+                        _now(),
+                        json.dumps(meta or {}),
+                    ),
                 )
 
     def set_phase(self, scan_id: str, phase: str) -> None:
         with self._write() as c:
-            c.execute("UPDATE scans SET phase=?, updated_at=? WHERE scan_id=?;",
-                      (phase, _now(), scan_id))
+            c.execute("UPDATE scans SET phase=?, updated_at=? WHERE scan_id=?;", (phase, _now(), scan_id))
 
     def get_scan(self, scan_id: str) -> dict | None:
         with self._lock:
@@ -387,59 +403,111 @@ class ScanStateDB:
 
     # ── Tasks + durable leases (Architecture §5.6) ────────────────────────────
 
-    def upsert_task(self, task_id: str, scan_id: str, *, agent: str = "", objective: str = "",
-                    phase: str = "", status: str = "pending", parent_task_id: str | None = None,
-                    payload: dict | None = None) -> None:
+    def upsert_task(
+        self,
+        task_id: str,
+        scan_id: str,
+        *,
+        agent: str = "",
+        objective: str = "",
+        phase: str = "",
+        status: str = "pending",
+        parent_task_id: str | None = None,
+        payload: dict | None = None,
+    ) -> None:
         with self._write() as c:
             exists = c.execute("SELECT task_id FROM tasks WHERE task_id=?;", (task_id,)).fetchone()
             if exists:
-                c.execute("UPDATE tasks SET status=?, updated_at=?, payload=? WHERE task_id=?;",
-                          (status, _now(), json.dumps(payload or {}), task_id))
+                c.execute(
+                    "UPDATE tasks SET status=?, updated_at=?, payload=? WHERE task_id=?;",
+                    (status, _now(), json.dumps(payload or {}), task_id),
+                )
             else:
                 c.execute(
                     "INSERT INTO tasks (task_id, scan_id, parent_task_id, agent, objective, phase, "
                     "status, created_at, updated_at, payload) VALUES (?,?,?,?,?,?,?,?,?,?);",
-                    (task_id, scan_id, parent_task_id, agent, objective, phase, status,
-                     _now(), _now(), json.dumps(payload or {})),
+                    (
+                        task_id,
+                        scan_id,
+                        parent_task_id,
+                        agent,
+                        objective,
+                        phase,
+                        status,
+                        _now(),
+                        _now(),
+                        json.dumps(payload or {}),
+                    ),
                 )
 
     def acquire_lease(self, task_id: str, owner: str, ttl_seconds: int = 300) -> bool:
         """Acquire a durable task lease; returns False if held by another live owner."""
         now = time.time()
         with self._write() as c:
-            row = c.execute("SELECT lease_owner, lease_expires_at FROM tasks WHERE task_id=?;",
-                            (task_id,)).fetchone()
-            if row and row["lease_owner"] and row["lease_expires_at"] and row["lease_expires_at"] > now \
-                    and row["lease_owner"] != owner:
+            row = c.execute("SELECT lease_owner, lease_expires_at FROM tasks WHERE task_id=?;", (task_id,)).fetchone()
+            if (
+                row
+                and row["lease_owner"]
+                and row["lease_expires_at"]
+                and row["lease_expires_at"] > now
+                and row["lease_owner"] != owner
+            ):
                 return False
-            c.execute("UPDATE tasks SET lease_owner=?, lease_expires_at=?, status='running', updated_at=? "
-                      "WHERE task_id=?;", (owner, now + ttl_seconds, _now(), task_id))
+            c.execute(
+                "UPDATE tasks SET lease_owner=?, lease_expires_at=?, status='running', updated_at=? WHERE task_id=?;",
+                (owner, now + ttl_seconds, _now(), task_id),
+            )
             return True
 
     def release_lease(self, task_id: str, *, status: str = "completed") -> None:
         with self._write() as c:
-            c.execute("UPDATE tasks SET lease_owner=NULL, lease_expires_at=NULL, status=?, updated_at=? "
-                      "WHERE task_id=?;", (status, _now(), task_id))
+            c.execute(
+                "UPDATE tasks SET lease_owner=NULL, lease_expires_at=NULL, status=?, updated_at=? WHERE task_id=?;",
+                (status, _now(), task_id),
+            )
 
     def pending_tasks(self, scan_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM tasks WHERE scan_id=? AND status IN ('pending','running');",
-                (scan_id,)).fetchall()
+                "SELECT * FROM tasks WHERE scan_id=? AND status IN ('pending','running');", (scan_id,)
+            ).fetchall()
         return [dict(r) for r in rows]
 
     # ── Tool runs (Architecture §8 audit) ─────────────────────────────────────
 
-    def record_tool_run(self, tool_run_id: str, scan_id: str, *, tool: str, agent: str,
-                        backend: str, exit_code: int | None, status: str, duration_ms: int,
-                        output_sha256: str = "", output_summary: str = "") -> None:
+    def record_tool_run(
+        self,
+        tool_run_id: str,
+        scan_id: str,
+        *,
+        tool: str,
+        agent: str,
+        backend: str,
+        exit_code: int | None,
+        status: str,
+        duration_ms: int,
+        output_sha256: str = "",
+        output_summary: str = "",
+    ) -> None:
         with self._write() as c:
             c.execute(
                 "INSERT OR REPLACE INTO tool_runs (tool_run_id, scan_id, tool, agent, backend, "
                 "exit_code, status, duration_ms, output_sha256, output_summary, created_at) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?);",
-                (tool_run_id, scan_id, tool, agent, backend, exit_code, status, duration_ms,
-                 output_sha256, output_summary, _now()))
+                (
+                    tool_run_id,
+                    scan_id,
+                    tool,
+                    agent,
+                    backend,
+                    exit_code,
+                    status,
+                    duration_ms,
+                    output_sha256,
+                    output_summary,
+                    _now(),
+                ),
+            )
             self._index(scan_id, "tool_run", tool_run_id, f"{tool} {output_summary}")
 
     # ── Messages / events (FTS-indexed) ───────────────────────────────────────
@@ -448,14 +516,16 @@ class ScanStateDB:
         with self._write() as c:
             cur = c.execute(
                 "INSERT INTO messages (scan_id, role, agent, content, created_at) VALUES (?,?,?,?,?);",
-                (scan_id, role, agent, content, _now()))
+                (scan_id, role, agent, content, _now()),
+            )
             self._index(scan_id, "message", str(cur.lastrowid), content)
 
     def add_event(self, scan_id: str, etype: str, source: str, payload: dict | None = None) -> None:
         with self._write() as c:
             c.execute(
                 "INSERT INTO events (scan_id, type, source, payload, created_at) VALUES (?,?,?,?,?);",
-                (scan_id, etype, source, json.dumps(payload or {}), _now()))
+                (scan_id, etype, source, json.dumps(payload or {}), _now()),
+            )
 
     def add_events_bulk(self, events: Iterable[dict]) -> int:
         """Insert many events in one transaction (Architecture §5.6 throughput).
@@ -465,8 +535,7 @@ class ScanStateDB:
         emits dozens of events in a tight loop. Returns rows inserted.
         """
         rows = [
-            (e.get("scan_id", ""), e.get("type", ""), e.get("source", ""),
-             dumps_fast(e.get("payload") or {}), _now())
+            (e.get("scan_id", ""), e.get("type", ""), e.get("source", ""), dumps_fast(e.get("payload") or {}), _now())
             for e in events
         ]
         if not rows:
@@ -482,9 +551,7 @@ class ScanStateDB:
         """Insert many messages in one transaction. FTS indexing is best-effort."""
         ts = _now()
         rows = [
-            (m.get("scan_id", ""), m.get("role", ""), m.get("agent", ""),
-             m.get("content", ""), ts)
-            for m in messages
+            (m.get("scan_id", ""), m.get("role", ""), m.get("agent", ""), m.get("content", ""), ts) for m in messages
         ]
         if not rows:
             return 0
@@ -500,59 +567,108 @@ class ScanStateDB:
                 start_id = last_id - len(rows) + 1
                 if start_id > 0:
                     fts_rows = [
-                        (rows[i][0], "message", str(start_id + i), (rows[i][3] or "")[:8000])
-                        for i in range(len(rows))
+                        (rows[i][0], "message", str(start_id + i), (rows[i][3] or "")[:8000]) for i in range(len(rows))
                     ]
-                    try:
+                    with suppress(sqlite3.OperationalError):
                         c.executemany(
                             "INSERT INTO search_index (scan_id, kind, ref_id, text) VALUES (?,?,?,?);",
                             fts_rows,
                         )
-                    except sqlite3.OperationalError:
-                        pass
         return len(rows)
 
     # ── Findings / evidence (Architecture §17, §18) ───────────────────────────
 
-    def upsert_finding(self, finding_id: str, scan_id: str, *, title: str, severity: str,
-                       state: str = "candidate", confidence: float = 0.0, asset: str = "",
-                       description: str = "", evidence_ids: Iterable[str] = ()) -> None:
+    def upsert_finding(
+        self,
+        finding_id: str,
+        scan_id: str,
+        *,
+        title: str,
+        severity: str,
+        state: str = "candidate",
+        confidence: float = 0.0,
+        asset: str = "",
+        description: str = "",
+        evidence_ids: Iterable[str] = (),
+    ) -> None:
         with self._write() as c:
             c.execute(
                 "INSERT OR REPLACE INTO findings (finding_id, scan_id, title, severity, state, "
                 "confidence, asset, description, evidence_ids, created_at) VALUES (?,?,?,?,?,?,?,?,?,?);",
-                (finding_id, scan_id, title, severity, state, confidence, asset, description,
-                 json.dumps(list(evidence_ids)), _now()))
+                (
+                    finding_id,
+                    scan_id,
+                    title,
+                    severity,
+                    state,
+                    confidence,
+                    asset,
+                    description,
+                    json.dumps(list(evidence_ids)),
+                    _now(),
+                ),
+            )
             self._index(scan_id, "finding", finding_id, f"{title} {description}")
 
-    def add_evidence(self, evidence_id: str, scan_id: str, *, finding_id: str = "", kind: str = "",
-                     path: str = "", sha256: str = "", description: str = "") -> None:
+    def add_evidence(
+        self,
+        evidence_id: str,
+        scan_id: str,
+        *,
+        finding_id: str = "",
+        kind: str = "",
+        path: str = "",
+        sha256: str = "",
+        description: str = "",
+    ) -> None:
         with self._write() as c:
             c.execute(
                 "INSERT OR REPLACE INTO evidence (evidence_id, scan_id, finding_id, kind, path, "
                 "sha256, description, created_at) VALUES (?,?,?,?,?,?,?,?);",
-                (evidence_id, scan_id, finding_id, kind, path, sha256, description, _now()))
+                (evidence_id, scan_id, finding_id, kind, path, sha256, description, _now()),
+            )
             self._index(scan_id, "evidence", evidence_id, description)
 
     # ── Checkpoints (Architecture §20) ────────────────────────────────────────
 
-    def save_checkpoint(self, checkpoint_id: str, scan_id: str, *, phase: str,
-                        completed_endpoints: list[str], pending_endpoints: list[str],
-                        findings: list[dict], graph_snapshot: dict, budgets: dict,
-                        boundary: str = "phase", safe: bool = True,
-                        agent_health: dict | None = None,
-                        remaining_tasks: list[dict] | None = None) -> None:
+    def save_checkpoint(
+        self,
+        checkpoint_id: str,
+        scan_id: str,
+        *,
+        phase: str,
+        completed_endpoints: list[str],
+        pending_endpoints: list[str],
+        findings: list[dict],
+        graph_snapshot: dict,
+        budgets: dict,
+        boundary: str = "phase",
+        safe: bool = True,
+        agent_health: dict | None = None,
+        remaining_tasks: list[dict] | None = None,
+    ) -> None:
         with self._write() as c:
             c.execute(
                 "INSERT OR REPLACE INTO checkpoints (checkpoint_id, scan_id, phase, "
                 "completed_endpoints, pending_endpoints, findings, graph_snapshot, budgets, "
                 "boundary, safe, agent_health, remaining_tasks, created_at) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);",
-                (checkpoint_id, scan_id, phase, dumps_fast(completed_endpoints),
-                 dumps_fast(pending_endpoints), dumps_fast(findings),
-                 dumps_fast(graph_snapshot), dumps_fast(budgets),
-                 boundary, int(safe), dumps_fast(agent_health or {}),
-                 dumps_fast(remaining_tasks or []), _now()))
+                (
+                    checkpoint_id,
+                    scan_id,
+                    phase,
+                    dumps_fast(completed_endpoints),
+                    dumps_fast(pending_endpoints),
+                    dumps_fast(findings),
+                    dumps_fast(graph_snapshot),
+                    dumps_fast(budgets),
+                    boundary,
+                    int(safe),
+                    dumps_fast(agent_health or {}),
+                    dumps_fast(remaining_tasks or []),
+                    _now(),
+                ),
+            )
 
     # ── Phase-boundary checkpoint/resume (Architecture §20) ───────────────────
     #
@@ -565,27 +681,38 @@ class ScanStateDB:
     def _capture_graph_snapshot(self, scan_id: str) -> dict:
         """Snapshot the durable target graph for a scan (nodes + edges)."""
         with self._lock:
-            nodes = [dict(r) for r in self._conn.execute(
-                "SELECT node_id, kind, label, props FROM graph_nodes WHERE scan_id=?;",
-                (scan_id,)).fetchall()]
-            edges = [dict(r) for r in self._conn.execute(
-                "SELECT edge_id, src_id, dst_id, kind, weight FROM graph_edges WHERE scan_id=?;",
-                (scan_id,)).fetchall()]
+            nodes = [
+                dict(r)
+                for r in self._conn.execute(
+                    "SELECT node_id, kind, label, props FROM graph_nodes WHERE scan_id=?;", (scan_id,)
+                ).fetchall()
+            ]
+            edges = [
+                dict(r)
+                for r in self._conn.execute(
+                    "SELECT edge_id, src_id, dst_id, kind, weight FROM graph_edges WHERE scan_id=?;", (scan_id,)
+                ).fetchall()
+            ]
         return {"nodes": nodes, "edges": edges}
 
     def _capture_findings(self, scan_id: str) -> list[dict]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM findings WHERE scan_id=?;", (scan_id,)).fetchall()
+            rows = self._conn.execute("SELECT * FROM findings WHERE scan_id=?;", (scan_id,)).fetchall()
         return [dict(r) for r in rows]
 
-    def checkpoint_phase(self, scan_id: str, phase: str, *,
-                         completed_endpoints: list[str] | None = None,
-                         pending_endpoints: list[str] | None = None,
-                         budgets: dict | None = None,
-                         agent_health: dict | None = None,
-                         boundary: str = "phase_complete", safe: bool = True,
-                         checkpoint_id: str | None = None) -> str:
+    def checkpoint_phase(
+        self,
+        scan_id: str,
+        phase: str,
+        *,
+        completed_endpoints: list[str] | None = None,
+        pending_endpoints: list[str] | None = None,
+        budgets: dict | None = None,
+        agent_health: dict | None = None,
+        boundary: str = "phase_complete",
+        safe: bool = True,
+        checkpoint_id: str | None = None,
+    ) -> str:
         """Checkpoint AFTER a phase completes (Architecture §20 safe boundary).
 
         Auto-captures the graph snapshot, current findings, and the remaining
@@ -595,53 +722,68 @@ class ScanStateDB:
         cp_id = checkpoint_id or f"cp-{scan_id}-{uuid.uuid4().hex[:12]}"
         remaining = self.pending_tasks(scan_id)
         self.save_checkpoint(
-            cp_id, scan_id, phase=phase,
+            cp_id,
+            scan_id,
+            phase=phase,
             completed_endpoints=completed_endpoints or [],
             pending_endpoints=pending_endpoints or [],
             findings=self._capture_findings(scan_id),
             graph_snapshot=self._capture_graph_snapshot(scan_id),
             budgets=budgets or {},
-            boundary=boundary, safe=safe,
+            boundary=boundary,
+            safe=safe,
             agent_health=agent_health or {},
-            remaining_tasks=remaining)
-        self.add_event(scan_id, "checkpoint", "scan_state_db",
-                       {"checkpoint_id": cp_id, "phase": phase,
-                        "boundary": boundary, "safe": safe})
+            remaining_tasks=remaining,
+        )
+        self.add_event(
+            scan_id,
+            "checkpoint",
+            "scan_state_db",
+            {"checkpoint_id": cp_id, "phase": phase, "boundary": boundary, "safe": safe},
+        )
         return cp_id
 
-    def checkpoint_before_validation(self, scan_id: str, phase: str, *,
-                                     completed_endpoints: list[str] | None = None,
-                                     pending_endpoints: list[str] | None = None,
-                                     budgets: dict | None = None,
-                                     agent_health: dict | None = None,
-                                     checkpoint_id: str | None = None) -> str:
+    def checkpoint_before_validation(
+        self,
+        scan_id: str,
+        phase: str,
+        *,
+        completed_endpoints: list[str] | None = None,
+        pending_endpoints: list[str] | None = None,
+        budgets: dict | None = None,
+        agent_health: dict | None = None,
+        checkpoint_id: str | None = None,
+    ) -> str:
         """Checkpoint BEFORE a risky validation/exploit step (Architecture §20).
 
         Recorded as a safe boundary so a crash mid-validation resumes from the
         pre-validation state rather than a partially-applied one.
         """
         return self.checkpoint_phase(
-            scan_id, phase,
+            scan_id,
+            phase,
             completed_endpoints=completed_endpoints,
             pending_endpoints=pending_endpoints,
-            budgets=budgets, agent_health=agent_health,
-            boundary="pre_validation", safe=True,
-            checkpoint_id=checkpoint_id)
+            budgets=budgets,
+            agent_health=agent_health,
+            boundary="pre_validation",
+            safe=True,
+            checkpoint_id=checkpoint_id,
+        )
 
     def latest_checkpoint(self, scan_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM checkpoints WHERE scan_id=? ORDER BY created_at DESC LIMIT 1;",
-                (scan_id,)).fetchone()
+                "SELECT * FROM checkpoints WHERE scan_id=? ORDER BY created_at DESC LIMIT 1;", (scan_id,)
+            ).fetchone()
         return self._hydrate_checkpoint(row)
 
     def latest_safe_checkpoint(self, scan_id: str) -> dict | None:
         """Latest checkpoint at a safe boundary (Architecture §20 resume target)."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM checkpoints WHERE scan_id=? AND safe=1 "
-                "ORDER BY created_at DESC LIMIT 1;",
-                (scan_id,)).fetchone()
+                "SELECT * FROM checkpoints WHERE scan_id=? AND safe=1 ORDER BY created_at DESC LIMIT 1;", (scan_id,)
+            ).fetchone()
         return self._hydrate_checkpoint(row)
 
     @staticmethod
@@ -649,8 +791,15 @@ class ScanStateDB:
         if not row:
             return None
         data = dict(row)
-        for k in ("completed_endpoints", "pending_endpoints", "findings",
-                  "graph_snapshot", "budgets", "agent_health", "remaining_tasks"):
+        for k in (
+            "completed_endpoints",
+            "pending_endpoints",
+            "findings",
+            "graph_snapshot",
+            "budgets",
+            "agent_health",
+            "remaining_tasks",
+        ):
             if k in data:
                 try:
                     data[k] = json.loads(data[k]) if data[k] else None
@@ -687,21 +836,25 @@ class ScanStateDB:
             if not tid or tid in live_ids:
                 continue
             self.upsert_task(
-                tid, scan_id,
+                tid,
+                scan_id,
                 agent=task.get("agent", ""),
                 objective=task.get("objective", ""),
                 phase=task.get("phase", phase),
                 status="pending",
                 parent_task_id=task.get("parent_task_id"),
-                payload=_loads(task.get("payload")))
+                payload=_loads(task.get("payload")),
+            )
             requeued.append(tid)
 
         with self._write() as c:
-            c.execute("UPDATE scans SET status='running', updated_at=? WHERE scan_id=?;",
-                      (_now(), scan_id))
-        self.add_event(scan_id, "resume", "scan_state_db",
-                       {"checkpoint_id": cp.get("checkpoint_id"), "phase": phase,
-                        "requeued": requeued})
+            c.execute("UPDATE scans SET status='running', updated_at=? WHERE scan_id=?;", (_now(), scan_id))
+        self.add_event(
+            scan_id,
+            "resume",
+            "scan_state_db",
+            {"checkpoint_id": cp.get("checkpoint_id"), "phase": phase, "requeued": requeued},
+        )
         return {
             "checkpoint": cp,
             "phase": phase,
@@ -713,23 +866,44 @@ class ScanStateDB:
 
     # ── Skills + learning (Architecture §5.3, §13.2, §13.3) ───────────────────
 
-    def upsert_skill(self, skill_id: str, *, name: str, domain: str, risk_class: str,
-                     promotion_state: str = "candidate", success_rate: float = 0.0,
-                     failure_rate: float = 0.0, meta: dict | None = None) -> None:
+    def upsert_skill(
+        self,
+        skill_id: str,
+        *,
+        name: str,
+        domain: str,
+        risk_class: str,
+        promotion_state: str = "candidate",
+        success_rate: float = 0.0,
+        failure_rate: float = 0.0,
+        meta: dict | None = None,
+    ) -> None:
         with self._write() as c:
             c.execute(
                 "INSERT OR REPLACE INTO skills (skill_id, name, domain, risk_class, promotion_state, "
                 "success_rate, failure_rate, meta, updated_at) VALUES (?,?,?,?,?,?,?,?,?);",
-                (skill_id, name, domain, risk_class, promotion_state, success_rate, failure_rate,
-                 json.dumps(meta or {}), _now()))
+                (
+                    skill_id,
+                    name,
+                    domain,
+                    risk_class,
+                    promotion_state,
+                    success_rate,
+                    failure_rate,
+                    json.dumps(meta or {}),
+                    _now(),
+                ),
+            )
 
-    def record_learning_update(self, update_id: str, scan_id: str, *, kind: str, subsystem: str,
-                               detail: dict | None = None) -> None:
+    def record_learning_update(
+        self, update_id: str, scan_id: str, *, kind: str, subsystem: str, detail: dict | None = None
+    ) -> None:
         with self._write() as c:
             c.execute(
                 "INSERT OR REPLACE INTO learning_updates (update_id, scan_id, kind, subsystem, detail, created_at) "
                 "VALUES (?,?,?,?,?,?);",
-                (update_id, scan_id, kind, subsystem, json.dumps(detail or {}), _now()))
+                (update_id, scan_id, kind, subsystem, json.dumps(detail or {}), _now()),
+            )
 
     # ── Search (Architecture §5.6 FTS) ────────────────────────────────────────
 
@@ -753,11 +927,8 @@ class ScanStateDB:
     # ── Maintenance ────────────────────────────────────────────────────────────
 
     def checkpoint_wal(self) -> None:
-        with self._lock:
-            try:
-                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-            except sqlite3.OperationalError:
-                pass
+        with self._lock, suppress(sqlite3.OperationalError):
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
 
     def close(self) -> None:
         with self._lock:

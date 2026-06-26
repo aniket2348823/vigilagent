@@ -11,13 +11,14 @@ Scores endpoints based on:
 - CDN/WAF penalty
 - Parameter type analysis (IDOR, file upload, redirect)
 """
+
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from backend.agents.alpha_recon.models import EndpointFinding
-
+if TYPE_CHECKING:
+    from backend.agents.alpha_recon.models import EndpointFinding
 
 # ── Base Scores by Endpoint Classification ────────────────────
 
@@ -48,33 +49,33 @@ BASE_SCORES: dict[str, int] = {
 # ── Parameter Risk Analysis ───────────────────────────────────
 
 PARAM_RISK_BOOSTS: dict[str, int] = {
-    "id": 12,          # Potential IDOR
-    "user_id": 15,     # Direct object reference
+    "id": 12,  # Potential IDOR
+    "user_id": 15,  # Direct object reference
     "account_id": 15,
-    "file": 18,        # File inclusion
+    "file": 18,  # File inclusion
     "path": 18,
-    "url": 20,         # SSRF
-    "redirect": 18,    # Open redirect
-    "callback": 16,    # SSRF/XSS
-    "template": 14,    # SSTI
-    "query": 12,       # SQLi
-    "search": 10,      # SQLi/XSS
-    "sort": 8,         # SQLi
+    "url": 20,  # SSRF
+    "redirect": 18,  # Open redirect
+    "callback": 16,  # SSRF/XSS
+    "template": 14,  # SSTI
+    "query": 12,  # SQLi
+    "search": 10,  # SQLi/XSS
+    "sort": 8,  # SQLi
     "order": 8,
     "filter": 8,
     "page": 5,
     "limit": 5,
     "offset": 5,
-    "token": 10,       # Token exposure
-    "key": 10,         # Key exposure
-    "secret": 14,      # Secret exposure
-    "password": 15,    # Password in URL
-    "email": 8,        # Enumeration
+    "token": 10,  # Token exposure
+    "key": 10,  # Key exposure
+    "secret": 14,  # Secret exposure
+    "password": 15,  # Password in URL
+    "email": 8,  # Enumeration
     "username": 8,
-    "admin": 12,       # Privilege escalation
+    "admin": 12,  # Privilege escalation
     "role": 12,
-    "debug": 14,       # Debug mode
-    "cmd": 20,         # Command injection
+    "debug": 14,  # Debug mode
+    "cmd": 20,  # Command injection
     "exec": 20,
     "eval": 20,
 }
@@ -89,7 +90,7 @@ TECH_RISK_MAP: dict[str, int] = {
     "asp.net": 6,
     "java": 5,
     "spring": 5,
-    "struts": 12,      # Known for vulns
+    "struts": 12,  # Known for vulns
     "tomcat": 8,
     "jenkins": 12,
     "graphql": 8,
@@ -158,10 +159,9 @@ def score_endpoint(endpoint: EndpointFinding) -> EndpointFinding:
                 param_boost = max(param_boost, boost)
                 reasons.append(f"risky_param:{param.name}:+{boost}")
                 break
-        if param.value_type in {"numeric", "uuid"}:
-            if param_boost < 12:
-                param_boost = 12
-                reasons.append(f"id_param:{param.name}:+12")
+        if param.value_type in {"numeric", "uuid"} and param_boost < 12:
+            param_boost = 12
+            reasons.append(f"id_param:{param.name}:+12")
     score += param_boost
 
     # 5. Schema-backed endpoints
@@ -210,8 +210,7 @@ def score_endpoint(endpoint: EndpointFinding) -> EndpointFinding:
     waf_detected = any(
         waf in tech.lower()
         for tech in endpoint.technologies
-        for waf in ("cloudflare", "akamai", "incapsula", "imperva",
-                     "aws waf", "sucuri", "barracuda", "f5")
+        for waf in ("cloudflare", "akamai", "incapsula", "imperva", "aws waf", "sucuri", "barracuda", "f5")
     )
     if waf_detected:
         score -= 12
@@ -237,45 +236,59 @@ def score_endpoint(endpoint: EndpointFinding) -> EndpointFinding:
     return endpoint
 
 
-def _classify_endpoint(lower_url: str, lower_path: str,
-                        endpoint: EndpointFinding) -> str:
+def _classify_endpoint(lower_url: str, lower_path: str, endpoint: EndpointFinding) -> str:
     """Classify endpoint type from URL patterns."""
     # Debug/config endpoints (highest risk)
-    if any(p in lower_path for p in ["/debug", "/trace", "/actuator",
-                                       "/health", "/metrics", "/info",
-                                       "/_debug", "/__debug"]):
+    if any(
+        p in lower_path
+        for p in ["/debug", "/trace", "/actuator", "/health", "/metrics", "/info", "/_debug", "/__debug"]
+    ):
         return "DEBUG_ENDPOINT"
-    if any(p in lower_path for p in [".env", ".config", "/config",
-                                       "/.git", "/wp-config",
-                                       "/settings", "/configuration"]):
+    if any(
+        p in lower_path for p in [".env", ".config", "/config", "/.git", "/wp-config", "/settings", "/configuration"]
+    ):
         return "CONFIG_ENDPOINT"
-    if any(p in lower_path for p in ["/internal", "/_internal",
-                                       "/private", "/__"]):
+    if any(p in lower_path for p in ["/internal", "/_internal", "/private", "/__"]):
         return "INTERNAL_ENDPOINT"
 
     # Admin endpoints
-    if any(p in lower_path for p in ["/admin", "/dashboard", "/manage",
-                                       "/console", "/panel", "/backoffice",
-                                       "/cpanel", "/wp-admin"]):
+    if any(
+        p in lower_path
+        for p in ["/admin", "/dashboard", "/manage", "/console", "/panel", "/backoffice", "/cpanel", "/wp-admin"]
+    ):
         return "ADMIN_ENDPOINT"
 
     # Auth endpoints
-    if any(p in lower_path for p in ["/login", "/auth", "/token",
-                                       "/oauth", "/session", "/signin",
-                                       "/signup", "/register", "/logout",
-                                       "/password", "/reset", "/verify",
-                                       "/2fa", "/mfa"]):
+    if any(
+        p in lower_path
+        for p in [
+            "/login",
+            "/auth",
+            "/token",
+            "/oauth",
+            "/session",
+            "/signin",
+            "/signup",
+            "/register",
+            "/logout",
+            "/password",
+            "/reset",
+            "/verify",
+            "/2fa",
+            "/mfa",
+        ]
+    ):
         return "AUTH_ENDPOINT"
 
     # Payment endpoints
-    if any(p in lower_path for p in ["/payment", "/checkout", "/billing",
-                                       "/invoice", "/subscription",
-                                       "/stripe", "/paypal"]):
+    if any(
+        p in lower_path
+        for p in ["/payment", "/checkout", "/billing", "/invoice", "/subscription", "/stripe", "/paypal"]
+    ):
         return "PAYMENT_ENDPOINT"
 
     # Upload endpoints
-    if any(p in lower_path for p in ["/upload", "/import", "/attach",
-                                       "/media/add", "/file/new"]):
+    if any(p in lower_path for p in ["/upload", "/import", "/attach", "/media/add", "/file/new"]):
         return "UPLOAD_ENDPOINT"
 
     # GraphQL
@@ -283,39 +296,30 @@ def _classify_endpoint(lower_url: str, lower_path: str,
         return "GRAPHQL_ENDPOINT"
 
     # Webhooks
-    if any(p in lower_path for p in ["/webhook", "/callback", "/hook",
-                                       "/notify"]):
+    if any(p in lower_path for p in ["/webhook", "/callback", "/hook", "/notify"]):
         return "WEBHOOK_ENDPOINT"
 
     # Redirect
-    if any(p in lower_path for p in ["/redirect", "/goto", "/return",
-                                       "/next", "/continue"]):
+    if any(p in lower_path for p in ["/redirect", "/goto", "/return", "/next", "/continue"]):
         return "REDIRECT_ENDPOINT"
 
     # Search
-    if any(p in lower_path for p in ["/search", "/find", "/lookup",
-                                       "/query"]):
+    if any(p in lower_path for p in ["/search", "/find", "/lookup", "/query"]):
         return "SEARCH_ENDPOINT"
 
     # API with ID parameter
-    has_id_param = any(
-        param.value_type in {"numeric", "uuid"}
-        for param in endpoint.parameters)
+    has_id_param = any(param.value_type in {"numeric", "uuid"} for param in endpoint.parameters)
     if re.search(r"/api/|/rest/|/v[0-9]+/", lower_path):
         if has_id_param:
             return "API_ID_ENDPOINT"
         return "API_ENDPOINT"
 
     # Data endpoints
-    if any(p in lower_path for p in ["/user", "/account", "/order",
-                                       "/customer", "/profile",
-                                       "/settings"]):
+    if any(p in lower_path for p in ["/user", "/account", "/order", "/customer", "/profile", "/settings"]):
         return "DATA_ENDPOINT"
 
     # File endpoints
-    if lower_path.endswith((".json", ".xml", ".yaml", ".yml",
-                             ".env", ".config", ".bak", ".sql",
-                             ".log", ".csv")):
+    if lower_path.endswith((".json", ".xml", ".yaml", ".yml", ".env", ".config", ".bak", ".sql", ".log", ".csv")):
         return "FILE_ENDPOINT"
 
     # JS files
@@ -323,20 +327,17 @@ def _classify_endpoint(lower_url: str, lower_path: str,
         return "JS_FILE"
 
     # Static assets
-    if any(p in lower_path for p in ["/static", "/assets", "/images",
-                                       "/css", "/fonts", "/icons"]):
+    if any(p in lower_path for p in ["/static", "/assets", "/images", "/css", "/fonts", "/icons"]):
         return "STATIC"
 
     # Media
-    if lower_path.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg",
-                             ".mp4", ".webp", ".ico")):
+    if lower_path.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".mp4", ".webp", ".ico")):
         return "MEDIA"
 
     return "UNKNOWN"
 
 
-def score_entity_priority(kind: str, confidence: float,
-                           properties: dict[str, Any]) -> float:
+def score_entity_priority(kind: str, confidence: float, properties: dict[str, Any]) -> float:
     """Score a generic entity's priority for downstream processing."""
     kind_weights = {
         "vulnerability_candidate": 1.0,

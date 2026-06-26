@@ -1,7 +1,10 @@
 """
-PROBLEM 16 FIX: Cross-platform launcher for Vulagent Scanner.
+Cross-platform launcher for Vigilagent.
 Works on Windows, Linux, and macOS without modification.
 Replaces the Windows-only start_vulagent.bat.
+
+NOTE: This file has been renamed to start_vigilagent.py.
+This file is kept for backward compatibility and will be removed in a future version.
 """
 
 import subprocess
@@ -16,7 +19,7 @@ def main():
     root = os.path.dirname(os.path.abspath(__file__))
 
     print("=" * 50)
-    print("  VULAGENT SCANNER — Cross-Platform Launcher")
+    print("  VIGILAGENT — Cross-Platform Launcher")
     print(f"  Platform: {platform.system()} {platform.machine()}")
     print(f"  Python: {sys.version.split()[0]}")
     print("=" * 50)
@@ -62,7 +65,7 @@ def main():
         sys.exit(1)
 
     print()
-    print("[INFO] Vulagent Scanner running at http://localhost:5173")
+    print("[INFO] Vigilagent running at http://localhost:5173")
     print("   Backend API at http://localhost:8000")
     print("   Press Ctrl+C to stop all services.")
     print()
@@ -70,7 +73,7 @@ def main():
     try:
         backend.wait()
     except KeyboardInterrupt:
-        print("\n[INFO] Shutting down Vulagent Scanner...")
+        print("\n[INFO] Shutting down Vigilagent...")
         backend.terminate()
         frontend.terminate()
         try:
@@ -79,7 +82,7 @@ def main():
         except subprocess.TimeoutExpired:
             backend.kill()
             frontend.kill()
-        print("[OK] Vulagent stopped.")
+        print("[OK] Vigilagent stopped.")
 
 
 if __name__ == "__main__":

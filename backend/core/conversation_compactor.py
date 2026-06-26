@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from backend.core.conversation_ast import BodyPair, ConversationAST
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger("ConversationCompactor")
 
@@ -37,12 +40,14 @@ async def compact_messages(
         for pair in reversed(last.body):
             if pair.size > MAX_BODY_PAIR_BYTES:
                 summary = await _summarize_text(str(pair.tool_messages), summarizer)
-                pair.tool_messages = [{
-                    "role": "tool",
-                    "tool_call_id": next(iter(pair.tool_call_ids()), "summary"),
-                    "name": "summarized_tool_output",
-                    "content": summary,
-                }]
+                pair.tool_messages = [
+                    {
+                        "role": "tool",
+                        "tool_call_id": next(iter(pair.tool_call_ids()), "summary"),
+                        "name": "summarized_tool_output",
+                        "content": summary,
+                    }
+                ]
             if running + pair.size <= PRESERVE_LAST_SECTION_BYTES:
                 compacted.insert(0, pair)
                 running += pair.size
@@ -50,7 +55,9 @@ async def compact_messages(
                 overflow.insert(0, pair)
         if overflow:
             summary = await _summarize_text(str([pair.ai_message for pair in overflow]), summarizer)
-            compacted.insert(0, BodyPair({"role": "assistant", "content": f"[Older interaction summary]\n{summary}"}, []))
+            compacted.insert(
+                0, BodyPair({"role": "assistant", "content": f"[Older interaction summary]\n{summary}"}, [])
+            )
         last.body = compacted
 
     return ast.to_messages()
@@ -65,7 +72,7 @@ async def _summarize_text(text: str, summarizer: Callable[[str], Awaitable[str]]
             # Summarizer failure is non-fatal; fall through to fallback.
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     head = " ".join(lines[:12])
-    return (head[:1800] or "Older conversation/tool output summarized due to context limits.")
+    return head[:1800] or "Older conversation/tool output summarized due to context limits."
 
 
 def _sections_text(sections) -> str:

@@ -1,21 +1,26 @@
 from __future__ import annotations
 
+import asyncio
+import ipaddress
+import logging
 import os
+import random
 import re
 import socket
-import logging
-import random
-import ipaddress
-import asyncio
-from urllib.parse import urlparse
 from dataclasses import dataclass, field
-from typing import Any, Optional, Set, Callable, Dict, List
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class ProxyEnvSnapshot:
     """Captures all proxy-related environment variables in a frozen snapshot."""
+
     http_proxy: str | None
     https_proxy: str | None
     HTTP_PROXY: str | None
@@ -25,6 +30,7 @@ class ProxyEnvSnapshot:
     VIGILAGENT_PROXY_ACTIVE: str | None
     VIGILAGENT_PROXY_LOOPBACK_MODE: str | None
 
+
 @dataclass
 class ProxyValidationCheck:
     kind: str
@@ -33,57 +39,59 @@ class ProxyValidationCheck:
     status: int | None = None
     error: str | None = None
 
+
 @dataclass
 class ProxyValidationResult:
     ok: bool
     proxy_url: str
-    checks: List[ProxyValidationCheck] = field(default_factory=list)
+    checks: list[ProxyValidationCheck] = field(default_factory=list)
+
 
 class NoProxyMatcher:
     """
     Implements NO_PROXY semantic matching equivalent to Node.js Undici.
     """
+
     def matches(self, target_url: str, no_proxy_string: str) -> bool:
         if not no_proxy_string:
             return False
-            
+
         parsed = urlparse(target_url)
         host = parsed.hostname
         if not host:
             return False
-            
+
         host = host.lower()
         port = str(parsed.port) if parsed.port else ""
-        
-        entries = [e.strip().lower() for e in re.split(r'[,\s]+', no_proxy_string) if e.strip()]
-        
+
+        entries = [e.strip().lower() for e in re.split(r"[,\s]+", no_proxy_string) if e.strip()]
+
         if "*" in entries:
             return True
-            
+
         target_ip = self._parse_ipv4(host)
 
         for entry in entries:
             # Exact match or port match
             if entry == host or entry == f"{host}:{port}":
                 return True
-                
+
             # Leading dot match (.example.com matches foo.example.com)
-            if entry.startswith('.') and host.endswith(entry):
+            if entry.startswith(".") and host.endswith(entry):
                 return True
-                
+
             # Wildcard subdomain match (*.example.com)
-            if entry.startswith('*.') and host.endswith(entry[1:]):
+            if entry.startswith("*.") and host.endswith(entry[1:]):
                 return True
-                
+
             # IPv4 CIDR match (10.0.0.0/8)
-            if target_ip and '/' in entry:
-                if self._matches_cidr(target_ip, entry):
-                    return True
-                    
+            if target_ip and "/" in entry and self._matches_cidr(target_ip, entry):
+                return True
+
             # IPv4 octet wildcard (10.0.*)
-            if target_ip and entry.endswith('.*'):
+            if target_ip and entry.endswith(".*"):
                 prefix = entry[:-2]
-                if host.startswith(prefix + '.'):
+                if host.startswith(prefix + "."):
                     return True
 
         return False
@@ -101,16 +109,18 @@ class NoProxyMatcher:
         except ValueError:
             return False
 
+
 class ProxyLifecycleManager:
     """
     High-level lifecycle management for the operator-managed network proxy routing.
     Mirrors OpenClaw's proxy-lifecycle.ts and proxy-env.ts.
     """
+
     def __init__(self):
-        self._active_proxy_url: Optional[str] = None
+        self._active_proxy_url: str | None = None
         self._loopback_mode: str = "gateway-only"
-        self._base_env_snapshot: Optional[ProxyEnvSnapshot] = None
-        self._bypassed_urls: Set[str] = set()
+        self._base_env_snapshot: ProxyEnvSnapshot | None = None
+        self._bypassed_urls: set[str] = set()
         self._active_handles = 0
 
     @property
@@ -118,7 +128,7 @@ class ProxyLifecycleManager:
         return self._active_handles > 0
 
     @property
-    def active_proxy_url(self) -> Optional[str]:
+    def active_proxy_url(self) -> str | None:
         return self._active_proxy_url
 
     def start_proxy(self, proxy_url: str = None, loopback_mode: str = "gateway-only") -> bool:
@@ -139,7 +149,7 @@ class ProxyLifecycleManager:
                 no_proxy=os.environ.get("no_proxy"),
                 NO_PROXY=os.environ.get("NO_PROXY"),
                 VIGILAGENT_PROXY_ACTIVE=os.environ.get("VIGILAGENT_PROXY_ACTIVE"),
-                VIGILAGENT_PROXY_LOOPBACK_MODE=os.environ.get("VIGILAGENT_PROXY_LOOPBACK_MODE")
+                VIGILAGENT_PROXY_LOOPBACK_MODE=os.environ.get("VIGILAGENT_PROXY_LOOPBACK_MODE"),
             )
 
         self._active_proxy_url = candidate_url
@@ -148,10 +158,10 @@ class ProxyLifecycleManager:
 
         for key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"]:
             os.environ[key] = candidate_url
-            
+
         os.environ["VIGILAGENT_PROXY_ACTIVE"] = "1"
         os.environ["VIGILAGENT_PROXY_LOOPBACK_MODE"] = loopback_mode
-        
+
         self._update_no_proxy()
         logger.info(f"Proxy lifecycle: Activated process-wide routing via {self._redact_proxy_url(candidate_url)}")
         return True
@@ -177,7 +187,7 @@ class ProxyLifecycleManager:
     def _restore_env(self) -> None:
         if not self._base_env_snapshot:
             return
-            
+
         snapshot_dict = self._base_env_snapshot.__dict__
         for k, v in snapshot_dict.items():
             if v is None:
@@ -204,7 +214,7 @@ class ProxyLifecycleManager:
         os.environ["no_proxy"] = no_proxy_str
 
     def _is_loopback_host(self, hostname: str) -> bool:
-        normalized = hostname.lower().strip().rstrip('.')
+        normalized = hostname.lower().strip().rstrip(".")
         if normalized == "localhost":
             return True
         try:
@@ -227,13 +237,13 @@ class ProxyLifecycleManager:
             return url.replace(f":{parsed.password}@", ":***@")
         return url
 
-    def register_browser_cdp_bypass(self, url: str) -> Optional[Callable[[], None]]:
+    def register_browser_cdp_bypass(self, url: str) -> Callable[[], None] | None:
         return self._register_bypass(url, "Browser loopback CDP")
 
-    def register_gateway_loopback_bypass(self, url: str) -> Optional[Callable[[], None]]:
+    def register_gateway_loopback_bypass(self, url: str) -> Callable[[], None] | None:
         return self._register_bypass(url, "Gateway loopback")
 
-    def _register_bypass(self, url: str, context: str) -> Optional[Callable[[], None]]:
+    def _register_bypass(self, url: str, context: str) -> Callable[[], None] | None:
         parsed = urlparse(url)
         if not parsed.hostname or not self._is_loopback_host(parsed.hostname):
             return None
@@ -254,12 +264,14 @@ class ProxyLifecycleManager:
 
         return unregister
 
+
 class NetworkInterceptor:
     """
     Transport layer interception pipeline mimicking Undici dispatchers.
     Dynamically randomizes User-Agent, injects jitter delays, and rotates
     headers silently before the payload hits the wire.
     """
+
     def __init__(self):
         self._user_agents = [
             # Chrome Windows
@@ -284,14 +296,14 @@ class NetworkInterceptor:
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             # Linux Firefox
-            "Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0"
+            "Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
         ]
 
         self._languages = [
             "en-US,en;q=0.9",
             "en-GB,en;q=0.9,en-US;q=0.8",
             "en-US,en;q=0.9,es;q=0.8",
-            "en-US,en;q=0.9,fr;q=0.8"
+            "en-US,en;q=0.9,fr;q=0.8",
         ]
 
     def rotate_accept_language(self) -> str:
@@ -301,29 +313,29 @@ class NetworkInterceptor:
         parsed = urlparse(target_url)
         return f"{parsed.scheme}://{parsed.netloc}/"
 
-    def get_tls_fingerprint_headers(self) -> Dict[str, str]:
+    def get_tls_fingerprint_headers(self) -> dict[str, str]:
         # Simple simulation of modern browser TLS/HTTP2 pseudo-headers
         # In a real environment, this might interface with a specialized TLS client (e.g. curl-impersonate)
         return {
             "sec-ch-ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
-            "upgrade-insecure-requests": "1"
+            "upgrade-insecure-requests": "1",
         }
 
-    def inject_spoofed_headers(self, request_headers: Dict[str, str]) -> Dict[str, str]:
+    def inject_spoofed_headers(self, request_headers: dict[str, str]) -> dict[str, str]:
         spoofed = {k.lower(): v for k, v in request_headers.items()}
-        
+
         if "user-agent" not in spoofed:
             spoofed["user-agent"] = random.choice(self._user_agents)
-            
+
         spoofed.setdefault("accept-language", self.rotate_accept_language())
         spoofed.setdefault("accept-encoding", "gzip, deflate, br")
         spoofed.setdefault("sec-fetch-dest", "document")
         spoofed.setdefault("sec-fetch-mode", "navigate")
         spoofed.setdefault("sec-fetch-site", "none")
         spoofed.setdefault("sec-fetch-user", "?1")
-        
+
         # Merge TLS pseudo headers if not already heavily customized
         if "sec-ch-ua" not in spoofed:
             spoofed.update(self.get_tls_fingerprint_headers())
@@ -342,14 +354,16 @@ class NetworkInterceptor:
         url: str,
         *,
         session: Any = None,
-        headers: Dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
         timeout: int | float = 10,
         jitter: tuple[int, int] = (50, 500),
         **kwargs: Any,
-    ) -> "InterceptedHTTPResponse":
+    ) -> InterceptedHTTPResponse:
         """Execute an outbound HTTP request through the interceptor pipeline."""
         import time
+
         import aiohttp
+
         from backend.core.queue import command_lane
 
         spoofed_headers = self.inject_spoofed_headers(headers or {})
@@ -385,32 +399,35 @@ class NetworkInterceptor:
 @dataclass
 class InterceptedHTTPResponse:
     status: int
-    headers: Dict[str, str]
+    headers: dict[str, str]
     body: str
     elapsed_ms: int
     url: str
 
+
 class ProxyValidation:
     @staticmethod
-    async def validate_proxy(proxy_url: str, test_urls: List[str] = None) -> ProxyValidationResult:
+    async def validate_proxy(proxy_url: str, test_urls: list[str] = None) -> ProxyValidationResult:
         import aiohttp
+
         if test_urls is None:
             test_urls = ["https://example.com/"]
-            
+
         checks = []
         all_ok = True
-        
+
         # LOW-77: Enable SSL verification for proxy validation
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=True)) as session:
             for url in test_urls:
                 try:
                     async with session.get(url, proxy=proxy_url, timeout=10) as resp:
-                        checks.append(ProxyValidationCheck('allowed', url, True, resp.status))
+                        checks.append(ProxyValidationCheck("allowed", url, True, resp.status))
                 except Exception as e:
                     all_ok = False
-                    checks.append(ProxyValidationCheck('denied', url, False, None, str(e)))
-                    
+                    checks.append(ProxyValidationCheck("denied", url, False, None, str(e)))
+
         return ProxyValidationResult(ok=all_ok, proxy_url=proxy_url, checks=checks)
+
 
 # Global singleton instances
 proxy_lifecycle = ProxyLifecycleManager()

@@ -1,6 +1,6 @@
 # Data Directory
 
-Runtime data, scan results, and configuration files for Antigravity V5.
+Runtime data, scan results, and configuration files for Vigilagent.
 
 ## 📁 Directory Structure
 
@@ -266,4 +266,4 @@ Monitor these metrics:
 
 **Last Updated:** May 24, 2026  
 **Data Format Version:** 1.0.0  
-**Maintained By:** Antigravity V5 Development Team
+**Maintained By:** Vigilagent Development Team

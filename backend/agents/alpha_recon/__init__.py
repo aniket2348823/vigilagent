@@ -11,6 +11,7 @@ Exports:
     AlphaV6DeepOrchestrator      — alias (backward compat)
     recon_router                 — FastAPI router for recon API
 """
+
 __all__ = [
     "AlphaOrchestrator",
     "AlphaUnifiedReconCommander",
@@ -21,11 +22,17 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name in ("AlphaOrchestrator", "AlphaUnifiedReconCommander",
-                "AlphaV6ReconOrchestrator", "AlphaV6DeepOrchestrator"):
+    if name in (
+        "AlphaOrchestrator",
+        "AlphaUnifiedReconCommander",
+        "AlphaV6ReconOrchestrator",
+        "AlphaV6DeepOrchestrator",
+    ):
         from backend.agents.alpha_recon.alpha_orchestrator import AlphaOrchestrator
+
         return AlphaOrchestrator
     if name == "recon_router":
         from backend.agents.alpha_recon.api_routes import router
+
         return router
     raise AttributeError(name)

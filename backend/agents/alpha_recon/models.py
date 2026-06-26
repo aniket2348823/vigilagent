@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class ScanMode(str, Enum):
+class ScanMode(StrEnum):
     PASSIVE_ONLY = "PASSIVE_ONLY"
     STANDARD = "STANDARD"
     AGGRESSIVE = "AGGRESSIVE"
 
 
-class ReconPhase(str, Enum):
+class ReconPhase(StrEnum):
     INITIALIZATION = "initialization"
     PASSIVE = "passive_intelligence"
     INFRA = "dns_infrastructure"
@@ -61,7 +61,7 @@ class ReconEntity(BaseModel):
     first_seen: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     last_seen: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
-    def ensure_id(self) -> "ReconEntity":
+    def ensure_id(self) -> ReconEntity:
         if not self.id:
             self.id = stable_id(self.scan_id, self.kind, self.label)
         return self
@@ -97,6 +97,7 @@ EndpointParameter = ParameterFinding
 
 class TargetScope(BaseModel):
     """Simplified scope for quick target validation."""
+
     target_url: str
     base_domain: str = ""
     mode: ScanMode = ScanMode.STANDARD

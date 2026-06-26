@@ -5,21 +5,22 @@ This module provides distributed tracing capabilities for observability
 across all integrated components.
 """
 
-import os
 import logging
-from typing import Optional
+import os
 from contextlib import contextmanager
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # Try to import OpenTelemetry, but make it optional
 try:
     from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-    from opentelemetry.sdk.resources import Resource, SERVICE_NAME
     from opentelemetry.exporter.jaeger.thrift import JaegerExporter
     from opentelemetry.exporter.zipkin.json import ZipkinExporter
+    from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
@@ -33,7 +34,7 @@ except ImportError:
 
 class TracingConfig:
     """Configuration for OpenTelemetry tracing"""
-    
+
     def __init__(self):
         self.enabled = os.getenv("TRACING_ENABLED", "false").lower() == "true"
         self.service_name = os.getenv("SERVICE_NAME", "vigilagent")
@@ -47,34 +48,32 @@ _tracer_provider: Optional["TracerProvider"] = None
 _tracer = None
 
 
-def init_tracing(config: Optional[TracingConfig] = None) -> None:
+def init_tracing(config: TracingConfig | None = None) -> None:
     """
     Initialize OpenTelemetry tracing.
-    
+
     Args:
         config: Optional tracing configuration. If None, loads from environment.
     """
     global _tracer_provider, _tracer
-    
+
     if not OTEL_AVAILABLE:
         logger.debug("OpenTelemetry not installed - tracing disabled")
         return
-    
+
     if config is None:
         config = TracingConfig()
-    
+
     if not config.enabled:
         logger.info("Tracing disabled by configuration")
         return
-    
+
     # Create resource with service name
-    resource = Resource(attributes={
-        SERVICE_NAME: config.service_name
-    })
-    
+    resource = Resource(attributes={SERVICE_NAME: config.service_name})
+
     # Create tracer provider
     _tracer_provider = TracerProvider(resource=resource)
-    
+
     # Configure exporter based on type
     if config.exporter_type == "jaeger":
         try:
@@ -97,50 +96,50 @@ def init_tracing(config: Optional[TracingConfig] = None) -> None:
     else:
         exporter = ConsoleSpanExporter()
         logger.info("Console exporter configured")
-    
+
     # Add span processor
     _tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
-    
+
     # Set as global tracer provider
     trace.set_tracer_provider(_tracer_provider)
-    
+
     # Get tracer
     _tracer = trace.get_tracer(__name__)
-    
+
     logger.info(f"Tracing initialized: service={config.service_name}, exporter={config.exporter_type}")
 
 
 def get_tracer() -> "trace.Tracer":
     """
     Get the global tracer instance.
-    
+
     Returns:
         Tracer instance, or a no-op tracer if tracing is disabled
     """
     global _tracer
-    
+
     if not OTEL_AVAILABLE:
         # Return a no-op tracer
         return NoOpTracer()
-    
+
     if _tracer is None:
         # Initialize with defaults if not already initialized
         init_tracing()
         if _tracer is None:
             return NoOpTracer()
-    
+
     return _tracer
 
 
 @contextmanager
-def trace_span(name: str, attributes: Optional[dict] = None):
+def trace_span(name: str, attributes: dict | None = None):
     """
     Context manager for creating a trace span.
-    
+
     Args:
         name: Span name
         attributes: Optional span attributes
-        
+
     Example:
         with trace_span("process_vulnerability", {"vuln_type": "XSS"}):
             # Do work
@@ -150,7 +149,7 @@ def trace_span(name: str, attributes: Optional[dict] = None):
         # No-op if tracing not available
         yield None
         return
-    
+
     with _tracer.start_as_current_span(name) as span:
         if attributes:
             for key, value in attributes.items():
@@ -160,7 +159,7 @@ def trace_span(name: str, attributes: Optional[dict] = None):
 
 class NoOpTracer:
     """No-op tracer for when OpenTelemetry is not available"""
-    
+
     @contextmanager
     def start_as_current_span(self, name: str, **kwargs):
         """No-op span context manager"""
@@ -169,15 +168,15 @@ class NoOpTracer:
 
 class NoOpSpan:
     """No-op span for when OpenTelemetry is not available"""
-    
+
     def set_attribute(self, key: str, value: str) -> None:
         """No-op set attribute"""
         pass
-    
+
     def set_status(self, status) -> None:
         """No-op set status"""
         pass
-    
+
     def record_exception(self, exception: Exception) -> None:
         """No-op record exception"""
         pass
@@ -186,7 +185,7 @@ class NoOpSpan:
 def shutdown_tracing() -> None:
     """Shutdown tracing and flush remaining spans"""
     global _tracer_provider
-    
+
     if _tracer_provider is not None:
         _tracer_provider.shutdown()
         logger.info("Tracing shutdown complete")

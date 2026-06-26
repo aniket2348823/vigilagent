@@ -4,12 +4,15 @@ Parser for Amass JSON output.
 Amass enum -json produces one JSON object per line with fields:
   {"name": "sub.example.com", "domain": "example.com", "addresses": [{"ip": "1.2.3.4", "cidr": "..."}], "sources": ["CertSpotter"], "tag": "cert"}
 """
+
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from backend.parsers.recon.base import ParsedEntity, safe_json_lines, safe_json_file, is_ip_address
+from backend.parsers.recon.base import ParsedEntity, is_ip_address, safe_json_file, safe_json_lines
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def parse_amass_json(path: Path | str) -> list[ParsedEntity]:
@@ -60,41 +63,47 @@ def parse_amass_json(path: Path | str) -> list[ParsedEntity]:
                             cidrs.append(cidr)
                         if ip and is_ip_address(ip) and ip not in seen_ips:
                             seen_ips.add(ip)
-                            entities.append(ParsedEntity(
-                                kind="ip",
-                                label=ip,
-                                confidence=0.85,
-                                properties={
-                                    "resolved_from": name,
-                                    "cidr": cidr,
-                                    "asn": str(asn),
-                                    "asn_desc": str(desc),
-                                },
-                                source_tool="amass",
-                                phase="passive_intelligence",
-                            ))
+                            entities.append(
+                                ParsedEntity(
+                                    kind="ip",
+                                    label=ip,
+                                    confidence=0.85,
+                                    properties={
+                                        "resolved_from": name,
+                                        "cidr": cidr,
+                                        "asn": str(asn),
+                                        "asn_desc": str(desc),
+                                    },
+                                    source_tool="amass",
+                                    phase="passive_intelligence",
+                                )
+                            )
                     elif isinstance(addr, str) and is_ip_address(addr):
                         ips.append(addr)
                         if addr not in seen_ips:
                             seen_ips.add(addr)
-                            entities.append(ParsedEntity(
-                                kind="ip",
-                                label=addr,
-                                confidence=0.8,
-                                properties={"resolved_from": name},
-                                source_tool="amass",
-                                phase="passive_intelligence",
-                            ))
+                            entities.append(
+                                ParsedEntity(
+                                    kind="ip",
+                                    label=addr,
+                                    confidence=0.8,
+                                    properties={"resolved_from": name},
+                                    source_tool="amass",
+                                    phase="passive_intelligence",
+                                )
+                            )
                 props["ips"] = ips
                 props["cidrs"] = cidrs
 
-            entities.append(ParsedEntity(
-                kind="subdomain",
-                label=name,
-                confidence=0.9 if tag == "cert" else 0.85,
-                properties=props,
-                source_tool="amass",
-                phase="passive_intelligence",
-            ))
+            entities.append(
+                ParsedEntity(
+                    kind="subdomain",
+                    label=name,
+                    confidence=0.9 if tag == "cert" else 0.85,
+                    properties=props,
+                    source_tool="amass",
+                    phase="passive_intelligence",
+                )
+            )
 
     return entities

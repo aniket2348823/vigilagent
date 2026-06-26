@@ -1,7 +1,9 @@
 """Parser for ffuf JSON output."""
+
 from __future__ import annotations
-import json
+
 from pathlib import Path
+
 from backend.parsers.recon.base import ParsedEntity, safe_json_file, safe_json_lines
 
 
@@ -32,7 +34,8 @@ def parse_ffuf_json(path: Path | str) -> list[ParsedEntity]:
         if not isinstance(r, dict):
             continue
         url = str(r.get("url", r.get("input", {}).get("FUZZ", "") if isinstance(r.get("input"), dict) else ""))
-        if not url or url in seen: continue
+        if not url or url in seen:
+            continue
         seen.add(url)
         status = int(r.get("status", 0) or 0)
         length = int(r.get("length", 0) or 0)
@@ -43,16 +46,32 @@ def parse_ffuf_json(path: Path | str) -> list[ParsedEntity]:
         duration = r.get("duration", 0)
         host = str(r.get("host", ""))
         fuzz_input = str(r.get("input", {}).get("FUZZ", "")) if isinstance(r.get("input"), dict) else ""
-        entities.append(ParsedEntity(kind="discovered_path", label=url, confidence=0.85,
-            properties={"status_code": status, "content_length": length, "words": words,
-                         "lines": lines, "redirect": redir, "content_type": ct,
-                         "duration_ns": duration, "host": host, "fuzz_input": fuzz_input},
-            source_tool="ffuf", phase="directory_route_discovery"))
+        entities.append(
+            ParsedEntity(
+                kind="discovered_path",
+                label=url,
+                confidence=0.85,
+                properties={
+                    "status_code": status,
+                    "content_length": length,
+                    "words": words,
+                    "lines": lines,
+                    "redirect": redir,
+                    "content_type": ct,
+                    "duration_ns": duration,
+                    "host": host,
+                    "fuzz_input": fuzz_input,
+                },
+                source_tool="ffuf",
+                phase="directory_route_discovery",
+            )
+        )
     return entities
+
 
 class FfufParser:
     """Parser wrapper for backward compatibility."""
+
     @staticmethod
     def parse_ffuf_json(*args, **kwargs):
         return parse_ffuf_json(*args, **kwargs)
-

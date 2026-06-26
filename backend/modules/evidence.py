@@ -21,6 +21,7 @@ inspecting), the finding is dropped rather than confirmed. This implements
 Architecture §17 (evidence-based) and §25 ("no fake intelligence: false
 positives suppress, never fabricate").
 """
+
 from __future__ import annotations
 
 import re
@@ -44,8 +45,9 @@ def _status_of(obj: Any) -> int:
     return int(getattr(obj, "status", getattr(obj, "status_code", 0)) or 0)
 
 
-def differential(baseline_text: str, test_text: str, *,
-                 baseline_status: int = 200, test_status: int = 200) -> DiffEvidence:
+def differential(
+    baseline_text: str, test_text: str, *, baseline_status: int = 200, test_status: int = 200
+) -> DiffEvidence:
     """Compare a baseline response against a test response.
 
     Returns DiffEvidence; ``verified`` is True only when the MultiLayerVerifier
@@ -55,9 +57,11 @@ def differential(baseline_text: str, test_text: str, *,
         {"status": baseline_status, "response": baseline_text or ""},
         {"status": test_status, "body": test_text or ""},
     )
-    summary = (f"differential signals={signals} confidence={confidence}% "
-               f"(status {baseline_status}->{test_status}, "
-               f"len {len(baseline_text or '')}->{len(test_text or '')})")
+    summary = (
+        f"differential signals={signals} confidence={confidence}% "
+        f"(status {baseline_status}->{test_status}, "
+        f"len {len(baseline_text or '')}->{len(test_text or '')})"
+    )
     return DiffEvidence(verified=verified, confidence=confidence, signals=signals, summary=summary)
 
 
@@ -74,8 +78,7 @@ def confirm_against_baseline(interactions: list[tuple[Any, str]], index: int) ->
         return DiffEvidence(False, 0, 0, "no baseline to compare")
     _btarget, btext = interactions[0]
     _ttarget, ttext = interactions[index]
-    return differential(btext if isinstance(btext, str) else "",
-                        ttext if isinstance(ttext, str) else "")
+    return differential(btext if isinstance(btext, str) else "", ttext if isinstance(ttext, str) else "")
 
 
 # ── Logic-flaw confirmation (Architecture §9.3, §17) ──────────────────────────
@@ -86,14 +89,25 @@ def confirm_against_baseline(interactions: list[tuple[Any, str]], index: int) ->
 #   (3) optionally, the injected payload value is reflected in the response.
 
 _DENIAL_MARKERS = [
-    "denied", "forbidden", "unauthorized", "not allowed", "error", "invalid",
-    "failed", "must be", "cannot", "login required", "403", "401", "validation",
-    "exception", "bad request",
+    "denied",
+    "forbidden",
+    "unauthorized",
+    "not allowed",
+    "error",
+    "invalid",
+    "failed",
+    "must be",
+    "cannot",
+    "login required",
+    "403",
+    "401",
+    "validation",
+    "exception",
+    "bad request",
 ]
 
 
-def logic_confirm(text: str, *, positive_markers: list[str],
-                  reflected: str | None = None) -> DiffEvidence:
+def logic_confirm(text: str, *, positive_markers: list[str], reflected: str | None = None) -> DiffEvidence:
     """Confirm a logic-flaw response using >= 2 independent signals."""
     low = (text or "").lower()
     signals = 0
@@ -115,8 +129,12 @@ def logic_confirm(text: str, *, positive_markers: list[str],
 
     verified = has_positive and signals >= 2
     confidence = min(signals * 30, 100)
-    return DiffEvidence(verified=verified, confidence=confidence, signals=signals,
-                        summary=f"logic signals={signals} [{', '.join(detail)}]")
+    return DiffEvidence(
+        verified=verified,
+        confidence=confidence,
+        signals=signals,
+        summary=f"logic signals={signals} [{', '.join(detail)}]",
+    )
 
 
 # ── Wrong-class suppression (Architecture §17, §25) ──────────────────────────
@@ -131,27 +149,37 @@ def logic_confirm(text: str, *, positive_markers: list[str],
 # Stable canonical class strings (Architecture §18, §29.6). Modules and the
 # orchestrator share this vocabulary; do NOT introduce parallel synonyms.
 VULN_CLASSES: tuple[str, ...] = (
-    "SQLI", "XSS", "CMDI", "LFI", "BRUTE_FORCE", "JWT",
-    "IDOR", "AUTH_BYPASS", "MASS_ASSIGNMENT", "WORKFLOW_BYPASS",
-    "RACE_CONDITION", "FINANCIAL", "GENERIC",
+    "SQLI",
+    "XSS",
+    "CMDI",
+    "LFI",
+    "BRUTE_FORCE",
+    "JWT",
+    "IDOR",
+    "AUTH_BYPASS",
+    "MASS_ASSIGNMENT",
+    "WORKFLOW_BYPASS",
+    "RACE_CONDITION",
+    "FINANCIAL",
+    "GENERIC",
 )
 
 # Module-id (lowercase) → declared class. Used by the orchestrator/Sigma when
 # stamping events and by ``looks_like_class`` to validate that the module is
 # allowed to confirm given the response evidence.
 MODULE_TO_CLASS: dict[str, str] = {
-    "tech_sqli":            "SQLI",
-    "tech_xss":             "XSS",
-    "tech_fuzzer":          "XSS",      # the legacy fuzzer mainly fires on XSS-style reflection
-    "tech_cmdi":            "CMDI",
-    "tech_lfi":             "LFI",
-    "tech_jwt":             "JWT",
-    "tech_auth_bypass":     "AUTH_BYPASS",
-    "logic_doppelganger":   "IDOR",
-    "logic_escalator":      "MASS_ASSIGNMENT",
-    "logic_skipper":        "WORKFLOW_BYPASS",
-    "logic_chronomancer":   "RACE_CONDITION",
-    "logic_tycoon":         "FINANCIAL",
+    "tech_sqli": "SQLI",
+    "tech_xss": "XSS",
+    "tech_fuzzer": "XSS",  # the legacy fuzzer mainly fires on XSS-style reflection
+    "tech_cmdi": "CMDI",
+    "tech_lfi": "LFI",
+    "tech_jwt": "JWT",
+    "tech_auth_bypass": "AUTH_BYPASS",
+    "logic_doppelganger": "IDOR",
+    "logic_escalator": "MASS_ASSIGNMENT",
+    "logic_skipper": "WORKFLOW_BYPASS",
+    "logic_chronomancer": "RACE_CONDITION",
+    "logic_tycoon": "FINANCIAL",
 }
 
 # Signatures that strongly indicate a SPECIFIC class is present. These are
@@ -176,7 +204,9 @@ _CLASS_SIGNATURES: dict[str, tuple[re.Pattern[str], ...]] = {
     ),
     "CMDI": (
         re.compile(r"uid=\d+\([a-z_][a-z0-9_-]*\)"),
-        re.compile(r"\bLinux\s+\S+\s+\S+", ),
+        re.compile(
+            r"\bLinux\s+\S+\s+\S+",
+        ),
         re.compile(r"VIGIL49ECHO"),
         re.compile(r"(?i)\bnt authority\\\\system\b"),
     ),
@@ -207,8 +237,7 @@ def classify_response_evidence(text: str) -> set[str]:
     return found
 
 
-def looks_like_class(text: str, *, declared_class: str,
-                     compatible_classes: tuple[str, ...] = ()) -> bool:
+def looks_like_class(text: str, *, declared_class: str, compatible_classes: tuple[str, ...] = ()) -> bool:
     """Return True iff the response evidence does NOT clearly belong to a
     different vuln class than ``declared_class``.
 
@@ -235,27 +264,75 @@ def looks_like_class(text: str, *, declared_class: str,
 # on URL shape to avoid Skipper firing on /brute/ etc.
 _URL_HINTS: dict[str, tuple[str, ...]] = {
     "WORKFLOW_BYPASS": (
-        "checkout", "payment", "confirm", "complete", "order",
-        "review", "wizard", "step", "thank", "summary", "finalize",
+        "checkout",
+        "payment",
+        "confirm",
+        "complete",
+        "order",
+        "review",
+        "wizard",
+        "step",
+        "thank",
+        "summary",
+        "finalize",
     ),
     "FINANCIAL": (
-        "checkout", "payment", "order", "purchase", "billing",
-        "invoice", "price", "cart", "amount", "currency", "transfer",
+        "checkout",
+        "payment",
+        "order",
+        "purchase",
+        "billing",
+        "invoice",
+        "price",
+        "cart",
+        "amount",
+        "currency",
+        "transfer",
     ),
     "RACE_CONDITION": (
-        "redeem", "coupon", "claim", "withdraw", "transfer", "buy",
-        "purchase", "vote", "like", "follow", "checkout",
+        "redeem",
+        "coupon",
+        "claim",
+        "withdraw",
+        "transfer",
+        "buy",
+        "purchase",
+        "vote",
+        "like",
+        "follow",
+        "checkout",
     ),
     "MASS_ASSIGNMENT": (
-        "user", "users", "profile", "account", "register", "signup",
-        "settings", "role", "admin",
+        "user",
+        "users",
+        "profile",
+        "account",
+        "register",
+        "signup",
+        "settings",
+        "role",
+        "admin",
     ),
     "IDOR": (
-        "user", "users", "account", "profile", "order", "invoice",
-        "document", "doc", "record", "id=", "uid=", "user_id=",
+        "user",
+        "users",
+        "account",
+        "profile",
+        "order",
+        "invoice",
+        "document",
+        "doc",
+        "record",
+        "id=",
+        "uid=",
+        "user_id=",
     ),
     "BRUTE_FORCE": (
-        "login", "signin", "auth", "logon", "/brute",
+        "login",
+        "signin",
+        "auth",
+        "logon",
+        "/brute",
     ),
 }
 

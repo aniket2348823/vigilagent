@@ -1,15 +1,16 @@
-import logging
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
-from backend.schemas.payloads import AttackPayload
-from backend.core.orchestrator import HiveOrchestrator
-from backend.api.socket_manager import manager
-from datetime import datetime
-import uuid
 import asyncio
+import logging
 import time
-from backend.core.state import stats_db_manager
+import uuid
+from datetime import datetime
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+
+from backend.core.orchestrator import HiveOrchestrator
 from backend.core.rate_limiter import rate_limit
+from backend.core.state import stats_db_manager
 from backend.core.url_validator import validate_url
+from backend.schemas.payloads import AttackPayload
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +56,18 @@ async def fire_attack(request: Request, payload: AttackPayload, background_tasks
         _active_scan_targets[lock_key] = now + max(int(payload.duration or 10), 10)
 
     scan_id = str(uuid.uuid4())
-    
+
     import json
+
     parsed_body = {}
     if payload.body:
         try:
             parsed_body = json.loads(payload.body)
         except Exception as exc:
             import logging as _log
+
             _log.debug(f"Attack payload JSON parse fallback: {exc}")
-            parsed_body = payload.body # Fallback if not JSON string
+            parsed_body = payload.body  # Fallback if not JSON string
 
     target_config = {
         "url": payload.target_url,
@@ -72,35 +75,34 @@ async def fire_attack(request: Request, payload: AttackPayload, background_tasks
         "headers": payload.headers,
         "payload": parsed_body,
         "velocity": payload.velocity,
-        "concurrency": payload.concurrency, # Performance Bound
-        "rps": payload.rps, # Requests Per Second Bound
+        "concurrency": payload.concurrency,  # Performance Bound
+        "rps": payload.rps,  # Requests Per Second Bound
         "modules": payload.modules,
         "filters": payload.filters,
-        "duration": payload.duration
+        "duration": payload.duration,
     }
 
     # 1.5 Initialize distributed DB layer
     from backend.core.database import db_manager
-    await db_manager.initialize()
 
+    await db_manager.initialize()
 
     # We do a minimal placeholder here to ensure immediate UI feedback
     # 2. Initial DB Registration (Sync)
     # Use Manager to ensure persistence to disk immediately
-    from backend.core.state import stats_db_manager
     start_time = datetime.now()
     scan_record = {
         "id": scan_id,
         "status": "Initializing",
-        "name": target_config['url'],
-        "scope": target_config['url'],
-        "modules": target_config['modules'] if target_config['modules'] else ["Singularity V5"],
+        "name": target_config["url"],
+        "scope": target_config["url"],
+        "modules": target_config["modules"] if target_config["modules"] else ["Singularity V5"],
         "timestamp": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-        "results": []
+        "results": [],
     }
     # [FATAL BUG FIX: V6-OMEGA] register_scan is an async def and MUST be awaited
     await stats_db_manager.register_scan(scan_record)
-    
+
     # 3. Launch The Hive (Background Task)
     # The Orchestrator manages the entire lifecycle (Agents, EventBus, Reporting)
     async def run_scan_and_release():
@@ -111,16 +113,17 @@ async def fire_attack(request: Request, payload: AttackPayload, background_tasks
                 _active_scan_targets.pop(lock_key, None)
 
     background_tasks.add_task(run_scan_and_release)
-    
+
     # 4. Immediate Response
     return {
         "status": "Swarm Online",
         "scan_id": scan_id,
-        "message": "The Singularity has been unleashed. Monitor the 'Live Graph' for real-time telemetry."
+        "message": "The Singularity has been unleashed. Monitor the 'Live Graph' for real-time telemetry.",
     }
 
 
 # --- PROBLEM 13 FIX: Attack Replay Mechanism ---
+
 
 @router.post("/replay/{vuln_id}")
 @rate_limit()
@@ -129,10 +132,7 @@ async def replay_attack(request: Request, vuln_id: str, background_tasks: Backgr
     Re-run a specific attack against a confirmed vulnerability to verify if a fix was applied.
     Avoids re-running the entire scan.
     """
-    import asyncio
     import time
-
-    from backend.core.state import stats_db_manager
 
     vuln = await stats_db_manager.find_vulnerability(vuln_id)
     if not vuln:
@@ -148,7 +148,7 @@ async def replay_attack(request: Request, vuln_id: str, background_tasks: Backgr
         "concurrency": 1,
         "rps": 10,
         "filters": [],
-        "duration": 60
+        "duration": 60,
     }
 
     replay_scan_id = f"replay_{vuln_id[:8]}_{int(time.time())}"
@@ -163,7 +163,7 @@ async def replay_attack(request: Request, vuln_id: str, background_tasks: Backgr
         "modules": replay_config["modules"],
         "timestamp": start_time.strftime("%Y-%m-%d %H:%M:%S"),
         "results": [],
-        "replay_of": vuln_id
+        "replay_of": vuln_id,
     }
     await stats_db_manager.register_scan(replay_record)
 
@@ -175,5 +175,5 @@ async def replay_attack(request: Request, vuln_id: str, background_tasks: Backgr
         "replay_scan_id": replay_scan_id,
         "original_vuln_id": vuln_id,
         "target": replay_config["url"],
-        "module": replay_config["modules"]
+        "module": replay_config["modules"],
     }

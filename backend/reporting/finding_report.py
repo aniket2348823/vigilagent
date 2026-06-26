@@ -17,20 +17,23 @@ Formats (Architecture §18):
 
 Graph exports (Neo4j/Maltego) remain entity-based in alpha_recon.graph_exporters.
 """
+
 from __future__ import annotations
 
 import json
-import time
-from pathlib import Path
-from typing import Any, Iterable
-
 import logging
-from backend.schemas.findings import Finding, FindingSeverity, FindingState
+import time
+from typing import TYPE_CHECKING, Any
+
+from backend.schemas.findings import Finding, FindingState
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from pathlib import Path
 
 logger = logging.getLogger("FindingReport")
 
-_SEV_TO_SARIF = {"critical": "error", "high": "error", "medium": "warning",
-                 "low": "note", "informational": "note"}
+_SEV_TO_SARIF = {"critical": "error", "high": "error", "medium": "warning", "low": "note", "informational": "note"}
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4}
 
 
@@ -87,9 +90,7 @@ class FindingReportEngine:
             "business_impact": f.business_impact or f.impact,
             "technical_impact": f.technical_impact or f.impact,
             "false_positive_controls": f.false_positive_controls,
-            "verification_signals": [
-                s.value if hasattr(s, "value") else str(s) for s in f.verification_signals
-            ],
+            "verification_signals": [s.value if hasattr(s, "value") else str(s) for s in f.verification_signals],
             "remediation": f.remediation,
             "references": f.references,
         }
@@ -107,32 +108,40 @@ class FindingReportEngine:
         active = _active(findings)
         rules, results, seen = [], [], set()
         for f in active:
-            rule_id = (f.cwe[0] if f.cwe else f.title)
+            rule_id = f.cwe[0] if f.cwe else f.title
             if rule_id not in seen:
                 seen.add(rule_id)
-                rules.append({
-                    "id": rule_id, "name": f.title,
-                    "shortDescription": {"text": f.description[:200]},
-                    "defaultConfiguration": {"level": _SEV_TO_SARIF.get(f.severity.value, "note")},
-                })
-            results.append({
-                "ruleId": rule_id,
-                "level": _SEV_TO_SARIF.get(f.severity.value, "note"),
-                "message": {"text": f.description},
-                "locations": [{"physicalLocation": {"artifactLocation": {"uri": f.affected_target}}}],
-                "properties": {
-                    "confidence": f.confidence.value if hasattr(f.confidence, "value") else str(f.confidence),
-                    "cvss": f.cvss_score, "state": f.state.value,
-                    "false_positive_controls": f.false_positive_controls,
-                },
-            })
+                rules.append(
+                    {
+                        "id": rule_id,
+                        "name": f.title,
+                        "shortDescription": {"text": f.description[:200]},
+                        "defaultConfiguration": {"level": _SEV_TO_SARIF.get(f.severity.value, "note")},
+                    }
+                )
+            results.append(
+                {
+                    "ruleId": rule_id,
+                    "level": _SEV_TO_SARIF.get(f.severity.value, "note"),
+                    "message": {"text": f.description},
+                    "locations": [{"physicalLocation": {"artifactLocation": {"uri": f.affected_target}}}],
+                    "properties": {
+                        "confidence": f.confidence.value if hasattr(f.confidence, "value") else str(f.confidence),
+                        "cvss": f.cvss_score,
+                        "state": f.state.value,
+                        "false_positive_controls": f.false_positive_controls,
+                    },
+                }
+            )
         sarif = {
             "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
             "version": "2.1.0",
-            "runs": [{
-                "tool": {"driver": {"name": "Vigilagent", "version": "1.0.0", "rules": rules}},
-                "results": results,
-            }],
+            "runs": [
+                {
+                    "tool": {"driver": {"name": "Vigilagent", "version": "1.0.0", "rules": rules}},
+                    "results": results,
+                }
+            ],
         }
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(sarif, indent=2), encoding="utf-8")
@@ -143,7 +152,7 @@ class FindingReportEngine:
     def to_hackerone_markdown(self, findings: list[Finding], out: Path) -> Path:
         lines = [f"# Security Assessment — {self.target or self.scan_id}", ""]
         for f in _sorted(_active(findings)):
-            repro = [f"{i+1}. {s}" for i, s in enumerate(f.steps_to_reproduce)] or ["(see evidence)"]
+            repro = [f"{i + 1}. {s}" for i, s in enumerate(f.steps_to_reproduce)] or ["(see evidence)"]
             refs = [f"- {r}" for r in f.references] or ["n/a"]
             conf = f.confidence.value if hasattr(f.confidence, "value") else str(f.confidence)
             lines += [
@@ -152,17 +161,29 @@ class FindingReportEngine:
                 f"|  **CVSS:** {f.cvss_score or 'n/a'} ({f.cvss_vector or 'n/a'})  "
                 f"|  **State:** {f.state.value}  |  **Confidence:** {conf}",
                 "",
-                "### Description", f.description, "",
+                "### Description",
+                f.description,
+                "",
                 "### Steps to Reproduce",
                 *repro,
                 "",
-                "### Business Impact", f.business_impact or f.impact or "n/a", "",
-                "### Technical Impact", f.technical_impact or f.impact or "n/a", "",
+                "### Business Impact",
+                f.business_impact or f.impact or "n/a",
+                "",
+                "### Technical Impact",
+                f.technical_impact or f.impact or "n/a",
+                "",
                 "### False-Positive Controls Applied",
-                ", ".join(f.false_positive_controls) or "n/a", "",
-                "### Remediation", f.remediation or "n/a", "",
-                "### References", *refs, "",
-                "---", "",
+                ", ".join(f.false_positive_controls) or "n/a",
+                "",
+                "### Remediation",
+                f.remediation or "n/a",
+                "",
+                "### References",
+                *refs,
+                "",
+                "---",
+                "",
             ]
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text("\n".join(lines), encoding="utf-8")
@@ -173,18 +194,20 @@ class FindingReportEngine:
     def to_stix(self, findings: list[Finding], out: Path) -> Path:
         objects = []
         for f in _active(findings):
-            objects.append({
-                "type": "vulnerability",
-                "spec_version": "2.1",
-                "id": f"vulnerability--{f.id}",
-                "created": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-                "name": f.title,
-                "description": f.description,
-                "external_references": (
-                    [{"source_name": "cwe", "external_id": c} for c in f.cwe]
-                    + [{"source_name": "ref", "url": r} for r in f.references]
-                ),
-            })
+            objects.append(
+                {
+                    "type": "vulnerability",
+                    "spec_version": "2.1",
+                    "id": f"vulnerability--{f.id}",
+                    "created": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+                    "name": f.title,
+                    "description": f.description,
+                    "external_references": (
+                        [{"source_name": "cwe", "external_id": c} for c in f.cwe]
+                        + [{"source_name": "ref", "url": r} for r in f.references]
+                    ),
+                }
+            )
         bundle = {"type": "bundle", "id": f"bundle--{self.scan_id}", "objects": objects}
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(bundle, indent=2), encoding="utf-8")

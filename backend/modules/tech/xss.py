@@ -16,6 +16,7 @@ It targets DVWA's `/xss_r/?name=` and `/xss_d/?default=` plus any param-bearing
 URL Alpha discovers, and propagates the authenticated cookie/headers from the
 seeder so requests stay inside the live PHP session.
 """
+
 from __future__ import annotations
 
 import html
@@ -24,7 +25,6 @@ import urllib.parse
 
 from backend.core.base import BaseArsenalModule
 from backend.core.protocol import JobPacket, TaskTarget, Vulnerability
-
 
 # Sentinel-marked payloads. The `vgvg` token is unique enough to avoid false
 # matches against unrelated content while staying small enough to fit DVWA's
@@ -45,16 +45,29 @@ _PAYLOADS = (
 
 # Common XSS-prone parameter names used by training apps + real apps. We always
 # include the one already in the URL plus a few "default" sinks DVWA exposes.
-_PRIORITY_PARAMS = ("name", "default", "q", "search", "input", "message", "comment",
-                    "user", "page", "txt", "text", "data", "value")
+_PRIORITY_PARAMS = (
+    "name",
+    "default",
+    "q",
+    "search",
+    "input",
+    "message",
+    "comment",
+    "user",
+    "page",
+    "txt",
+    "text",
+    "data",
+    "value",
+)
 
 # Executable HTML contexts: when the payload lands inside one of these we treat
 # it as proof of an exploitable XSS sink, not just decorative reflection.
 _EXEC_CTX_PATTERNS = (
-    re.compile(r"<script[^>]*>[^<]*" + re.escape(_SENTINEL), re.I),         # in <script>
-    re.compile(r"on[a-z]+\s*=\s*['\"][^'\"]*" + re.escape(_SENTINEL), re.I),# event handler
-    re.compile(r"<svg[^>]*onload[^>]*" + re.escape(_SENTINEL), re.I),       # svg/onload
-    re.compile(r"javascript:[^\"']*" + re.escape(_SENTINEL), re.I),          # javascript: URL
+    re.compile(r"<script[^>]*>[^<]*" + re.escape(_SENTINEL), re.I),  # in <script>
+    re.compile(r"on[a-z]+\s*=\s*['\"][^'\"]*" + re.escape(_SENTINEL), re.I),  # event handler
+    re.compile(r"<svg[^>]*onload[^>]*" + re.escape(_SENTINEL), re.I),  # svg/onload
+    re.compile(r"javascript:[^\"']*" + re.escape(_SENTINEL), re.I),  # javascript: URL
     re.compile(r"<iframe[^>]*src\s*=\s*['\"]?javascript:[^>]*" + re.escape(_SENTINEL), re.I),
     re.compile(r"<img[^>]*onerror[^>]*" + re.escape(_SENTINEL), re.I),
     re.compile(r"<body[^>]*onload[^>]*" + re.escape(_SENTINEL), re.I),
@@ -106,9 +119,9 @@ class XSSProbe(BaseArsenalModule):
         targets: list[TaskTarget] = []
 
         # Always include the unmodified target as the BASELINE (index 0).
-        targets.append(TaskTarget(
-            url=url, method=packet.target.method or "GET",
-            headers=headers, payload=packet.target.payload))
+        targets.append(
+            TaskTarget(url=url, method=packet.target.method or "GET", headers=headers, payload=packet.target.payload)
+        )
 
         if "?" not in url:
             return targets
@@ -128,14 +141,15 @@ class XSSProbe(BaseArsenalModule):
                 mutated = {k: list(v) for k, v in params.items()}
                 mutated[param] = [payload]
                 attack = f"{base}?{urllib.parse.urlencode(mutated, doseq=True)}"
-                targets.append(TaskTarget(
-                    url=attack, method="GET", headers=dict(headers),
-                    payload=packet.target.payload))
+                targets.append(
+                    TaskTarget(url=attack, method="GET", headers=dict(headers), payload=packet.target.payload)
+                )
 
         return targets
 
-    async def analyze_responses(self, interactions: list[tuple[TaskTarget, str]],
-                                packet: JobPacket) -> list[Vulnerability]:
+    async def analyze_responses(
+        self, interactions: list[tuple[TaskTarget, str]], packet: JobPacket
+    ) -> list[Vulnerability]:
         from backend.modules.evidence import differential
 
         vulns: list[Vulnerability] = []
@@ -179,8 +193,7 @@ class XSSProbe(BaseArsenalModule):
 
             # Confirm only when at least 2 independent signals agree, and one
             # of them must be a real reflection signal (no diff-only XSS).
-            reflection_signal = ("full_payload_reflected_unencoded" in signals
-                                 or "executable_context" in signals)
+            reflection_signal = "full_payload_reflected_unencoded" in signals or "executable_context" in signals
             if not reflection_signal or len(set(signals)) < 2:
                 continue
 
@@ -190,19 +203,27 @@ class XSSProbe(BaseArsenalModule):
             seen.add(key)
 
             kind = "DOM-based" if "/xss_d" in target.url else "Reflected"
-            vulns.append(Vulnerability(
-                name=f"{kind} Cross-Site Scripting (XSS)",
-                severity="HIGH",
-                description=(f"Injected payload reflected unencoded inside an executable HTML "
-                             f"context. Multiple independent signals agree: {', '.join(signals)}."),
-                evidence=(f"Target: {target.url}\n"
-                          f"Payload: {payload}\n"
-                          f"Context match: {ctx or 'n/a'}\n"
-                          f"Differential: {ev.summary}"),
-                remediation=("Context-aware output encoding (HTML, attribute, JS, URL). "
-                             "Add a strict Content-Security-Policy that disallows inline "
-                             "scripts and unsafe-eval."),
-            ))
+            vulns.append(
+                Vulnerability(
+                    name=f"{kind} Cross-Site Scripting (XSS)",
+                    severity="HIGH",
+                    description=(
+                        f"Injected payload reflected unencoded inside an executable HTML "
+                        f"context. Multiple independent signals agree: {', '.join(signals)}."
+                    ),
+                    evidence=(
+                        f"Target: {target.url}\n"
+                        f"Payload: {payload}\n"
+                        f"Context match: {ctx or 'n/a'}\n"
+                        f"Differential: {ev.summary}"
+                    ),
+                    remediation=(
+                        "Context-aware output encoding (HTML, attribute, JS, URL). "
+                        "Add a strict Content-Security-Policy that disallows inline "
+                        "scripts and unsafe-eval."
+                    ),
+                )
+            )
             # One confirmed XSS per target URL is enough; don't spam variants.
             break
 

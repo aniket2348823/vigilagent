@@ -28,13 +28,13 @@ const Navigation = ({ navigate, activePage }) => {
                             onKeyDown={onActivateKey(() => goTo('dashboard'))}
                             role="link"
                             tabIndex={0}
-                            aria-label="Vulagent Scanner — go to dashboard"
+                            aria-label="Vigilagent — go to dashboard"
                         >
                             <motion.div layout to="position" className="text-purple-400">
                                 <span className="material-symbols-outlined text-2xl" aria-hidden="true">auto_awesome</span>
                             </motion.div>
                             {/* Enforce Space Grotesk specifically for the logo to maintain branding symmetry across all pages */}
-                            <span className="font-medium text-lg text-white tracking-wide" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Vulagent Scanner</span>
+                            <span className="font-medium text-lg text-white tracking-wide" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Vigilagent</span>
                         </div>
 
                         {/* Desktop Links */}

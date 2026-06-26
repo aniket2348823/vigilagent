@@ -18,6 +18,7 @@ Default posture (Architecture §9, §29.7):
 All execution goes through the governed TerminalEngine (argv-only, scope-checked,
 budgeted, sandboxed, audited). Output is parsed into typed graph entities.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,7 +31,9 @@ from backend.core.iteration_budget import IterationBudget, budget_config
 from backend.core.scope import ScopePolicy, ScopeViolation, scope_guard
 from backend.core.terminal_engine import terminal_engine
 from backend.core.unified_knowledge_graph import (
-    EdgeKind, KGNode, NodeKind, unified_knowledge_graph,
+    EdgeKind,
+    NodeKind,
+    unified_knowledge_graph,
 )
 
 logger = logging.getLogger("agent.network_commander")
@@ -64,8 +67,9 @@ class NetworkServiceCommander(BaseAgent):
             return
         await self.assess_host(host, scan_id)
 
-    async def assess_host(self, host: str, scan_id: str = "GLOBAL",
-                          budget: IterationBudget | None = None) -> dict[str, Any]:
+    async def assess_host(
+        self, host: str, scan_id: str = "GLOBAL", budget: IterationBudget | None = None
+    ) -> dict[str, Any]:
         """Run port -> service -> TLS assessment for a host (Architecture §16.1)."""
         budget = budget or budget_config.make("commander", label="network_commander")
         artifacts_root = Path("data") / "scans" / scan_id / "network"
@@ -86,9 +90,11 @@ class NetworkServiceCommander(BaseAgent):
         # 4. Ingest into the knowledge graph.
         self._ingest_graph(host, results, scan_id)
 
-        await self._emit_log(scan_id,
-                             f"Network assessment complete for {host}: "
-                             f"{len(results['ports'])} ports, {len(results['services'])} services")
+        await self._emit_log(
+            scan_id,
+            f"Network assessment complete for {host}: "
+            f"{len(results['ports'])} ports, {len(results['services'])} services",
+        )
         return results
 
     # ── Tool runs (governed via Terminal Engine) ─────────────────────────────
@@ -97,8 +103,12 @@ class NetworkServiceCommander(BaseAgent):
         out = root / "naabu.txt"
         res = await self.terminal.run(
             ["naabu", "-host", host, "-top-ports", "1000", "-silent"],
-            scan_id=scan_id, agent=self.name, output_path=out,
-            timeout_seconds=180, budget=budget, parser_hint="lines",
+            scan_id=scan_id,
+            agent=self.name,
+            output_path=out,
+            timeout_seconds=180,
+            budget=budget,
+            parser_hint="lines",
         )
         results["tool_runs"].append(res.to_dict())
         ports: list[int] = []
@@ -115,8 +125,12 @@ class NetworkServiceCommander(BaseAgent):
             nmap_out = root / "nmap_ports.txt"
             res2 = await self.terminal.run(
                 ["nmap", "-Pn", "--top-ports", "1000", "-oG", "-", host],
-                scan_id=scan_id, agent=self.name, output_path=nmap_out,
-                timeout_seconds=240, budget=budget, parser_hint="lines",
+                scan_id=scan_id,
+                agent=self.name,
+                output_path=nmap_out,
+                timeout_seconds=240,
+                budget=budget,
+                parser_hint="lines",
             )
             results["tool_runs"].append(res2.to_dict())
             if res2.stdout:
@@ -135,8 +149,12 @@ class NetworkServiceCommander(BaseAgent):
         out = root / "nmap_sv.xml"
         res = await self.terminal.run(
             ["nmap", "-Pn", "-sV", "-p", port_list, "-oX", str(out), host],
-            scan_id=scan_id, agent=self.name, output_path=root / "nmap_sv.stdout.txt",
-            timeout_seconds=300, budget=budget, parser_hint="xml",
+            scan_id=scan_id,
+            agent=self.name,
+            output_path=root / "nmap_sv.stdout.txt",
+            timeout_seconds=300,
+            budget=budget,
+            parser_hint="xml",
         )
         results["tool_runs"].append(res.to_dict())
         # Lightweight service extraction from stdout lines like "443/tcp open https".
@@ -157,12 +175,17 @@ class NetworkServiceCommander(BaseAgent):
         out = root / "tlsx.jsonl"
         res = await self.terminal.run(
             ["tlsx", "-u", host, "-san", "-cn", "-so", "-ss", "-mm", "-json", "-silent"],
-            scan_id=scan_id, agent=self.name, output_path=out,
-            timeout_seconds=120, budget=budget, parser_hint="jsonl",
+            scan_id=scan_id,
+            agent=self.name,
+            output_path=out,
+            timeout_seconds=120,
+            budget=budget,
+            parser_hint="jsonl",
         )
         results["tool_runs"].append(res.to_dict())
         if res.status == "finished" and res.stdout:
             import json as _json
+
             for line in res.stdout.splitlines():
                 line = line.strip()
                 if not line:
@@ -189,8 +212,13 @@ class NetworkServiceCommander(BaseAgent):
             for svc in results["services"]:
                 label = f"{host}:{svc['port']}/{svc['service']}"
                 svc_id = self.graph.upsert_node(
-                    NodeKind.SERVICE, label, scan_id=scan_id,
-                    port=svc["port"], service=svc["service"], version=svc.get("version", ""))
+                    NodeKind.SERVICE,
+                    label,
+                    scan_id=scan_id,
+                    port=svc["port"],
+                    service=svc["service"],
+                    version=svc.get("version", ""),
+                )
                 self.graph.link(host_id, svc_id, EdgeKind.EXPOSES)
             for port in results["ports"]:
                 port_id = self.graph.upsert_node(NodeKind.PORT, f"{host}:{port}", scan_id=scan_id, port=port)
@@ -202,8 +230,8 @@ class NetworkServiceCommander(BaseAgent):
         if self.bus is None:
             return
         try:
-            await self.bus.publish(HiveEvent(
-                type=EventType.LOG, source=self.name, scan_id=scan_id,
-                payload={"message": message}))
+            await self.bus.publish(
+                HiveEvent(type=EventType.LOG, source=self.name, scan_id=scan_id, payload={"message": message})
+            )
         except Exception as exc:
             logger.debug("[NetworkCommander] emit_log failed: %s", exc)

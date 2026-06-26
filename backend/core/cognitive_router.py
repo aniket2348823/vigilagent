@@ -14,10 +14,10 @@ centralized visibility for debugging and future migration.
 """
 
 import logging
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from backend.core.hive import BaseAgent, EventType, HiveEvent
+    from backend.core.hive import BaseAgent, HiveEvent
 
 logger = logging.getLogger(__name__)
 
@@ -40,29 +40,24 @@ class CognitiveRouter:
         # Lifecycle
         "TARGET_ACQUIRED": ["alpha", "omega"],  # Recon + strategy
         "SCAN_COMPLETED": ["omega", "kappa"],  # Learning + archival
-
         # Recon
         "RECON_PACKET": ["alpha", "omega"],  # Analysis + strategy update
         "JOB_ASSIGNED": ["alpha", "sigma", "beta", "delta"],  # Dispatch to correct handler
-
         # Vulnerability pipeline
         "VULN_CANDIDATE": ["gamma"],  # Audit/verify
         "VULN_CONFIRMED": ["sigma", "kappa"],  # Exploit + archive
         "VULN_FALSE_POSITIVE": ["kappa"],  # Archive for learning
-
         # Attack
         "LIVE_ATTACK": ["beta"],  # Execute attack
         "JOB_COMPLETED": ["sigma", "beta", "delta"],  # Process results
-
         # Governance
         "CONTROL_SIGNAL": ["zeta"],  # Throttle/resume
-
         # Intelligence
         "LEARNING_EVENT": ["kappa"],  # Knowledge archival
         "SKILL_LEARNED": ["kappa"],  # Skill extraction
     }
 
-    def __init__(self, agents: Dict[str, "BaseAgent"]):
+    def __init__(self, agents: dict[str, "BaseAgent"]):
         """Initialize with agent registry.
 
         Args:
@@ -70,9 +65,9 @@ class CognitiveRouter:
                     E.g., {"alpha": alpha_agent, "sigma": sigma_agent, ...}
         """
         self.agents = agents
-        self._routing_stats: Dict[str, int] = {}  # Track routing decisions
+        self._routing_stats: dict[str, int] = {}  # Track routing decisions
 
-    def route_event(self, event: "HiveEvent") -> List["BaseAgent"]:
+    def route_event(self, event: "HiveEvent") -> list["BaseAgent"]:
         """Route an event to the appropriate agent(s).
 
         Returns a list because one event may need multiple agents:
@@ -82,7 +77,7 @@ class CognitiveRouter:
         If an agent name in the routing table doesn't exist in self.agents,
         it's silently skipped (no crash).
         """
-        event_type = event.type if hasattr(event, 'type') else str(event.type)
+        event_type = event.type if hasattr(event, "type") else str(event.type)
         agent_names = self.ROUTING_TABLE.get(event_type, [])
 
         targets = []
@@ -98,17 +93,17 @@ class CognitiveRouter:
 
         return targets
 
-    def get_routing_for_event(self, event_type: str) -> List[str]:
+    def get_routing_for_event(self, event_type: str) -> list[str]:
         """Query which agents handle a given event type.
 
         Useful for debugging and documentation.
         """
         return list(self.ROUTING_TABLE.get(event_type, []))
 
-    def get_all_routes(self) -> Dict[str, List[str]]:
+    def get_all_routes(self) -> dict[str, list[str]]:
         """Return the full routing table."""
         return dict(self.ROUTING_TABLE)
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """Return routing statistics for debugging."""
         return dict(self._routing_stats)

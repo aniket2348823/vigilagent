@@ -61,7 +61,7 @@ class LocalHandler(BaseHTTPRequestHandler):
 
         self.send_response(status)
         self.send_header("Content-Type", ctype)
-        self.send_header("Server", "TestServer/1.0 (Vulagent)")
+        self.send_header("Server", "TestServer/1.0 (Vigilagent)")
         self.send_header("X-Powered-By", "Python/3.13")
         self.end_headers()
         self.wfile.write(body.encode())

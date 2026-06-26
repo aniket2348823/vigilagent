@@ -11,6 +11,7 @@ Generated skills start as `candidate` and become `active` only after passing the
 evaluation + promotion gate (Architecture §13.2). Artifacts are written under
 `generated_skills/<domain>/<skill-slug>/`.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from backend.skills.catalog import SkillMeta, skill_catalog
 from backend.skills.classifier import classify_domain, classify_risk
@@ -51,6 +52,7 @@ def _slugify(text: str) -> str:
 @dataclass
 class SkillCandidate:
     """A generated, untrusted skill candidate (Architecture §13.2 metadata)."""
+
     name: str
     source_scan_ids: list[str]
     risk_class: RiskClass
@@ -90,12 +92,19 @@ class SkillCandidate:
 class SkillCreatorAgent:
     """Generates candidate skills from scan outcomes (Architecture §13.2)."""
 
-    def create_from_outcome(self, *, trigger: str, scan_id: str, name: str,
-                            description: str, steps: list[str],
-                            expected_evidence: list[str],
-                            success_rate: float = 0.0,
-                            known_false_positives: list[str] | None = None,
-                            examples: list[dict] | None = None) -> Optional[SkillCandidate]:
+    def create_from_outcome(
+        self,
+        *,
+        trigger: str,
+        scan_id: str,
+        name: str,
+        description: str,
+        steps: list[str],
+        expected_evidence: list[str],
+        success_rate: float = 0.0,
+        known_false_positives: list[str] | None = None,
+        examples: list[dict] | None = None,
+    ) -> SkillCandidate | None:
         if trigger not in SKILL_CREATION_TRIGGERS:
             logger.debug("[SkillCreator] ignoring unknown trigger: %s", trigger)
             return None
@@ -117,8 +126,9 @@ class SkillCreatorAgent:
         )
         return candidate
 
-    def persist(self, candidate: SkillCandidate, *, description: str = "",
-                evaluation: "EvaluationResult | None" = None) -> Path:
+    def persist(
+        self, candidate: SkillCandidate, *, description: str = "", evaluation: EvaluationResult | None = None
+    ) -> Path:
         """Write the candidate skill artifact tree (Architecture §13.2)."""
         skill_dir = _GENERATED_ROOT / candidate.domain / candidate.slug
         skill_dir.mkdir(parents=True, exist_ok=True)
@@ -145,17 +155,29 @@ class SkillCreatorAgent:
         (skill_dir / "metadata.json").write_text(json.dumps(candidate.metadata(), indent=2), encoding="utf-8")
         if evaluation is not None:
             # evaluation.json artifact (Architecture §13.2 artifact structure).
-            (skill_dir / "evaluation.json").write_text(json.dumps({
-                "passed": evaluation.passed,
-                "checks": evaluation.checks,
-                "failed_checks": evaluation.reasons,
-                "evaluated_at": time.time(),
-            }, indent=2), encoding="utf-8")
-        (skill_dir / "provenance.json").write_text(json.dumps({
-            "source_scan_ids": candidate.source_scan_ids,
-            "created_by": candidate.created_by,
-            "created_at": time.time(),
-        }, indent=2), encoding="utf-8")
+            (skill_dir / "evaluation.json").write_text(
+                json.dumps(
+                    {
+                        "passed": evaluation.passed,
+                        "checks": evaluation.checks,
+                        "failed_checks": evaluation.reasons,
+                        "evaluated_at": time.time(),
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        (skill_dir / "provenance.json").write_text(
+            json.dumps(
+                {
+                    "source_scan_ids": candidate.source_scan_ids,
+                    "created_by": candidate.created_by,
+                    "created_at": time.time(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         if candidate.examples:
             with (skill_dir / "examples.jsonl").open("w", encoding="utf-8") as f:
                 for ex in candidate.examples:
@@ -216,19 +238,32 @@ skill_evaluator = SkillEvaluatorAgent()
 promotion_gate = SkillPromotionGate()
 
 
-def create_and_evaluate(*, trigger: str, scan_id: str, name: str, description: str,
-                        steps: list[str], expected_evidence: list[str],
-                        success_rate: float = 0.0,
-                        known_false_positives: list[str] | None = None,
-                        examples: list[dict] | None = None) -> dict[str, Any]:
+def create_and_evaluate(
+    *,
+    trigger: str,
+    scan_id: str,
+    name: str,
+    description: str,
+    steps: list[str],
+    expected_evidence: list[str],
+    success_rate: float = 0.0,
+    known_false_positives: list[str] | None = None,
+    examples: list[dict] | None = None,
+) -> dict[str, Any]:
     """End-to-end: create candidate -> evaluate -> gate -> persist -> catalog.
 
     Returns a summary dict. Generated skills never auto-activate; promotion is
     bounded by the gate (Architecture §13.2)."""
     candidate = skill_creator.create_from_outcome(
-        trigger=trigger, scan_id=scan_id, name=name, description=description,
-        steps=steps, expected_evidence=expected_evidence, success_rate=success_rate,
-        known_false_positives=known_false_positives, examples=examples,
+        trigger=trigger,
+        scan_id=scan_id,
+        name=name,
+        description=description,
+        steps=steps,
+        expected_evidence=expected_evidence,
+        success_rate=success_rate,
+        known_false_positives=known_false_positives,
+        examples=examples,
     )
     if candidate is None:
         return {"created": False, "reason": "invalid_trigger"}

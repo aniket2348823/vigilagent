@@ -36,8 +36,7 @@ class PinchTabClient:
     _logged_unavailable: bool = False
 
     def __init__(self, base_url: str | None = None, timeout: int = 30):
-        self.base_url = (base_url or getattr(settings, "PINCHTAB_BASE_URL",
-                                              "http://127.0.0.1:9867")).rstrip("/")
+        self.base_url = (base_url or getattr(settings, "PINCHTAB_BASE_URL", "http://127.0.0.1:9867")).rstrip("/")
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         # Short timeout specifically for the cheap availability probe so we
         # never block 30s when nothing is listening.
@@ -87,7 +86,8 @@ class PinchTabClient:
             # also stays quiet on the same boot cycle.
             logger.debug(
                 "[PinchTabClient] availability probe at %s failed (%s)",
-                self.base_url, type(exc).__name__,
+                self.base_url,
+                type(exc).__name__,
             )
             cls._logged_unavailable = True
         else:
@@ -105,11 +105,9 @@ class PinchTabClient:
         return await self._request_json("GET", "/health")
 
     async def create_profile(self, name: str, description: str = "") -> JSONDict:
-        return await self._request_json("POST", "/profiles",
-                                        json={"name": name, "description": description})
+        return await self._request_json("POST", "/profiles", json={"name": name, "description": description})
 
-    async def start_instance(self, profile_id: str | None = None,
-                             *, mode: str = "headless") -> JSONDict:
+    async def start_instance(self, profile_id: str | None = None, *, mode: str = "headless") -> JSONDict:
         payload: JSONDict = {"mode": mode}
         if profile_id:
             payload["profileId"] = profile_id
@@ -118,29 +116,26 @@ class PinchTabClient:
     async def stop_instance(self, instance_id: str) -> JSONDict:
         return await self._request_json("POST", f"/instances/{instance_id}/stop")
 
-    async def navigate(self, url: str, *, tab_id: str | None = None,
-                       wait_for: str = "networkidle") -> JSONDict:
+    async def navigate(self, url: str, *, tab_id: str | None = None, wait_for: str = "networkidle") -> JSONDict:
         payload: JSONDict = {"url": url, "waitFor": wait_for, "blockMedia": True}
         if tab_id:
             payload["tabId"] = tab_id
         return await self._request_json("POST", "/navigate", json=payload)
 
     async def snapshot(self, tab_id: str, *, max_tokens: int = 1200) -> PinchTabPayload:
-        return await self._request("GET",
-            f"/tabs/{tab_id}/snapshot?interactive=true&compact=true&maxTokens={max_tokens}")
+        return await self._request(
+            "GET", f"/tabs/{tab_id}/snapshot?interactive=true&compact=true&maxTokens={max_tokens}"
+        )
 
     async def text(self, tab_id: str, *, max_chars: int = 20000) -> PinchTabPayload:
-        return await self._request("GET",
-            f"/tabs/{tab_id}/text?format=text&maxChars={max_chars}")
+        return await self._request("GET", f"/tabs/{tab_id}/text?format=text&maxChars={max_chars}")
 
     async def network(self, tab_id: str, *, limit: int = 200) -> JSONDict:
         return await self._request_json("GET", f"/tabs/{tab_id}/network?limit={limit}")
 
-    async def network_detail(self, tab_id: str, request_id: str,
-                             *, body: bool = False) -> JSONDict:
+    async def network_detail(self, tab_id: str, request_id: str, *, body: bool = False) -> JSONDict:
         include_body = "true" if body else "false"
-        return await self._request_json("GET",
-            f"/tabs/{tab_id}/network/{request_id}?body={include_body}")
+        return await self._request_json("GET", f"/tabs/{tab_id}/network/{request_id}?body={include_body}")
 
     async def console(self, tab_id: str, *, limit: int = 100) -> JSONDict:
         return await self._request_json("GET", f"/console?tabId={tab_id}&limit={limit}")
@@ -152,8 +147,9 @@ class PinchTabClient:
         return await self._request_json("GET", f"/tabs/{tab_id}/cookies")
 
     async def wait_for_load(self, tab_id: str, *, timeout_ms: int = 30000) -> JSONDict:
-        return await self._request_json("POST", f"/tabs/{tab_id}/wait",
-                                        json={"load": "networkidle", "timeout": timeout_ms})
+        return await self._request_json(
+            "POST", f"/tabs/{tab_id}/wait", json={"load": "networkidle", "timeout": timeout_ms}
+        )
 
     async def action(
         self,
@@ -210,8 +206,7 @@ class PinchTabClient:
         if cls._available is False:
             now = asyncio.get_event_loop().time()
             if (now - cls._last_check) < cls._recheck_interval:
-                raise PinchTabUnavailable(
-                    f"PinchTab control plane offline at {self.base_url}")
+                raise PinchTabUnavailable(f"PinchTab control plane offline at {self.base_url}")
 
         try:
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
@@ -222,8 +217,7 @@ class PinchTabClient:
                     content_type = resp.headers.get("content-type", "")
                     if "application/json" in content_type:
                         return await resp.json()
-                    if (content_type.startswith("image/") or
-                            content_type == "application/octet-stream"):
+                    if content_type.startswith("image/") or content_type == "application/octet-stream":
                         return await resp.read()
                     return await resp.text()
         except aiohttp.ClientConnectorError as exc:
@@ -233,20 +227,20 @@ class PinchTabClient:
                 logger.info(
                     "[PinchTabClient] control plane offline at %s (%s); "
                     "browser stack will use OpenClaw/Playwright instead",
-                    self.base_url, type(exc).__name__,
+                    self.base_url,
+                    type(exc).__name__,
                 )
                 cls._logged_unavailable = True
-            raise PinchTabUnavailable(
-                f"PinchTab control plane offline at {self.base_url}") from exc
-        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError) as exc:
+            raise PinchTabUnavailable(f"PinchTab control plane offline at {self.base_url}") from exc
+        except (TimeoutError, aiohttp.ServerTimeoutError) as exc:
             cls._available = False
             cls._last_check = asyncio.get_event_loop().time()
             if not cls._logged_unavailable:
                 logger.info(
                     "[PinchTabClient] control plane timed out at %s (%s); "
                     "browser stack will use OpenClaw/Playwright instead",
-                    self.base_url, type(exc).__name__,
+                    self.base_url,
+                    type(exc).__name__,
                 )
                 cls._logged_unavailable = True
-            raise PinchTabUnavailable(
-                f"PinchTab control plane timed out at {self.base_url}") from exc
+            raise PinchTabUnavailable(f"PinchTab control plane timed out at {self.base_url}") from exc

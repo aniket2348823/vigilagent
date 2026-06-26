@@ -4,22 +4,22 @@ Alpha V6 Deep PinchTab Integration.
 Full browser intelligence layer using PinchTab as the primary browser
 control plane with comprehensive data extraction.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import re
-from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse, parse_qsl
+from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qsl, urlparse
 
-from backend.agents.alpha_recon.artifacts import ArtifactStore
-from backend.agents.alpha_recon.models import EndpointFinding, ParameterFinding, SourceRef, stable_id
-from backend.agents.alpha_recon.rag import ReconRAGPipeline
-from backend.agents.alpha_recon.scoring import score_endpoint
-from backend.agents.alpha_recon.dedupe import classify_path, normalize_url, normalize_endpoint_key, SeenSet
+from backend.agents.alpha_recon.dedupe import SeenSet, classify_path
 from backend.integrations.pinchtab_client import PinchTabClient
 from backend.parsers.recon.base import ParsedEntity
+
+if TYPE_CHECKING:
+    from backend.agents.alpha_recon.artifacts import ArtifactStore
+    from backend.agents.alpha_recon.rag import ReconRAGPipeline
 
 logger = logging.getLogger("alpha.pinchtab")
 
@@ -53,8 +53,9 @@ class PinchTabIntelligence:
             return True, ""
         return False, "pinchtab_daemon_not_running"
 
-    async def full_capture(self, targets: list[str], *, max_targets: int = 20,
-                            profile_name: str = "") -> dict[str, Any]:
+    async def full_capture(
+        self, targets: list[str], *, max_targets: int = 20, profile_name: str = ""
+    ) -> dict[str, Any]:
         """Run full browser intelligence on target URLs."""
         available, reason = await self.is_available()
         if not available:
@@ -78,8 +79,7 @@ class PinchTabIntelligence:
             instance = await self.client.start_instance(profile_id or None, mode="headless")
             instance_id = str(instance.get("id", instance.get("instanceId", "")))
         except Exception as exc:
-            return {"used": False, "reason": f"instance_failed:{exc}",
-                    "profile_id": profile_id, "entities": []}
+            return {"used": False, "reason": f"instance_failed:{exc}", "profile_id": profile_id, "entities": []}
 
         try:
             for url in targets[:max_targets]:
@@ -131,19 +131,32 @@ class PinchTabIntelligence:
             screenshot_path = self.artifacts.screenshots_dir / f"{prefix}.png"
             try:
                 await self.client.screenshot(tab_id, screenshot_path)
-                await self.artifacts.register(screenshot_path, tool_name="pinchtab",
-                    artifact_type="screenshot", scan_id=self.scan_id)
-                entities.append(ParsedEntity(kind="visual_artifact", label=url,
-                    confidence=0.95, properties={"screenshot_path": str(screenshot_path)},
-                    source_tool="pinchtab", phase="http_browser_intelligence"))
+                await self.artifacts.register(
+                    screenshot_path, tool_name="pinchtab", artifact_type="screenshot", scan_id=self.scan_id
+                )
+                entities.append(
+                    ParsedEntity(
+                        kind="visual_artifact",
+                        label=url,
+                        confidence=0.95,
+                        properties={"screenshot_path": str(screenshot_path)},
+                        source_tool="pinchtab",
+                        phase="http_browser_intelligence",
+                    )
+                )
             except Exception as exc:
                 logger.debug(f"[PinchTab] Screenshot failed for {url}: {exc}")
 
             # 2. DOM Snapshot (interactive elements, forms, links)
             try:
                 snapshot = await self.client.snapshot(tab_id, max_tokens=3000)
-                await self.artifacts.write_json(f"browser/{prefix}_snapshot.json", snapshot,
-                    tool_name="pinchtab", artifact_type="snapshot", scan_id=self.scan_id)
+                await self.artifacts.write_json(
+                    f"browser/{prefix}_snapshot.json",
+                    snapshot,
+                    tool_name="pinchtab",
+                    artifact_type="snapshot",
+                    scan_id=self.scan_id,
+                )
                 if isinstance(snapshot, dict):
                     entities.extend(self._extract_from_snapshot(snapshot, url))
             except Exception as exc:
@@ -153,8 +166,13 @@ class PinchTabIntelligence:
             try:
                 text = await self.client.text(tab_id, max_chars=50000)
                 text_str = str(text) if not isinstance(text, str) else text
-                await self.artifacts.write_text(f"browser/{prefix}_text.txt", text_str,
-                    tool_name="pinchtab", artifact_type="text", scan_id=self.scan_id)
+                await self.artifacts.write_text(
+                    f"browser/{prefix}_text.txt",
+                    text_str,
+                    tool_name="pinchtab",
+                    artifact_type="text",
+                    scan_id=self.scan_id,
+                )
                 entities.extend(self._extract_from_text(text_str, url))
             except Exception as exc:
                 logger.debug(f"[PinchTab] Text extraction failed for {url}: {exc}")
@@ -162,8 +180,13 @@ class PinchTabIntelligence:
             # 4. Network Requests (critical for endpoint discovery)
             try:
                 network = await self.client.network(tab_id, limit=500)
-                await self.artifacts.write_json(f"browser/{prefix}_network.json", network,
-                    tool_name="pinchtab", artifact_type="network", scan_id=self.scan_id)
+                await self.artifacts.write_json(
+                    f"browser/{prefix}_network.json",
+                    network,
+                    tool_name="pinchtab",
+                    artifact_type="network",
+                    scan_id=self.scan_id,
+                )
                 entities.extend(self._extract_from_network(network, url))
             except Exception as exc:
                 logger.debug(f"[PinchTab] Network capture failed for {url}: {exc}")
@@ -171,8 +194,13 @@ class PinchTabIntelligence:
             # 5. Console output (error messages, debug info)
             try:
                 console = await self.client.console(tab_id, limit=200)
-                await self.artifacts.write_json(f"browser/{prefix}_console.json", console,
-                    tool_name="pinchtab", artifact_type="console", scan_id=self.scan_id)
+                await self.artifacts.write_json(
+                    f"browser/{prefix}_console.json",
+                    console,
+                    tool_name="pinchtab",
+                    artifact_type="console",
+                    scan_id=self.scan_id,
+                )
                 entities.extend(self._extract_from_console(console, url))
             except Exception as exc:
                 logger.debug(f"[PinchTab] Console capture failed for {url}: {exc}")
@@ -180,16 +208,26 @@ class PinchTabIntelligence:
             # 6. Browser Errors
             try:
                 errors = await self.client.errors(tab_id, limit=200)
-                await self.artifacts.write_json(f"browser/{prefix}_errors.json", errors,
-                    tool_name="pinchtab", artifact_type="errors", scan_id=self.scan_id)
+                await self.artifacts.write_json(
+                    f"browser/{prefix}_errors.json",
+                    errors,
+                    tool_name="pinchtab",
+                    artifact_type="errors",
+                    scan_id=self.scan_id,
+                )
             except Exception as exc:
                 logger.debug(f"[PinchTab] Errors capture failed for {url}: {exc}")
 
             # 7. Cookies (session, auth tokens)
             try:
                 cookies = await self.client.cookies(tab_id)
-                await self.artifacts.write_json(f"browser/{prefix}_cookies.json", cookies,
-                    tool_name="pinchtab", artifact_type="cookies", scan_id=self.scan_id)
+                await self.artifacts.write_json(
+                    f"browser/{prefix}_cookies.json",
+                    cookies,
+                    tool_name="pinchtab",
+                    artifact_type="cookies",
+                    scan_id=self.scan_id,
+                )
                 entities.extend(self._extract_from_cookies(cookies, url))
             except Exception as exc:
                 logger.debug(f"[PinchTab] Cookies capture failed for {url}: {exc}")
@@ -245,26 +283,39 @@ class PinchTabIntelligence:
                 continue
 
             endpoint_type, risk = classify_path(parsed.path)
-            params = [{"name": n, "value": v}
-                      for n, v in parse_qsl(parsed.query, keep_blank_values=True)]
+            params = [{"name": n, "value": v} for n, v in parse_qsl(parsed.query, keep_blank_values=True)]
 
             props = {
-                "full_url": url, "method": method, "status_code": status,
-                "mime_type": mime, "resource_type": resource_type,
-                "path": parsed.path or "/", "host": (parsed.hostname or "").lower(),
-                "parameters": params, "endpoint_type": endpoint_type, "risk": risk,
+                "full_url": url,
+                "method": method,
+                "status_code": status,
+                "mime_type": mime,
+                "resource_type": resource_type,
+                "path": parsed.path or "/",
+                "host": (parsed.hostname or "").lower(),
+                "parameters": params,
+                "endpoint_type": endpoint_type,
+                "risk": risk,
                 "discovered_from": parent_url,
             }
 
             # Check for API calls
-            is_api = bool(re.search(r'/api/|/rest/|/v[0-9]+/|/graphql', url, re.I))
+            is_api = bool(re.search(r"/api/|/rest/|/v[0-9]+/|/graphql", url, re.I))
             is_xhr = resource_type in ("XHR", "Fetch", "xmlhttprequest", "fetch")
             props["is_api_call"] = is_api or is_xhr
 
             kind = "browser_endpoint"
             conf = 0.9 if (is_api or is_xhr) else 0.75
-            entities.append(ParsedEntity(kind=kind, label=url, confidence=conf,
-                properties=props, source_tool="pinchtab", phase="http_browser_intelligence"))
+            entities.append(
+                ParsedEntity(
+                    kind=kind,
+                    label=url,
+                    confidence=conf,
+                    properties=props,
+                    source_tool="pinchtab",
+                    phase="http_browser_intelligence",
+                )
+            )
 
         return entities
 
@@ -278,9 +329,16 @@ class PinchTabIntelligence:
             if action and not action.startswith("#"):
                 key = f"form:{action}"
                 if self._seen.add(key):
-                    entities.append(ParsedEntity(kind="form_action", label=action,
-                        confidence=0.8, properties={"parent_url": parent_url, "type": "form"},
-                        source_tool="pinchtab", phase="http_browser_intelligence"))
+                    entities.append(
+                        ParsedEntity(
+                            kind="form_action",
+                            label=action,
+                            confidence=0.8,
+                            properties={"parent_url": parent_url, "type": "form"},
+                            source_tool="pinchtab",
+                            phase="http_browser_intelligence",
+                        )
+                    )
         return entities
 
     def _extract_from_text(self, text: str, parent_url: str) -> list[ParsedEntity]:
@@ -289,19 +347,28 @@ class PinchTabIntelligence:
         # Look for API keys, tokens in page content
         patterns = {
             "api_key_in_page": re.compile(r'(?:api[_-]?key|apikey)\s*[:=]\s*["\']?([A-Za-z0-9]{20,})', re.I),
-            "bearer_token": re.compile(r'Bearer\s+([A-Za-z0-9._-]{20,})', re.I),
-            "jwt_in_page": re.compile(r'eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+'),
+            "bearer_token": re.compile(r"Bearer\s+([A-Za-z0-9._-]{20,})", re.I),
+            "jwt_in_page": re.compile(r"eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+"),
         }
         for stype, pattern in patterns.items():
             matches = pattern.findall(text[:10000])
             for match in matches[:3]:
                 key = f"text_secret:{stype}:{str(match)[:20]}"
                 if self._seen.add(key):
-                    entities.append(ParsedEntity(kind="secret", label=f"page_secret:{stype}",
-                        confidence=0.7, properties={"secret_type": stype,
-                            "redacted_value": str(match)[:4] + "****",
-                            "source_url": parent_url},
-                        source_tool="pinchtab", phase="http_browser_intelligence"))
+                    entities.append(
+                        ParsedEntity(
+                            kind="secret",
+                            label=f"page_secret:{stype}",
+                            confidence=0.7,
+                            properties={
+                                "secret_type": stype,
+                                "redacted_value": str(match)[:4] + "****",
+                                "source_url": parent_url,
+                            },
+                            source_tool="pinchtab",
+                            phase="http_browser_intelligence",
+                        )
+                    )
         return entities
 
     def _extract_from_console(self, console: Any, parent_url: str) -> list[ParsedEntity]:
@@ -323,10 +390,16 @@ class PinchTabIntelligence:
             if level == "error" and any(kw in text.lower() for kw in ["api", "cors", "auth", "token", "forbidden"]):
                 key = f"console_err:{text[:50]}"
                 if self._seen.add(key):
-                    entities.append(ParsedEntity(kind="browser_error", label=f"console_error:{parent_url}",
-                        confidence=0.6, properties={"message": text[:500], "level": level,
-                            "source_url": parent_url},
-                        source_tool="pinchtab", phase="http_browser_intelligence"))
+                    entities.append(
+                        ParsedEntity(
+                            kind="browser_error",
+                            label=f"console_error:{parent_url}",
+                            confidence=0.6,
+                            properties={"message": text[:500], "level": level, "source_url": parent_url},
+                            source_tool="pinchtab",
+                            phase="http_browser_intelligence",
+                        )
+                    )
         return entities
 
     def _extract_from_cookies(self, cookies: Any, parent_url: str) -> list[ParsedEntity]:
@@ -353,19 +426,33 @@ class PinchTabIntelligence:
             is_session = any(kw in name.lower() for kw in ["session", "token", "auth", "jwt", "csrf"])
             if is_session:
                 issues = []
-                if not secure: issues.append("missing_secure_flag")
-                if not httponly: issues.append("missing_httponly_flag")
+                if not secure:
+                    issues.append("missing_secure_flag")
+                if not httponly:
+                    issues.append("missing_httponly_flag")
                 if not samesite or samesite.lower() == "none":
                     issues.append("weak_samesite")
 
                 if issues:
                     key = f"cookie:{name}:{domain}"
                     if self._seen.add(key):
-                        entities.append(ParsedEntity(kind="vulnerability_candidate",
-                            label=f"insecure_cookie:{name}", confidence=0.7,
-                            properties={"cookie_name": name, "domain": domain,
-                                "issues": issues, "secure": secure, "httponly": httponly,
-                                "samesite": samesite, "source_url": parent_url,
-                                "vuln_type": "insecure_cookie"},
-                            source_tool="pinchtab", phase="http_browser_intelligence"))
+                        entities.append(
+                            ParsedEntity(
+                                kind="vulnerability_candidate",
+                                label=f"insecure_cookie:{name}",
+                                confidence=0.7,
+                                properties={
+                                    "cookie_name": name,
+                                    "domain": domain,
+                                    "issues": issues,
+                                    "secure": secure,
+                                    "httponly": httponly,
+                                    "samesite": samesite,
+                                    "source_url": parent_url,
+                                    "vuln_type": "insecure_cookie",
+                                },
+                                source_tool="pinchtab",
+                                phase="http_browser_intelligence",
+                            )
+                        )
         return entities

@@ -1,0 +1,159 @@
+name: Python Lint & Smoke Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**/*.py"
+      - "ruff.toml"
+      - ".github/workflows/lint.yml"
+      - "alerting/**/*.yml"
+      - "grafana/provisioning/**/*"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**/*.py"
+      - "ruff.toml"
+      - "alerting/**/*.yml"
+      - "grafana/provisioning/**/*"
+
+jobs:
+  ruff:
+    name: Ruff Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install "ruff>=0.4,<1.0"
+
+      - name: Run ruff check
+        run: ruff check backend/
+
+      # always() needed: previous ruff/format steps may fail (exit 1),
+      # which skips subsequent steps by default in GitHub Actions.
+      - name: Run ruff check (statistics)
+        if: always()
+        run: ruff check backend/ --statistics
+
+      - name: Run ruff format check
+        run: ruff format --check backend/
+
+  smoke-test:
+    name: Backend Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Backend import smoke test
+        env:
+          VIGILAGENT_TEST_MODE: "true"
+        run: python -c "import backend.main; print('Backend import OK')"
+
+  validate:
+    name: Validate Docker Compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+
+  alertmanager-smoke:
+    name: Alertmanager Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Alertmanager
+        run: docker compose --profile monitoring up -d alertmanager
+
+      - name: Wait for Alertmanager to be healthy
+        run: timeout 30 bash -c 'until docker compose exec -T alertmanager wget -q -O /dev/null http://localhost:9093/-/healthy; do sleep 2; done'
+
+      - name: Verify config loaded (receiver exists)
+        run: |
+          STATUS=$(docker compose exec -T alertmanager wget -q -O - http://localhost:9093/api/v2/status | python3 -c "import sys,json; print(json.load(sys.stdin)['config']['original'])")
+          echo "$STATUS" | grep -q 'vigilagent-webhook' || (echo 'FAIL: receiver not found'; exit 1)
+          echo "Alertmanager config OK — receiver 'vigilagent-webhook' found"
+
+      - name: Verify alertmanager accepts alerts (POST)
+        run: |
+          docker compose exec -T alertmanager wget -q -O /dev/null \
+            --post-data='{"labels":{"alertname":"SmokeTest","severity":"warning"}}' \
+            --header='Content-Type: application/json' \
+            http://localhost:9093/api/v2/alerts
+          echo "Alertmanager accepted test alert"
+
+      - name: Cleanup
+        if: always()
+        run: docker compose --profile monitoring down -v
+
+  grafana-import:
+    name: Grafana Dashboard Import
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Start Grafana + Prometheus
+        run: docker compose --profile monitoring up -d grafana prometheus
+
+      - name: Wait for Grafana to be healthy
+        run: timeout 60 bash -c 'until docker compose exec -T grafana wget -q -O /dev/null http://localhost:3000/api/health; do sleep 2; done'
+
+      - name: Wait for Prometheus to be healthy
+        run: timeout 30 bash -c 'until docker compose exec -T prometheus wget -q -O /dev/null http://localhost:9090/-/healthy; do sleep 2; done'
+
+      - name: Import dashboard via API
+        run: |
+          python scripts/import_grafana_dashboard.py \
+            --url http://localhost:3000 \
+            --user admin \
+            --password admin
+
+      - name: Verify dashboard exists in Grafana
+        run: |
+          DASH=$(docker compose exec -T grafana wget -q -O - http://localhost:3000/api/dashboards/uid/vigilagent-main)
+          echo "$DASH" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Dashboard found: {d["dashboard"]["title"]}')"
+
+      - name: Cleanup
+        if: always()
+        run: docker compose --profile monitoring down -v
+
+  promtool-check:
+    name: Promtool Rules Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install promtool
+        run: |
+          PROM_VERSION=2.53.0
+          curl -sLO https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz
+          tar xzf prometheus-${PROM_VERSION}.linux-amd64.tar.gz
+          sudo cp prometheus-${PROM_VERSION}.linux-amd64/promtool /usr/local/bin/
+          rm -rf prometheus-${PROM_VERSION}.linux-amd64*
+
+      - name: Validate alerting rules
+        run: promtool check rules alerting/rules.yml

@@ -25,9 +25,11 @@ This engine is RECON/TOOL execution only. It is NOT a generic exploitation
 shell: only registered, allowlisted binaries run, and every argv passes the
 guardrail validator that rejects shell metacharacters.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import inspect
 import logging
@@ -36,18 +38,21 @@ import re
 import shutil
 import time
 import uuid
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Sequence
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from backend.core.iteration_budget import IterationBudget
 from backend.core.queue import LanePriority, ProcessRunner, command_lane
 from backend.core.sandbox import DockerSandbox
 from backend.core.scope import ScopePolicy, ScopeViolation, scope_guard
 from backend.core.stdout_watchdog import watch_output
 from backend.tools.recon.guardrails import validate_command
+
+if TYPE_CHECKING:
+    from backend.core.iteration_budget import IterationBudget
 
 logger = logging.getLogger("vigilagent.terminal")
 
@@ -60,7 +65,7 @@ _STDERR_TAIL = 16 * 1024
 StreamCallback = Callable[[str], Any]
 
 
-class TerminalBackend(str, Enum):
+class TerminalBackend(StrEnum):
     LOCAL = "local"
     DOCKER = "docker"
 
@@ -286,9 +291,17 @@ class TerminalEngine:
             self.telemetry["blocked"] += 1
             logger.warning("[TERMINAL] BLOCKED %s: %s", tool, reason)
             return TerminalResult(
-                tool=tool, argv=argv, backend="none", exit_code=-1,
-                output_path=out_path, blocked=True, block_reason=reason,
-                scan_id=scan_id, agent=agent, parser_hint=parser_hint, metadata=meta,
+                tool=tool,
+                argv=argv,
+                backend="none",
+                exit_code=-1,
+                output_path=out_path,
+                blocked=True,
+                block_reason=reason,
+                scan_id=scan_id,
+                agent=agent,
+                parser_hint=parser_hint,
+                metadata=meta,
             )
 
         # 1. Budget (Architecture §8 pipeline step 1)
@@ -325,23 +338,39 @@ class TerminalEngine:
         try:
             if backend is TerminalBackend.DOCKER:
                 result = await self._run_docker(
-                    argv, scan_id, timeout_seconds,
-                    output_path=out_path or None, stdin=stdin,
-                    on_output=on_output, cancel_token=cancel_token,
+                    argv,
+                    scan_id,
+                    timeout_seconds,
+                    output_path=out_path or None,
+                    stdin=stdin,
+                    on_output=on_output,
+                    cancel_token=cancel_token,
                 )
             else:
                 result = await self._run_local(
-                    argv, stdin=stdin, cwd=cwd, timeout_seconds=timeout_seconds,
-                    priority=priority, on_output=on_output, cancel_token=cancel_token,
+                    argv,
+                    stdin=stdin,
+                    cwd=cwd,
+                    timeout_seconds=timeout_seconds,
+                    priority=priority,
+                    on_output=on_output,
+                    cancel_token=cancel_token,
                 )
         except Exception as exc:  # pragma: no cover - defensive
             self.telemetry["failures"] += 1
             logger.error("[TERMINAL] %s execution error: %s", tool, exc)
             return TerminalResult(
-                tool=tool, argv=argv, backend=backend.value, exit_code=1,
-                output_path=out_path, stderr_tail=str(exc)[-_STDERR_TAIL:],
+                tool=tool,
+                argv=argv,
+                backend=backend.value,
+                exit_code=1,
+                output_path=out_path,
+                stderr_tail=str(exc)[-_STDERR_TAIL:],
                 duration_ms=int((time.time() - started) * 1000),
-                scan_id=scan_id, agent=agent, parser_hint=parser_hint, metadata=meta,
+                scan_id=scan_id,
+                agent=agent,
+                parser_hint=parser_hint,
+                metadata=meta,
             )
 
         stdout, stderr, exit_code, timed_out, cancelled = result
@@ -380,11 +409,20 @@ class TerminalEngine:
             self.telemetry["local_runs"] += 1
 
         return TerminalResult(
-            tool=tool, argv=argv, backend=backend.value, exit_code=exit_code,
-            output_path=out_path, stdout=watched.content,
-            stderr_tail=stderr[-_STDERR_TAIL:], timed_out=timed_out,
-            duration_ms=duration_ms, sha256=sha256, output_bytes=out_bytes,
-            scan_id=scan_id, agent=agent, parser_hint=parser_hint,
+            tool=tool,
+            argv=argv,
+            backend=backend.value,
+            exit_code=exit_code,
+            output_path=out_path,
+            stdout=watched.content,
+            stderr_tail=stderr[-_STDERR_TAIL:],
+            timed_out=timed_out,
+            duration_ms=duration_ms,
+            sha256=sha256,
+            output_bytes=out_bytes,
+            scan_id=scan_id,
+            agent=agent,
+            parser_hint=parser_hint,
             metadata={**meta, "truncated": watched.truncated, "cancelled": cancelled},
         )
 
@@ -409,12 +447,15 @@ class TerminalEngine:
             # recon callers.
             if on_output is not None or cancel_token is not None:
                 outcome = await self._run_streamed_exec(
-                    argv, stdin=stdin, cwd=cwd,
-                    no_output_timeout_ms=no_output_ms, max_runtime_ms=max_ms,
-                    on_output=on_output, cancel_token=cancel_token,
+                    argv,
+                    stdin=stdin,
+                    cwd=cwd,
+                    no_output_timeout_ms=no_output_ms,
+                    max_runtime_ms=max_ms,
+                    on_output=on_output,
+                    cancel_token=cancel_token,
                 )
-                return (outcome.stdout, outcome.stderr, outcome.exit_code,
-                        outcome.timed_out, outcome.cancelled)
+                return (outcome.stdout, outcome.stderr, outcome.exit_code, outcome.timed_out, outcome.cancelled)
             proc = await ProcessRunner.run_exec(
                 argv,
                 stdin=stdin,
@@ -444,8 +485,10 @@ class TerminalEngine:
         (network=none) used for non-recon commands.
         """
         from backend.tools.recon.docker_runtime import (
-            DOCKER_RECON_TOOLS, build_docker_argv, build_exec_argv,
-            docker_recon_ready, running_recon_container, EXEC_WORKDIR,
+            DOCKER_RECON_TOOLS,
+            build_docker_argv,
+            docker_recon_ready,
+            running_recon_container,
         )
 
         tool = os.path.basename(argv[0]) if argv else ""
@@ -453,8 +496,11 @@ class TerminalEngine:
 
         if tool_key in DOCKER_RECON_TOOLS and docker_recon_ready() and output_path:
             raw_dir = Path(output_path).resolve().parent
-            tool_root = Path(getattr(__import__("backend.core.config", fromlist=["settings"]).settings,
-                                     "ALPHA_TOOL_ROOT", r"D:\projects"))
+            tool_root = Path(
+                getattr(
+                    __import__("backend.core.config", fromlist=["settings"]).settings, "ALPHA_TOOL_ROOT", r"D:\projects"
+                )
+            )
 
             # Prefer exec-into-a-running-container when one exists. Works around
             # the Docker Desktop overlay bug where fresh `docker run` of the image
@@ -463,20 +509,30 @@ class TerminalEngine:
             container = running_recon_container()
             if container:
                 proc = await self._run_docker_in_container(
-                    argv, container=container, raw_dir=raw_dir, tool_root=tool_root,
-                    output_path=Path(output_path), stdin=stdin,
-                    timeout_seconds=timeout_seconds, on_output=on_output,
+                    argv,
+                    container=container,
+                    raw_dir=raw_dir,
+                    tool_root=tool_root,
+                    output_path=Path(output_path),
+                    stdin=stdin,
+                    timeout_seconds=timeout_seconds,
+                    on_output=on_output,
                     cancel_token=cancel_token,
                 )
                 return proc
 
             docker_argv = build_docker_argv(
-                argv, raw_dir=raw_dir, tool_root=tool_root,
+                argv,
+                raw_dir=raw_dir,
+                tool_root=tool_root,
                 scan_id=scan_id,
             )
             proc = await self._run_docker_exec(
-                docker_argv, stdin=stdin, timeout_seconds=timeout_seconds,
-                on_output=on_output, cancel_token=cancel_token,
+                docker_argv,
+                stdin=stdin,
+                timeout_seconds=timeout_seconds,
+                on_output=on_output,
+                cancel_token=cancel_token,
             )
             return proc
 
@@ -485,6 +541,7 @@ class TerminalEngine:
         # output through the callback once after completion so the WebSocket
         # relay still observes it.
         from backend.core.sandbox import quote_command
+
         command = quote_command(argv)
         sandbox_res = await self._sandbox.run(command, engagement_id=scan_id, timeout=timeout_seconds)
         timed_out = sandbox_res.exit_code == 124
@@ -520,12 +577,15 @@ class TerminalEngine:
         async with command_lane.slot():
             if on_output is not None or cancel_token is not None:
                 outcome = await self._run_streamed_exec(
-                    docker_argv, stdin=stdin, cwd=None,
-                    no_output_timeout_ms=no_output_ms, max_runtime_ms=max_ms,
-                    on_output=on_output, cancel_token=cancel_token,
+                    docker_argv,
+                    stdin=stdin,
+                    cwd=None,
+                    no_output_timeout_ms=no_output_ms,
+                    max_runtime_ms=max_ms,
+                    on_output=on_output,
+                    cancel_token=cancel_token,
                 )
-                return (outcome.stdout, outcome.stderr, outcome.exit_code,
-                        outcome.timed_out, outcome.cancelled)
+                return (outcome.stdout, outcome.stderr, outcome.exit_code, outcome.timed_out, outcome.cancelled)
             proc = await ProcessRunner.run_exec(
                 docker_argv,
                 stdin=stdin,
@@ -553,9 +613,9 @@ class TerminalEngine:
         to the host artifact path via ``docker cp`` so the parser registry sees
         them exactly as with the bind-mounted run path.
         """
-        from backend.tools.recon.docker_runtime import (
-            build_exec_argv, EXEC_WORKDIR, TOOLS_MNT)
         import asyncio as _asyncio
+
+        from backend.tools.recon.docker_runtime import EXEC_WORKDIR, TOOLS_MNT, build_exec_argv
 
         # Rewrite loopback references in the stdin payload for in-container
         # execution. Tools that read targets from stdin (httprobe, hakrawler,
@@ -568,7 +628,10 @@ class TerminalEngine:
             if any(h in low_s for h in ("localhost", "127.0.0.1", "[::1]")):
                 stdin = re.sub(
                     r"(?<![\w.-])(?:127\.0\.0\.1|localhost|\[::1\])(?![\w.-])",
-                    "host.docker.internal", stdin, flags=re.IGNORECASE)
+                    "host.docker.internal",
+                    stdin,
+                    flags=re.IGNORECASE,
+                )
 
         out_name = output_path.name
         container_out = f"{EXEC_WORKDIR}/{out_name}"
@@ -581,8 +644,12 @@ class TerminalEngine:
             logger.debug("[TERMINAL] op_parent_str extraction failed: %s", exc)
             extra_prefixes = []
         exec_argv = build_exec_argv(
-            argv, container=container, raw_dir=raw_dir, tool_root=tool_root,
-            container_out=container_out, has_stdin=stdin is not None,
+            argv,
+            container=container,
+            raw_dir=raw_dir,
+            tool_root=tool_root,
+            container_out=container_out,
+            has_stdin=stdin is not None,
             extra_raw_prefixes=extra_prefixes,
         )
 
@@ -619,13 +686,21 @@ class TerminalEngine:
         tool_s = str(tool_root)
         out_host = str(output_path)
         out_host_abs = str(Path(output_path).resolve())
+
         async def _cp_in(host_path: str, container_path: str) -> None:
             try:
                 # Ensure parent dir exists in the container, then copy the file.
                 parent = container_path.rsplit("/", 1)[0] or "/"
                 mk = await _asyncio.create_subprocess_exec(
-                    "docker", "exec", container, "mkdir", "-p", parent,
-                    stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE)
+                    "docker",
+                    "exec",
+                    container,
+                    "mkdir",
+                    "-p",
+                    parent,
+                    stdout=_asyncio.subprocess.PIPE,
+                    stderr=_asyncio.subprocess.PIPE,
+                )
                 await _asyncio.wait_for(mk.communicate(), timeout=15)
                 # If the input is a small text file that references loopback
                 # hosts (e.g. a `-iL hosts.txt` target list with localhost:8080),
@@ -637,14 +712,18 @@ class TerminalEngine:
                 tmp = None
                 try:
                     if os.path.getsize(host_path) <= 1_000_000:
-                        with open(host_path, "r", encoding="utf-8", errors="strict") as fh:
+                        with open(host_path, encoding="utf-8", errors="strict") as fh:
                             content = fh.read()
                         low_c = content.lower()
                         if any(h in low_c for h in ("localhost", "127.0.0.1", "[::1]")):
                             rewritten = re.sub(
                                 r"(?<![\w.-])(?:127\.0\.0\.1|localhost|\[::1\])(?![\w.-])",
-                                "host.docker.internal", content, flags=re.IGNORECASE)
+                                "host.docker.internal",
+                                content,
+                                flags=re.IGNORECASE,
+                            )
                             import tempfile as _tf
+
                             fd, tmp = _tf.mkstemp(suffix=".loopfix")
                             with os.fdopen(fd, "w", encoding="utf-8") as wf:
                                 wf.write(rewritten)
@@ -652,16 +731,20 @@ class TerminalEngine:
                 except (UnicodeDecodeError, OSError):
                     src = host_path  # binary or unreadable — copy as-is
                 cp = await _asyncio.create_subprocess_exec(
-                    "docker", "cp", src, f"{container}:{container_path}",
-                    stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE)
+                    "docker",
+                    "cp",
+                    src,
+                    f"{container}:{container_path}",
+                    stdout=_asyncio.subprocess.PIPE,
+                    stderr=_asyncio.subprocess.PIPE,
+                )
                 await _asyncio.wait_for(cp.communicate(), timeout=60)
                 if tmp:
-                    try:
+                    with contextlib.suppress(OSError):
                         os.unlink(tmp)
-                    except OSError:
-                        pass
             except Exception as exc:
                 logger.debug("[TERMINAL] docker cp in failed for %s: %s", host_path, exc)
+
         for tok in argv:
             s = str(tok)
             norm = s.replace("\\", "/")
@@ -671,26 +754,28 @@ class TerminalEngine:
             except Exception as exc:
                 logger.debug("[TERMINAL] isfile check failed for %s: %s", s, exc)
                 is_file = False
-            if not is_file or s == out_host or s == out_host_abs:
+            if s in (out_host, out_host_abs) or not is_file:
                 continue
             # Match against ALL candidate raw_dir prefixes (absolute + relative
             # forms) so files referenced via either path style are pushed in.
             best: tuple[int, str] | None = None
             for pref in raw_prefixes:
                 pref_norm = pref.replace("\\", "/")
-                if low.startswith(pref_norm.lower()):
-                    if best is None or len(pref_norm) > best[0]:
-                        best = (len(pref_norm), pref_norm)
+                if low.startswith(pref_norm.lower()) and (best is None or len(pref_norm) > best[0]):
+                    best = (len(pref_norm), pref_norm)
             if best is not None:
-                rel = norm[best[0]:].lstrip("/")
+                rel = norm[best[0] :].lstrip("/")
                 await _cp_in(s, f"{EXEC_WORKDIR}/{rel}")
             elif low.startswith(tool_s.replace("\\", "/").lower()):
-                rel = norm[len(tool_s):].lstrip("\\/").replace("\\", "/")
+                rel = norm[len(tool_s) :].lstrip("\\/").replace("\\", "/")
                 await _cp_in(s, f"{TOOLS_MNT}/{rel}")
 
         result = await self._run_docker_exec(
-            exec_argv, stdin=stdin, timeout_seconds=timeout_seconds,
-            on_output=on_output, cancel_token=cancel_token,
+            exec_argv,
+            stdin=stdin,
+            timeout_seconds=timeout_seconds,
+            on_output=on_output,
+            cancel_token=cancel_token,
         )
         # Copy OUTPUT files back to the host. Many recon tools write their real
         # results to a SECONDARY file (ffuf `-o results.json`, nmap `-oX a.xml`,
@@ -700,6 +785,7 @@ class TerminalEngine:
         # raw_dir) sees nothing. We copy back every argv token that maps to a
         # host raw_dir path, plus the conventional container_out, best effort.
         copied_back: set[str] = set()
+
         async def _cp_out(container_path: str, host_path: str) -> None:
             if host_path in copied_back:
                 return
@@ -707,28 +793,31 @@ class TerminalEngine:
             try:
                 Path(host_path).parent.mkdir(parents=True, exist_ok=True)
                 cp = await _asyncio.create_subprocess_exec(
-                    "docker", "cp", f"{container}:{container_path}", host_path,
-                    stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE,
+                    "docker",
+                    "cp",
+                    f"{container}:{container_path}",
+                    host_path,
+                    stdout=_asyncio.subprocess.PIPE,
+                    stderr=_asyncio.subprocess.PIPE,
                 )
                 await _asyncio.wait_for(cp.communicate(), timeout=60)
             except Exception as exc:
-                logger.debug("[TERMINAL] docker cp back failed for %s: %s",
-                             container_path, exc)
+                logger.debug("[TERMINAL] docker cp back failed for %s: %s", container_path, exc)
+
         # Secondary output files referenced in argv (under raw_dir -> /scan).
         for tok in argv:
             s = str(tok)
-            if s == out_host or s == out_host_abs:
+            if s in (out_host, out_host_abs):
                 continue
             norm = s.replace("\\", "/")
             low = norm.lower()
             best: tuple[int, str] | None = None
             for pref in raw_prefixes:
                 pref_norm = pref.replace("\\", "/")
-                if low.startswith(pref_norm.lower()):
-                    if best is None or len(pref_norm) > best[0]:
-                        best = (len(pref_norm), pref_norm)
+                if low.startswith(pref_norm.lower()) and (best is None or len(pref_norm) > best[0]):
+                    best = (len(pref_norm), pref_norm)
             if best is not None:
-                rel = norm[best[0]:].lstrip("/")
+                rel = norm[best[0] :].lstrip("/")
                 await _cp_out(f"{EXEC_WORKDIR}/{rel}", s)
         # Conventional stdout artifact path.
         await _cp_out(container_out, out_host)
@@ -843,10 +932,8 @@ class TerminalEngine:
                 logger.debug("[TERMINAL] stdin write error: %s", stdin_exc)
 
         def _terminate() -> None:
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 proc.kill()
-            except ProcessLookupError:
-                pass
 
         async def _supervisor() -> None:
             """No-output watchdog + max-runtime ceiling + cancellation."""
@@ -864,8 +951,7 @@ class TerminalEngine:
                 if (now - last_output_at) * 1000 > no_output_timeout_ms:
                     timed_out = True
                     killed = True
-                    logger.warning("[TERMINAL] no-output watchdog tripped (%sms).",
-                                   no_output_timeout_ms)
+                    logger.warning("[TERMINAL] no-output watchdog tripped (%sms).", no_output_timeout_ms)
                     _terminate()
                     return
                 if now >= deadline:
@@ -931,7 +1017,11 @@ class TerminalEngine:
         token = CancellationToken()
         handle = BackgroundProcess(
             process_id=f"proc_{uuid.uuid4().hex[:12]}",
-            tool=tool, argv=argv, scan_id=scan_id, agent=agent, token=token,
+            tool=tool,
+            argv=argv,
+            scan_id=scan_id,
+            agent=agent,
+            token=token,
             backend=self.choose_backend(prefer_docker).value,
         )
 
@@ -942,11 +1032,20 @@ class TerminalEngine:
         async def _drive() -> None:
             try:
                 result = await self.run(
-                    argv, scan_id=scan_id, agent=agent, output_path=output_path,
-                    timeout_seconds=timeout_seconds, budget=budget,
-                    parser_hint=parser_hint, priority=priority, stdin=stdin,
-                    cwd=cwd, prefer_docker=prefer_docker, metadata=metadata,
-                    on_output=_sink, cancel_token=token,
+                    argv,
+                    scan_id=scan_id,
+                    agent=agent,
+                    output_path=output_path,
+                    timeout_seconds=timeout_seconds,
+                    budget=budget,
+                    parser_hint=parser_hint,
+                    priority=priority,
+                    stdin=stdin,
+                    cwd=cwd,
+                    prefer_docker=prefer_docker,
+                    metadata=metadata,
+                    on_output=_sink,
+                    cancel_token=token,
                 )
                 handle.result = result
                 handle.status = result.status
@@ -971,27 +1070,29 @@ class TerminalEngine:
         if handle is None:
             return {"status": "not_found", "process_id": process_id}
         if handle.result is not None or handle.status != "running":
-            return {"status": "already_finished", "process_id": process_id,
-                    "final_status": handle.status}
+            return {"status": "already_finished", "process_id": process_id, "final_status": handle.status}
         handle.token.cancel()
         if wait and handle.task is not None:
             try:
                 await asyncio.wait_for(asyncio.shield(handle.task), timeout=10)
             except Exception as cancel_exc:
                 logger.debug("[TERMINAL] cancel wait error: %s", cancel_exc)
-        return {"status": "cancelled", "process_id": process_id,
-                "final_status": handle.status}
+        return {"status": "cancelled", "process_id": process_id, "final_status": handle.status}
 
     def get_telemetry(self) -> dict[str, Any]:
-        return {**self.telemetry, "docker_available": self._docker_ok,
-                "prefer_docker": self.prefer_docker,
-                "live_processes": sum(1 for p in self._processes.values() if p.status == "running")}
+        return {
+            **self.telemetry,
+            "docker_available": self._docker_ok,
+            "prefer_docker": self.prefer_docker,
+            "live_processes": sum(1 for p in self._processes.values() if p.status == "running"),
+        }
 
 
 # Global governed terminal engine, bound to the active scope guard.
 def _build_default_engine() -> TerminalEngine:
     try:
         from backend.core.config import settings
+
         prefer_docker = bool(getattr(settings, "TERMINAL_PREFER_DOCKER", True))
         image = getattr(settings, "SANDBOX_IMAGE", None)
     except Exception as exc:
@@ -1019,37 +1120,41 @@ def register_terminal_tool() -> None:
     if tool_registry.exists("terminal"):
         return
 
-    async def _handler(argv, scan_id: str = "GLOBAL", agent: str = "terminal",
-                       timeout_seconds: int = 3600, **kwargs):
+    async def _handler(argv, scan_id: str = "GLOBAL", agent: str = "terminal", timeout_seconds: int = 3600, **kwargs):
         result = await terminal_engine.run(
             argv, scan_id=scan_id, agent=agent, timeout_seconds=timeout_seconds, **kwargs
         )
         return result.to_dict()
 
-    tool_registry.register(ToolDefinition(
-        name="terminal",
-        description=(
-            "Execute an allowlisted recon CLI tool as an argv array through the "
-            "governed Terminal Engine (scope-checked, sandboxed, audited). "
-            "Recon only — not an exploitation shell."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "argv": {"type": "array", "items": {"type": "string"},
-                          "description": "Command as an argv array (no shell strings)."},
-                "scan_id": {"type": "string"},
-                "agent": {"type": "string"},
-                "timeout_seconds": {"type": "integer"},
+    tool_registry.register(
+        ToolDefinition(
+            name="terminal",
+            description=(
+                "Execute an allowlisted recon CLI tool as an argv array through the "
+                "governed Terminal Engine (scope-checked, sandboxed, audited). "
+                "Recon only — not an exploitation shell."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "argv": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Command as an argv array (no shell strings).",
+                    },
+                    "scan_id": {"type": "string"},
+                    "agent": {"type": "string"},
+                    "timeout_seconds": {"type": "integer"},
+                },
+                "required": ["argv"],
             },
-            "required": ["argv"],
-        },
-        handler=_handler,
-        tool_type=ToolType.ENVIRONMENT,
-        requires_approval=False,
-        mutates_state=False,
-        store_result=True,
-    ))
+            handler=_handler,
+            tool_type=ToolType.ENVIRONMENT,
+            requires_approval=False,
+            mutates_state=False,
+            store_result=True,
+        )
+    )
 
 
 # Register on import so the tool is discoverable by agents.

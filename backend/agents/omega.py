@@ -1,19 +1,20 @@
 import asyncio
 import logging
-from backend.core.hive import EventType, HiveEvent
+
 from backend.core.browser_agent import BrowserEnabledAgent
-from backend.core.protocol import JobPacket, ResultPacket, AgentID, TaskPriority, ModuleConfig, TaskTarget
-from backend.core.unified_knowledge_graph import graph_engine
+from backend.core.hive import EventType, HiveEvent
+from backend.core.protocol import AgentID, JobPacket, ModuleConfig, TaskPriority, TaskTarget
 from backend.core.queue import command_lane
-from backend.core.content_boundary import content_boundary
+from backend.core.unified_knowledge_graph import graph_engine
 
 logger = logging.getLogger("AgentOmega")
+
 
 class OmegaAgent(BrowserEnabledAgent):
     """
     AGENT OMEGA: THE STRATEGIST
     Role: Campaign Intelligence & Attack Chain Orchestration with Browser-Aware Strategies.
-    
+
     Advanced Capabilities:
     1. LLM strategy reasoning (gpt-oss-20b) with deterministic evidence-weighted fallback
     2. Dynamic Campaign Chaining
@@ -23,26 +24,28 @@ class OmegaAgent(BrowserEnabledAgent):
     6. Browser-aware campaign planning for SPAs
     7. SPA detection and specialized strategies
     """
+
     def __init__(self, bus):
         super().__init__("agent_omega", bus)
         self._cortex = None  # Lazy-init via _get_cortex()
 
         # Campaign State
         self._active_campaigns = {}  # scan_id -> campaign state
-        self._confirmed_vulns = []   # Accumulator for mid-scan adaptation
-        self._job_results = {}       # job_id -> result tracking
+        self._confirmed_vulns = []  # Accumulator for mid-scan adaptation
+        self._job_results = {}  # job_id -> result tracking
 
         # Iterative reasoning-loop knobs (Hermes-style observe -> decide -> act).
         # `_max_campaign_actions` is Omega's analog of Hermes's IterationBudget:
         # the loop dispatches at most this many next-actions per campaign.
-        self._max_campaign_actions = 12   # action/iteration budget
-        self._min_action_value = 0.15     # value floor — stop when nothing clears it
+        self._max_campaign_actions = 12  # action/iteration budget
+        self._min_action_value = 0.15  # value floor — stop when nothing clears it
         self._defense_pressure_stop = 0.5  # WAF/block pressure that halts expansion
         self._campaign_step_delay = 0.05  # yield so async evidence lands between steps
 
     def _get_cortex(self):
         if self._cortex is None:
             from backend.ai.cortex import get_cortex_engine
+
             try:
                 self._cortex = get_cortex_engine()
             except Exception as e:
@@ -60,13 +63,17 @@ class OmegaAgent(BrowserEnabledAgent):
         """PROBLEM 6: Receive intelligence from Kappa and boost relevant attack priority."""
         pattern = event.payload.get("pattern", {})
         vuln_type = pattern.get("vuln_type", "")
-        logger.debug(f"[{self.name}] [ADAPT] Received pattern intelligence: {vuln_type} (confidence: {pattern.get('confidence', 0):.2f})")
+        logger.debug(
+            f"[{self.name}] [ADAPT] Received pattern intelligence: {vuln_type} (confidence: {pattern.get('confidence', 0):.2f})"
+        )
         # Boost priority of the attack type that just confirmed a hit
         for strategy_name, profile in self.STRATEGY_PROFILES.items():
             for module in profile.get("modules", []):
                 if vuln_type.lower() in module.lower():
                     profile["aggression"] = min(10, profile.get("aggression", 5) + 2)
-                    logger.debug(f"[{self.name}] [BOOST] Strategy '{strategy_name}' aggression boosted to {profile['aggression']}")
+                    logger.debug(
+                        f"[{self.name}] [BOOST] Strategy '{strategy_name}' aggression boosted to {profile['aggression']}"
+                    )
 
     # --- STRATEGY SELECTION ---
 
@@ -79,8 +86,15 @@ class OmegaAgent(BrowserEnabledAgent):
         },
         "BLITZKRIEG": {
             "description": "Maximum aggression, all modules fire simultaneously",
-            "modules": ["tech_sqli", "tech_fuzzer", "tech_jwt", "tech_auth_bypass",
-                        "logic_tycoon", "logic_doppelganger", "logic_skipper"],
+            "modules": [
+                "tech_sqli",
+                "tech_fuzzer",
+                "tech_jwt",
+                "tech_auth_bypass",
+                "logic_tycoon",
+                "logic_doppelganger",
+                "logic_skipper",
+            ],
             "aggression": 10,
             "priority": TaskPriority.CRITICAL,
         },
@@ -115,7 +129,7 @@ class OmegaAgent(BrowserEnabledAgent):
             "aggression": 8,
             "priority": TaskPriority.HIGH,
             "browser_required": True,
-        }
+        },
     }
 
     def _select_strategy(self, target_url: str, ai_strategy: str = None, scan_id: str = "GLOBAL") -> str:
@@ -173,7 +187,7 @@ class OmegaAgent(BrowserEnabledAgent):
             "COMMAND_INJECTION": "tech_cmdi",
             "RCE": "tech_cmdi",
         }
-        
+
         predictions = graph_engine.predict_next("TARGET_ACQUIRED", target_url)
         modules = []
         for pred in predictions[:5]:  # Top 5 predictions
@@ -181,11 +195,11 @@ class OmegaAgent(BrowserEnabledAgent):
             module = MODULE_TYPE_MAP.get(suggestion)
             if module and module not in modules:
                 modules.append(module)
-        
+
         # Always include at least one fallback
         if not modules:
             modules = ["tech_fuzzer", "logic_doppelganger"]
-        
+
         return modules
 
     # --- ITERATIVE REASONING LOOP (Hermes observe -> decide -> act port) ---
@@ -250,8 +264,7 @@ class OmegaAgent(BrowserEnabledAgent):
 
         # 4. Skill recommendations boost the modules they relate to.
         for skill in evidence["skills"][:8]:
-            text = (f"{skill.get('skill_type', '')} {skill.get('name', '')} "
-                    f"{skill.get('description', '')}").lower()
+            text = (f"{skill.get('skill_type', '')} {skill.get('name', '')} {skill.get('description', '')}").lower()
             for module in list(scores.keys()):
                 if any(tok and tok in text for tok in module.split("_")[1:]):
                     _bump(module, float(skill.get("score", 0) or 0) * 0.3, "skill")
@@ -265,8 +278,7 @@ class OmegaAgent(BrowserEnabledAgent):
                 scores[m][0] *= 0.3
                 scores[m][1].append("already-confirmed")
 
-        candidates = [(m, slot[0], slot[1]) for m, slot in scores.items()
-                      if m not in evidence["dispatched_modules"]]
+        candidates = [(m, slot[0], slot[1]) for m, slot in scores.items() if m not in evidence["dispatched_modules"]]
         if not candidates:
             return None
         # Deterministic tie-break: highest value, then module name.
@@ -282,18 +294,18 @@ class OmegaAgent(BrowserEnabledAgent):
         scan_id = event.scan_id
         if not target_url:
             return
-            
+
         # Register campaign
         self._active_campaigns[scan_id] = {
             "target_url": target_url,
             "strategy": None,
             "dispatched_jobs": [],
-            "dispatched_modules": [],   # modules already fired (avoid re-dispatch)
+            "dispatched_modules": [],  # modules already fired (avoid re-dispatch)
             "confirmed_vulns": [],
-            "actions_taken": 0,         # iterative-loop action counter (budget)
-            "adapted": False
+            "actions_taken": 0,  # iterative-loop action counter (budget)
+            "adapted": False,
         }
-        
+
         await self.initiate_campaign(target_url, scan_id)
 
     async def handle_confirmed_vuln(self, event: HiveEvent):
@@ -312,34 +324,38 @@ class OmegaAgent(BrowserEnabledAgent):
         # Check for chain opportunities using the graph engine
         vuln_type = str(vuln_data.get("type", "")).upper()
         vuln_url = str(vuln_data.get("url", ""))
-        
+
         if not vuln_type or campaign.get("adapted"):
             return
 
         # Query graph for follow-up attack vectors
         chains = graph_engine.find_chains(max_depth=3)
-        relevant_chains = [c for c in chains if any(
-            step.get("type", "").upper() == vuln_type for step in c.get("chain", [])
-        )]
+        relevant_chains = [
+            c for c in chains if any(step.get("type", "").upper() == vuln_type for step in c.get("chain", []))
+        ]
 
         if relevant_chains and not campaign["adapted"]:
             campaign["adapted"] = True
             best_chain = relevant_chains[0]
-            
-            logger.info(f"[{self.name}] [CHAIN ADAPT] Confirmed {vuln_type} → Deploying chain escalation (depth={best_chain['depth']})")
-            
-            await self.bus.publish(HiveEvent(
-                type=EventType.LIVE_ATTACK,
-                source=self.name,
-                scan_id=scan_id,
-                payload={
-                    "url": vuln_url,
-                    "arsenal": "Chain Escalation",
-                    "action": f"Adapting strategy: {vuln_type} → Chain depth {best_chain['depth']}",
-                    "payload": str(best_chain.get("chain", [])[:2])[:80]
-                }
-            ))
-            
+
+            logger.info(
+                f"[{self.name}] [CHAIN ADAPT] Confirmed {vuln_type} → Deploying chain escalation (depth={best_chain['depth']})"
+            )
+
+            await self.bus.publish(
+                HiveEvent(
+                    type=EventType.LIVE_ATTACK,
+                    source=self.name,
+                    scan_id=scan_id,
+                    payload={
+                        "url": vuln_url,
+                        "arsenal": "Chain Escalation",
+                        "action": f"Adapting strategy: {vuln_type} → Chain depth {best_chain['depth']}",
+                        "payload": str(best_chain.get("chain", [])[:2])[:80],
+                    },
+                )
+            )
+
             # Dispatch follow-up jobs based on chain prediction
             for step in best_chain.get("chain", [])[1:]:  # Skip the already-confirmed first step
                 step_type = step.get("type", "").upper()
@@ -352,8 +368,8 @@ class OmegaAgent(BrowserEnabledAgent):
                             module_id=module,
                             agent_id=AgentID.SIGMA,
                             aggression=8,
-                            params={"chain_source": vuln_type, "escalation": True}
-                        )
+                            params={"chain_source": vuln_type, "escalation": True},
+                        ),
                     )
                     await self.dispatch_job(follow_up, scan_id)
 
@@ -385,15 +401,17 @@ class OmegaAgent(BrowserEnabledAgent):
 
     async def initiate_campaign(self, target_url: str, scan_id: str = "GLOBAL"):
         """Core campaign orchestration logic with graph-driven intelligence."""
-        
+
         # 1. GET LEARNING ENGINE RECOMMENDATIONS
         from backend.core.learning_engine import learning_engine
+
         recommendations = await learning_engine.get_recommendations(target_url, {"scan_id": scan_id})
 
         # 1b. CONSUME SKILL LIBRARY RECOMMENDATIONS (Architecture §29.9: skills
         # consumed by Omega; §29.12: query skills before every meaningful plan).
         try:
             from backend.core.skill_library import skill_library
+
             skill_recs = skill_library.get_recommendations(target_url=target_url, limit=8)
             if skill_recs:
                 recommendations.setdefault("skills", skill_recs)
@@ -405,8 +423,8 @@ class OmegaAgent(BrowserEnabledAgent):
         # Memory Manager prefetch + context fencing, used in agent execution).
         try:
             from backend.core.memory_manager import memory_manager
-            mem_ctx = await memory_manager.build_context(
-                {"scan_id": scan_id, "query": target_url, "vuln_class": ""})
+
+            mem_ctx = await memory_manager.build_context({"scan_id": scan_id, "query": target_url, "vuln_class": ""})
             if mem_ctx:
                 recommendations["memory_context"] = mem_ctx
                 logger.debug(f"[{self.name}] [MEMORY] prefetched fenced memory context ({len(mem_ctx)} chars)")
@@ -414,9 +432,13 @@ class OmegaAgent(BrowserEnabledAgent):
             logger.debug(f"[{self.name}] Memory prefetch failed: {_me}")
 
         if recommendations.get("confidence", 0) > 0.5:
-            logger.debug(f"[{self.name}] [LEARNING] Using learned patterns (confidence: {recommendations['confidence']:.2f})")
-            logger.debug(f"[{self.name}] [LEARNING] Priority vulns: {[v['type'] for v in recommendations['priority_vulns'][:3]]}")
-        
+            logger.debug(
+                f"[{self.name}] [LEARNING] Using learned patterns (confidence: {recommendations['confidence']:.2f})"
+            )
+            logger.debug(
+                f"[{self.name}] [LEARNING] Priority vulns: {[v['type'] for v in recommendations['priority_vulns'][:3]]}"
+            )
+
         # 2. STRATEGY GENERATION (AI-Powered + Graph Intelligence + Learning)
         ai_strategy = None
         cortex = self._get_cortex()
@@ -426,14 +448,14 @@ class OmegaAgent(BrowserEnabledAgent):
                 logger.debug(f"[{self.name}] [CORTEX AI] Strategy recommendation: {ai_strategy}")
             except Exception as e:
                 logger.warning(f"[{self.name}] CORTEX strategy failed: {e}")
-        
+
         strategy_name = self._select_strategy(target_url, ai_strategy, scan_id)
         profile = self.STRATEGY_PROFILES[strategy_name]
-        
+
         # Update campaign state
         if scan_id in self._active_campaigns:
             self._active_campaigns[scan_id]["strategy"] = strategy_name
-        
+
         logger.info(f"[{self.name}] ▶ Campaign Strategy: {strategy_name} | {profile['description']}")
 
         # 3. HYPOTHESIS GENERATION — derived from recon/graph evidence first,
@@ -453,13 +475,13 @@ class OmegaAgent(BrowserEnabledAgent):
         for vuln_rec in recommendations.get("priority_vulns", [])[:3]:
             vuln_type = vuln_rec["type"]
             success_rate = vuln_rec.get("success_rate", 0)
-            evidence_hypotheses.append(
-                f"{vuln_type} vulnerability likely (learned: {success_rate:.0%} success rate)")
+            evidence_hypotheses.append(f"{vuln_type} vulnerability likely (learned: {success_rate:.0%} success rate)")
         for pred in graph_engine.predict_next("TARGET_ACQUIRED", target_url)[:2]:
             sug = pred.get("suggestion")
             if sug:
                 evidence_hypotheses.append(
-                    f"{sug} suggested by attack graph (confidence: {pred.get('confidence', 0):.0f}%)")
+                    f"{sug} suggested by attack graph (confidence: {pred.get('confidence', 0):.0f}%)"
+                )
 
         hypotheses = evidence_hypotheses + base_hypotheses
         # Deterministic: prefer the strongest evidence-derived hypothesis;
@@ -467,34 +489,42 @@ class OmegaAgent(BrowserEnabledAgent):
         selected_hypothesis = hypotheses[0]
 
         # Broadcast campaign start
-        await self.bus.publish(HiveEvent(
-            type=EventType.LIVE_ATTACK,
-            source=self.name,
-            scan_id=scan_id,
-            payload={
-                "url": target_url,
-                "arsenal": "Campaign Strategy",
-                "action": f"Strategy: {strategy_name}",
-                "payload": f"{profile['description'][:60]} | Hypothesis: {selected_hypothesis[:40]}"
-            }
-        ))
+        await self.bus.publish(
+            HiveEvent(
+                type=EventType.LIVE_ATTACK,
+                source=self.name,
+                scan_id=scan_id,
+                payload={
+                    "url": target_url,
+                    "arsenal": "Campaign Strategy",
+                    "action": f"Strategy: {strategy_name}",
+                    "payload": f"{profile['description'][:60]} | Hypothesis: {selected_hypothesis[:40]}",
+                },
+            )
+        )
 
-        await self.bus.publish(HiveEvent(
-            type=EventType.LOG,
-            source=self.name,
-            scan_id=scan_id,
-            payload={"message": f"👑 OMEGA: Campaign '{target_url}' | Strategy: {strategy_name} | Hypothesis: {selected_hypothesis}"}
-        ))
+        await self.bus.publish(
+            HiveEvent(
+                type=EventType.LOG,
+                source=self.name,
+                scan_id=scan_id,
+                payload={
+                    "message": f"👑 OMEGA: Campaign '{target_url}' | Strategy: {strategy_name} | Hypothesis: {selected_hypothesis}"
+                },
+            )
+        )
 
         # Log to ScanContext transcript
         ctx = getattr(self.bus, "scan_contexts", {}).get(scan_id)
         if ctx and hasattr(ctx, "append_event"):
-            ctx.append_event(HiveEvent(
-                type=EventType.LOG,
-                source=self.name,
-                scan_id=scan_id,
-                payload={"message": f"Omega campaign initiated: strategy={strategy_name}, target={target_url}"}
-            ))
+            ctx.append_event(
+                HiveEvent(
+                    type=EventType.LOG,
+                    source=self.name,
+                    scan_id=scan_id,
+                    payload={"message": f"Omega campaign initiated: strategy={strategy_name}, target={target_url}"},
+                )
+            )
 
         # 4. RESOLVE BASE MODULE SET (strategy + graph + learned priorities).
         #    This is now only the candidate pool the iterative loop scores
@@ -527,14 +557,22 @@ class OmegaAgent(BrowserEnabledAgent):
             # STOP (unsafe): defense pressure crossed the halt threshold. Hand
             # off to LOW_AND_SLOW adaptation rather than keep hammering a WAF.
             if evidence["defense_pressure"] >= self._defense_pressure_stop:
-                logger.info(f"[{self.name}] [STOP] Defense pressure "
-                      f"{evidence['defense_pressure']:.2f} >= {self._defense_pressure_stop} -- "
-                      f"halting expansion (stealth handoff).")
-                await self.bus.publish(HiveEvent(
-                    type=EventType.LOG, source=self.name, scan_id=scan_id,
-                    payload={"message": f"👑 OMEGA: halting expansion under WAF pressure "
-                                        f"({evidence['defense_pressure']:.2f}); deferring to stealth."}
-                ))
+                logger.info(
+                    f"[{self.name}] [STOP] Defense pressure "
+                    f"{evidence['defense_pressure']:.2f} >= {self._defense_pressure_stop} -- "
+                    f"halting expansion (stealth handoff)."
+                )
+                await self.bus.publish(
+                    HiveEvent(
+                        type=EventType.LOG,
+                        source=self.name,
+                        scan_id=scan_id,
+                        payload={
+                            "message": f"👑 OMEGA: halting expansion under WAF pressure "
+                            f"({evidence['defense_pressure']:.2f}); deferring to stealth."
+                        },
+                    )
+                )
                 break
 
             # DECIDE: pick the single highest-value next action from evidence.
@@ -546,8 +584,10 @@ class OmegaAgent(BrowserEnabledAgent):
 
             # STOP (low value): nothing clears the value floor — don't waste budget.
             if value < self._min_action_value:
-                logger.debug(f"[{self.name}] [STOP] Best next action '{module_id}' value "
-                      f"{value:.2f} < floor {self._min_action_value} -- ending campaign.")
+                logger.debug(
+                    f"[{self.name}] [STOP] Best next action '{module_id}' value "
+                    f"{value:.2f} < floor {self._min_action_value} -- ending campaign."
+                )
                 break
 
             # ACT: dispatch the single chosen action.
@@ -560,11 +600,13 @@ class OmegaAgent(BrowserEnabledAgent):
                     agent_id=agent_id,
                     aggression=profile["aggression"],
                     ai_mode=True,
-                    params={"attack_hypothesis": selected_hypothesis, "strategy": strategy_name}
-                )
+                    params={"attack_hypothesis": selected_hypothesis, "strategy": strategy_name},
+                ),
             )
-            logger.debug(f"[{self.name}] [STEP {campaign.get('actions_taken', 0) + 1}] "
-                  f"-> {module_id} (value={value:.2f}; {', '.join(reasons[:3])})")
+            logger.debug(
+                f"[{self.name}] [STEP {campaign.get('actions_taken', 0) + 1}] "
+                f"-> {module_id} (value={value:.2f}; {', '.join(reasons[:3])})"
+            )
             await self.dispatch_job(packet, scan_id)
 
             # Record the action so the next OBSERVE step won't re-pick it.
@@ -576,33 +618,34 @@ class OmegaAgent(BrowserEnabledAgent):
             await asyncio.sleep(self._campaign_step_delay)
 
         # 6. Learn from this campaign dispatch (feed the graph)
-        await graph_engine.learn_from_chain([
-            {"payload": {"type": "TARGET_ACQUIRED", "url": target_url}},
-            {"payload": {"type": strategy_name, "url": target_url}}
-        ])
+        await graph_engine.learn_from_chain(
+            [
+                {"payload": {"type": "TARGET_ACQUIRED", "url": target_url}},
+                {"payload": {"type": strategy_name, "url": target_url}},
+            ]
+        )
 
     async def dispatch_job(self, packet: JobPacket, scan_id: str = "GLOBAL"):
         """Dispatches a job with CommandLane backpressure awareness."""
         # CommandLane saturation check — defer if queue is overloaded
         telemetry = command_lane.telemetry
         if telemetry["waiting_count"] > 20:
-            logger.debug(f"[{self.name}] CommandLane saturated (waiting={telemetry['waiting_count']}). Deferring dispatch.")
+            logger.debug(
+                f"[{self.name}] CommandLane saturated (waiting={telemetry['waiting_count']}). Deferring dispatch."
+            )
             await asyncio.sleep(1.0)
 
-        await self.bus.publish(HiveEvent(
-            type=EventType.JOB_ASSIGNED,
-            source=self.name,
-            scan_id=scan_id,
-            payload=packet.model_dump()
-        ))
-        
+        await self.bus.publish(
+            HiveEvent(type=EventType.JOB_ASSIGNED, source=self.name, scan_id=scan_id, payload=packet.model_dump())
+        )
+
         # Track in campaign
         campaign = self._active_campaigns.get(scan_id)
         if campaign:
             campaign["dispatched_jobs"].append(packet.id)
 
     # ============ BROWSER CAMPAIGN PLANNING (Phase 3) ============
-    
+
     async def _detect_spa(self, url: str) -> bool:
         """Detect if target is a Single Page Application."""
         try:
@@ -612,21 +655,21 @@ class OmegaAgent(BrowserEnabledAgent):
         except Exception as e:
             logger.debug(f"[{self.name}] SPA detection failed: {e}")
             return False
-    
+
     async def _plan_browser_campaign(self, url: str, scan_id: str) -> dict:
         """Plan browser-based campaign for SPAs and modern web apps."""
         try:
             logger.debug(f"[{self.name}] Planning browser-based campaign for {url}")
-            
+
             # Detect if SPA
             is_spa = await self._detect_spa(url)
-            
+
             if is_spa:
                 strategy = "SPA_ASSAULT"
                 logger.debug(f"[{self.name}] SPA detected - using specialized strategy")
             else:
                 strategy = "BROWSER_DEEP_RECON"
-            
+
             campaign_plan = {
                 "strategy": strategy,
                 "is_spa": is_spa,
@@ -637,31 +680,31 @@ class OmegaAgent(BrowserEnabledAgent):
                         "phase": 1,
                         "name": "Browser Reconnaissance",
                         "modules": ["alpha_browser_recon"],
-                        "description": "Deep endpoint discovery via browser"
+                        "description": "Deep endpoint discovery via browser",
                     },
                     {
                         "phase": 2,
                         "name": "Browser-Aware Payload Generation",
                         "modules": ["sigma_browser_payloads"],
-                        "description": "Generate payloads based on DOM structure"
+                        "description": "Generate payloads based on DOM structure",
                     },
                     {
                         "phase": 3,
                         "name": "Browser Exploitation",
                         "modules": ["beta_browser_xss", "beta_dom_xss"],
-                        "description": "Test exploits in real browser"
+                        "description": "Test exploits in real browser",
                     },
                     {
                         "phase": 4,
                         "name": "Browser Verification",
                         "modules": ["gamma_browser_verify"],
-                        "description": "Visual verification with forensic evidence"
-                    }
-                ]
+                        "description": "Visual verification with forensic evidence",
+                    },
+                ],
             }
-            
+
             return campaign_plan
-            
+
         except Exception as e:
             logger.error(f"[{self.name}] Browser campaign planning failed: {e}")
             return {}

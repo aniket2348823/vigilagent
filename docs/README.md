@@ -4,240 +4,71 @@ Comprehensive documentation for the Vigilagent autonomous penetration testing sy
 
 ## 📚 Documentation Index
 
-### Core Documentation
+### Core Architecture & Design
 
-#### [ARCHITECTURE.md](ARCHITECTURE.md)
-**System Architecture and Design Principles**
-
-Complete technical architecture covering:
-- The Trinity Architecture (Backend, Frontend, Extension)
-- Agent Swarm (10 specialized AI agents)
-- Hybrid HTTP + Browser Testing
-- Game-Theoretic Resource Management
-- Communication Protocols
-- Technology Stack
-- Design Principles
-
-**Audience:** Developers, Architects, Technical Leads
+| Document | Description | Audience |
+| --- | --- | --- |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture blueprint — agents, event bus, concurrency model, scan lifecycle, integration coordinator. Senior-engineer onboarding doc with code citations. | Developers, Architects |
+| [API.md](API.md) | REST & WebSocket API reference — all public endpoints, request/response schemas, auth. | Frontend Devs, Integrators |
+| [INTERNAL_API.md](INTERNAL_API.md) | Internal Python class reference — `StateManager`, `BrowserOrchestrator`, `EventBus`, etc. | Backend Developers |
+| [DB_SCHEMA.md](DB_SCHEMA.md) | SQLite + Supabase schema — tables, columns, indexes, migration versioning. | Backend Developers |
+| [API_CHANGELOG.md](API_CHANGELOG.md) | API version history and breaking change log. | All Developers |
 
 ---
 
-#### [PROJECT.md](PROJECT.md)
-**Project Overview and Description**
+### Operations & Deployment
 
-High-level project information including:
-- Project goals and mission
-- Key features and capabilities
-- System overview
-- Target audience
-
-**Audience:** All stakeholders
-
----
-
-#### [VUL_AGENT_MANIFEST.md](VUL_AGENT_MANIFEST.md)
-**Agent Capabilities and Specifications**
-
-Detailed documentation of all 10 agents:
-- Omega (Strategist)
-- Alpha (Scout)
-- Beta (Breaker)
-- Sigma (Smith)
-- Gamma (Auditor)
-- Delta (Hybrid Controller)
-- Prism (Sentinel)
-- Chi (Inspector)
-- Zeta (Cortex)
-- Kappa (Librarian)
-
-**Audience:** Developers, Security Researchers
+| Document | Description | Audience |
+| --- | --- | --- |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Full deployment guide — prerequisites, installation, systemd, Nginx, Docker, topology, scaling, backup & recovery. | DevOps, SRE |
+| [CONFIGURATION.md](CONFIGURATION.md) | Environment variables, YAML config files, feature flags, and tuning knobs. | DevOps, Developers |
+| [OBSERVABILITY.md](OBSERVABILITY.md) | Operator dashboards (Integration Health, Learning, Skills, Browser Health), alert rules, and metrics reference. | SRE, On-Call |
+| [PERFORMANCE.md](PERFORMANCE.md) | Performance benchmarks, profiling results, and optimization recommendations. | Developers, SRE |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues, diagnostic commands, and resolution steps. | All Engineers |
 
 ---
 
-### Analysis & Audit Documentation
+### Security & Usage
 
-#### [exhaustive_audit.md](exhaustive_audit.md)
-**Comprehensive System Audit**
-
-Complete system audit covering:
-- Code quality analysis
-- Security assessment
-- Performance evaluation
-- Technical debt identification
-- Recommendations
-
-**Audience:** Technical Leads, QA Engineers
-
----
-
-#### [cleanup_assessment_7_tracks.md](cleanup_assessment_7_tracks.md)
-**Code Cleanup Analysis**
-
-Analysis of code cleanup opportunities across 7 tracks:
-- Code organization
-- Redundancy elimination
-- Documentation improvements
-- Test coverage
-- Performance optimization
-- Security hardening
-- Technical debt reduction
-
-**Audience:** Developers, Technical Leads
-
----
-
-#### [COMPREHENSIVE_CODEBASE_AUDIT_2026.md](COMPREHENSIVE_CODEBASE_AUDIT_2026.md)
-**Complete Codebase Audit Report (May 2026)**
-
-Comprehensive audit of entire codebase covering:
-- 10 critical issues identified (HIGH/MEDIUM/LOW priority)
-- Placeholder implementations analysis
-- Missing OpenClaw API integration
-- Test coverage gaps (~15%)
-- Security vulnerabilities
-- Resource management issues
-- Performance metrics and recommendations
-- 4-phase action plan (135-185 hours)
-
-**Status:** 🟡 Foundation Complete, Implementation Needed  
-**Audience:** Technical Leads, Developers, Project Managers
-
----
-
-### Archive
-
-#### [archive/](archive/)
-**Historical Documentation and Analysis Files**
-
-Contains:
-- `backend_structure_utf8.txt` - Backend directory structure
-- `file_comparison.txt` - File comparison analysis
-- `local_files.txt` - Local file inventory
-- `remote_files.txt` - Remote file inventory
-- `push_summary.txt` - Git push summaries
-
-**Audience:** Maintainers, Historians
+| Document | Description | Audience |
+| --- | --- | --- |
+| [SECURITY_BEST_PRACTICES.md](SECURITY_BEST_PRACTICES.md) | Security guidelines — scope policy, encryption, credential management, network isolation. | All Engineers |
+| [USAGE_EXAMPLES.md](USAGE_EXAMPLES.md) | End-to-end usage examples — creating scans, interpreting results, report generation. | Users, New Engineers |
 
 ---
 
 ## 🔗 Related Documentation
 
-### Specifications
-- **[OpenClaw Integration](../.kiro/specs/openclaw-integration/)** - Browser automation integration spec
-- **[File Consolidation](../.kiro/specs/file-consolidation/)** - Project organization spec
+### Project-Level
+- **[README.md](../README.md)** — Project overview and quick start
+- **[CONTRIBUTING.md](../CONTRIBUTING.md)** — Contribution guidelines and PR process
+- **[.github/SECURITY.md](../.github/SECURITY.md)** — Vulnerability reporting policy
 
 ### Planning
-- **[Roadmap](../.planning/ROADMAP.md)** - Product roadmap
-- **[Current State](../.planning/STATE.md)** - Current project status
-- **[Archived Plans](../.planning/archive/)** - Historical planning documents
+- **[.planning/ROADMAP.md](../.planning/ROADMAP.md)** — Product roadmap
+- **[.planning/STATE.md](../.planning/STATE.md)** — Current project status
 
-### Development
-- **[Scripts](../scripts/)** - Development and maintenance scripts
-- **[Tests](../testsprite_tests/)** - Comprehensive test suite
+### Frontend
+- **[src/README.md](../src/README.md)** — React/Vite frontend setup and development
 
 ---
 
 ## 📖 Documentation Standards
 
 ### File Naming
-- Use descriptive names in UPPERCASE for major docs (e.g., `ARCHITECTURE.md`)
-- Use lowercase with underscores for analysis docs (e.g., `exhaustive_audit.md`)
-- Include version or date in filename if multiple versions exist
+- **UPPERCASE** for major docs (`ARCHITECTURE.md`, `DEPLOYMENT.md`)
+- **lowercase_with_underscores** for supplementary docs
 
 ### Document Structure
 All major documentation should include:
-1. **Title and Overview** - What this document covers
-2. **Table of Contents** - For documents > 100 lines
-3. **Main Content** - Organized into logical sections
-4. **Related Documentation** - Links to related docs
-5. **Metadata** - Last updated date, version, maintainer
-
-### Markdown Standards
-- Use ATX-style headers (`#`, `##`, `###`)
-- Include code blocks with language specification
-- Use tables for structured data
-- Include diagrams using ASCII art or Mermaid
-- Add links to related documentation
+1. **Title and Overview** — What this document covers
+2. **Table of Contents** — For documents > 100 lines
+3. **Main Content** — Organized into logical sections
+4. **Cross-References** — Links to related docs
+5. **Metadata Footer** — Last updated date, version
 
 ---
 
-## 🔄 Keeping Documentation Updated
-
-### When to Update Documentation
-
-**ARCHITECTURE.md:**
-- When adding new components or agents
-- When changing system design patterns
-- When modifying technology stack
-- After major refactoring
-
-**PROJECT.md:**
-- When project goals change
-- When adding major features
-- When target audience changes
-
-**VUL_AGENT_MANIFEST.md:**
-- When adding new agents
-- When modifying agent capabilities
-- When changing agent interactions
-
-### Documentation Review Process
-1. Update documentation alongside code changes
-2. Review documentation in pull requests
-3. Quarterly documentation audit
-4. Annual comprehensive review
-
----
-
-## 📝 Contributing to Documentation
-
-### Adding New Documentation
-1. Create document in appropriate directory
-2. Follow naming conventions
-3. Use standard document structure
-4. Add entry to this README
-5. Link from main README if appropriate
-
-### Updating Existing Documentation
-1. Check "Last Updated" date
-2. Review entire document for accuracy
-3. Update content and metadata
-4. Test all links
-5. Submit pull request
-
-### Documentation Style Guide
-- **Be Clear:** Use simple, direct language
-- **Be Concise:** Remove unnecessary words
-- **Be Complete:** Cover all important aspects
-- **Be Current:** Keep information up-to-date
-- **Be Consistent:** Follow established patterns
-
----
-
-## 🎯 Documentation Checklist
-
-Before committing documentation changes:
-- [ ] Content is accurate and up-to-date
-- [ ] All links work correctly
-- [ ] Code examples are tested
-- [ ] Diagrams are clear and readable
-- [ ] Metadata is updated (date, version)
-- [ ] Related docs are cross-referenced
-- [ ] Spelling and grammar checked
-- [ ] Follows markdown standards
-
----
-
-## 📞 Documentation Support
-
-For documentation-related questions or issues:
-1. Check existing documentation first
-2. Search GitHub issues for similar questions
-3. Create new issue with `documentation` label
-4. Contact documentation maintainers
-
----
-
-**Last Updated:** May 24, 2026  
-**Documentation Files:** 7 core + archive  
+**Last Updated:** June 26, 2026  
+**Documentation Files:** 12 core documents  
 **Maintained By:** Vigilagent Development Team

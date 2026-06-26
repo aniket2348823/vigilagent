@@ -17,6 +17,7 @@ Targets DVWA's `/fi/?page=include.php` and any file-name-shaped query param
 A finding is only emitted when the canonical marker (A or B or C) is present
 AND the differential confirms it (i.e. >= 2 independent signals).
 """
+
 from __future__ import annotations
 
 import base64
@@ -37,7 +38,7 @@ _PASSWD_PROBES = (
     "....//....//....//etc/passwd",
     "%2e%2e/%2e%2e/%2e%2e/etc/passwd",
     "..%2f..%2f..%2fetc%2fpasswd",
-    "/etc/passwd%00",                                       # null byte truncation
+    "/etc/passwd%00",  # null byte truncation
     "..\\..\\..\\..\\windows\\win.ini",
     "C:\\windows\\win.ini",
 )
@@ -48,8 +49,21 @@ _PHP_WRAPPER_PROBES = (
 )
 
 # Parameter names commonly used as file inclusion sinks.
-_FILE_PARAMS = ("page", "file", "include", "doc", "path", "template", "view",
-                "load", "src", "name", "dir", "show", "cat")
+_FILE_PARAMS = (
+    "page",
+    "file",
+    "include",
+    "doc",
+    "path",
+    "template",
+    "view",
+    "load",
+    "src",
+    "name",
+    "dir",
+    "show",
+    "cat",
+)
 
 # Canonical evidence markers.
 _PASSWD_LINE = re.compile(r"^(root|daemon|nobody):[x*!]:\d+:\d+:", re.M)
@@ -68,8 +82,7 @@ def _b64_decodes_to_php(text: str) -> str | None:
     a short snippet of the decoded content. Otherwise None."""
     for token in _LONG_B64.findall(text or "")[:6]:
         try:
-            decoded = base64.b64decode(token, validate=False).decode(
-                "utf-8", errors="ignore")
+            decoded = base64.b64decode(token, validate=False).decode("utf-8", errors="ignore")
         except Exception as exc:
             logger.debug("[LFI] base64 decode failed: %s", exc)
             continue
@@ -89,9 +102,9 @@ class FileInclusionProbe(BaseArsenalModule):
         targets: list[TaskTarget] = []
 
         # Baseline (index 0) — original unmodified target.
-        targets.append(TaskTarget(
-            url=url, method=packet.target.method or "GET",
-            headers=headers, payload=packet.target.payload))
+        targets.append(
+            TaskTarget(url=url, method=packet.target.method or "GET", headers=headers, payload=packet.target.payload)
+        )
 
         if "?" not in url:
             return targets
@@ -109,13 +122,14 @@ class FileInclusionProbe(BaseArsenalModule):
                 mutated = {k: list(v) for k, v in params.items()}
                 mutated[param] = [probe]
                 attack = f"{base}?{urllib.parse.urlencode(mutated, doseq=True)}"
-                targets.append(TaskTarget(
-                    url=attack, method="GET", headers=dict(headers),
-                    payload=packet.target.payload))
+                targets.append(
+                    TaskTarget(url=attack, method="GET", headers=dict(headers), payload=packet.target.payload)
+                )
         return targets
 
-    async def analyze_responses(self, interactions: list[tuple[TaskTarget, str]],
-                                packet: JobPacket) -> list[Vulnerability]:
+    async def analyze_responses(
+        self, interactions: list[tuple[TaskTarget, str]], packet: JobPacket
+    ) -> list[Vulnerability]:
         from backend.modules.evidence import differential
 
         vulns: list[Vulnerability] = []
@@ -157,9 +171,7 @@ class FileInclusionProbe(BaseArsenalModule):
 
             # Confirm only when at least 2 independent signals agree AND one
             # of them is a CANONICAL inclusion marker (not just diff or error).
-            canonical = ("etc_passwd_line" in signals
-                         or "windows_boot_ini" in signals
-                         or "php_wrapper_b64" in signals)
+            canonical = "etc_passwd_line" in signals or "windows_boot_ini" in signals or "php_wrapper_b64" in signals
             if not canonical or len(set(signals)) < 2:
                 continue
 
@@ -169,22 +181,29 @@ class FileInclusionProbe(BaseArsenalModule):
             seen.add(key)
 
             severity = "CRITICAL" if "etc_passwd_line" in signals or "php_wrapper_b64" in signals else "HIGH"
-            vulns.append(Vulnerability(
-                name="File Inclusion (LFI / Path Traversal)",
-                severity=severity,
-                description=("Injected path/wrapper triggered server-side file inclusion. "
-                             f"Independent signals: {', '.join(signals)}."),
-                evidence=(f"Target: {target.url}\n"
-                          f"Evidence: {'; '.join(evidence_bits)}\n"
-                          f"Differential: {ev.summary}"),
-                remediation=("Resolve user-supplied path against an explicit allow-list of files. "
-                             "Disable PHP wrappers (php://, file://, expect://) via "
-                             "allow_url_include=Off and open_basedir. Strip null bytes and "
-                             "encoded traversal sequences before any filesystem call."),
-            ))
+            vulns.append(
+                Vulnerability(
+                    name="File Inclusion (LFI / Path Traversal)",
+                    severity=severity,
+                    description=(
+                        "Injected path/wrapper triggered server-side file inclusion. "
+                        f"Independent signals: {', '.join(signals)}."
+                    ),
+                    evidence=(
+                        f"Target: {target.url}\nEvidence: {'; '.join(evidence_bits)}\nDifferential: {ev.summary}"
+                    ),
+                    remediation=(
+                        "Resolve user-supplied path against an explicit allow-list of files. "
+                        "Disable PHP wrappers (php://, file://, expect://) via "
+                        "allow_url_include=Off and open_basedir. Strip null bytes and "
+                        "encoded traversal sequences before any filesystem call."
+                    ),
+                )
+            )
             # One confirmed LFI per URL is enough.
             break
         return vulns
+
 
 # Backward-compatible alias (FIX)
 LFIProbe = FileInclusionProbe

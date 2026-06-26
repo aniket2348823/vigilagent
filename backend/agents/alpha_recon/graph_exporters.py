@@ -6,16 +6,20 @@ Exports the entity graph to:
 - STIX 2.1 bundles (compatible with OpenCTI)
 - Maltego CSV
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import time
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from backend.agents.alpha_recon.models import ReconRunResult, stable_id
-from backend.parsers.recon.base import ParsedEntity
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from backend.parsers.recon.base import ParsedEntity
 
 logger = logging.getLogger("alpha.graph_export")
 
@@ -23,8 +27,7 @@ logger = logging.getLogger("alpha.graph_export")
 class Neo4jExporter:
     """Export entity graph as Neo4j Cypher import script."""
 
-    def export(self, entities: list[ParsedEntity], relationships: list[dict],
-               output_path: Path) -> Path:
+    def export(self, entities: list[ParsedEntity], relationships: list[dict], output_path: Path) -> Path:
         lines = [
             "// Alpha V6 Deep Recon — Neo4j Import Script",
             "// Generated automatically. Run with: cypher-shell < this_file.cypher",
@@ -38,15 +41,26 @@ class Neo4jExporter:
 
         # Node creation
         kind_to_label = {
-            "subdomain": "Domain", "ip": "IP", "http_service": "Service",
-            "open_port": "Port", "certificate": "Certificate",
-            "crawled_endpoint": "Endpoint", "historical_url": "URL",
-            "discovered_path": "Path", "api_route": "APIRoute",
-            "js_endpoint": "JSEndpoint", "js_file": "JSFile",
-            "secret": "Secret", "vulnerability_candidate": "Vulnerability",
-            "dns_record": "DNSRecord", "cloud_asset": "CloudAsset",
-            "oob_interaction": "OOBInteraction", "visual_artifact": "Visual",
-            "favicon": "Favicon", "service": "Service", "email": "Email",
+            "subdomain": "Domain",
+            "ip": "IP",
+            "http_service": "Service",
+            "open_port": "Port",
+            "certificate": "Certificate",
+            "crawled_endpoint": "Endpoint",
+            "historical_url": "URL",
+            "discovered_path": "Path",
+            "api_route": "APIRoute",
+            "js_endpoint": "JSEndpoint",
+            "js_file": "JSFile",
+            "secret": "Secret",
+            "vulnerability_candidate": "Vulnerability",
+            "dns_record": "DNSRecord",
+            "cloud_asset": "CloudAsset",
+            "oob_interaction": "OOBInteraction",
+            "visual_artifact": "Visual",
+            "favicon": "Favicon",
+            "service": "Service",
+            "email": "Email",
         }
 
         for e in entities:
@@ -64,8 +78,7 @@ class Neo4jExporter:
             for k, v in (e.properties or {}).items():
                 if isinstance(v, (str, int, float, bool)):
                     props[k] = v
-            props_str = ", ".join(f"{k}: {json.dumps(v)}" for k, v in props.items()
-                                  if v is not None)
+            props_str = ", ".join(f"{k}: {json.dumps(v)}" for k, v in props.items() if v is not None)
             lines.append(f"MERGE (n:{label} {{{props_str}}});")
 
         lines.append("")
@@ -74,17 +87,19 @@ class Neo4jExporter:
         # SECURITY FIX (C-14): Sanitize rel_type to prevent Cypher injection.
         # Only allow alphanumeric characters and underscores in relationship names.
         import re as _re
+
         for rel in relationships:
             src_id = rel.get("src_entity_id", "")
             dst_id = rel.get("dst_entity_id", "")
             raw_rel = rel.get("relationship", "RELATED_TO")
-            rel_type = _re.sub(r'[^A-Za-z0-9_]', '_', raw_rel.upper())
+            rel_type = _re.sub(r"[^A-Za-z0-9_]", "_", raw_rel.upper())
             if not rel_type:
                 rel_type = "RELATED_TO"
             conf = rel.get("confidence", 0.5)
             lines.append(
                 f"MATCH (a {{id: {json.dumps(src_id)}}}), (b {{id: {json.dumps(dst_id)}}}) "
-                f"MERGE (a)-[:{rel_type} {{confidence: {conf}}}]->(b);")
+                f"MERGE (a)-[:{rel_type} {{confidence: {conf}}}]->(b);"
+            )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("\n".join(lines), encoding="utf-8")
@@ -97,8 +112,7 @@ class STIXExporter:
 
     STIX_SPEC_VERSION = "2.1"
 
-    def export(self, entities: list[ParsedEntity], result: ReconRunResult,
-               output_path: Path) -> Path:
+    def export(self, entities: list[ParsedEntity], result: ReconRunResult, output_path: Path) -> Path:
         objects = []
 
         # Identity for the tool
@@ -161,10 +175,12 @@ class STIXExporter:
                 "description": e.properties.get("description", ""),
                 "created_by_ref": identity_ref,
                 "confidence": int(e.confidence * 100),
-                "external_references": [{
-                    "source_name": e.source_tool,
-                    "description": e.properties.get("template_id", ""),
-                }],
+                "external_references": [
+                    {
+                        "source_name": e.source_tool,
+                        "description": e.properties.get("template_id", ""),
+                    }
+                ],
             }
         elif e.kind == "http_service":
             return {

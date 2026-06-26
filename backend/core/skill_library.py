@@ -11,13 +11,13 @@ This library:
 6. Import/export for skill sharing
 """
 
-import time
-import logging
 import json
-import shutil
-from typing import Dict, List, Any, Optional, Iterable
-from pathlib import Path
+import logging
+import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Optional
 
 from backend.core.skill_extractor import Skill
 
@@ -70,22 +70,22 @@ class BrowserSkill:
     description: str = ""
     skill_type: str = ""
     execution_context: str = "browser_required"
-    browser_requirements: Dict[str, Any] = field(default_factory=dict)
-    workflow_steps: List[Dict[str, Any]] = field(default_factory=list)
-    evidence_requirements: Dict[str, Any] = field(default_factory=dict)
-    framework: Optional[str] = None
-    vuln_type: Optional[str] = None
+    browser_requirements: dict[str, Any] = field(default_factory=dict)
+    workflow_steps: list[dict[str, Any]] = field(default_factory=list)
+    evidence_requirements: dict[str, Any] = field(default_factory=dict)
+    framework: str | None = None
+    vuln_type: str | None = None
     confidence: float = 0.6
     success_count: int = 0
     failure_count: int = 0
     scan_count: int = 0
-    last_used: Optional[float] = None
+    last_used: float | None = None
     created_at: float = field(default_factory=time.time)
     promoted: bool = False
-    tags: List[str] = field(default_factory=list)
-    source_pattern_id: Optional[str] = None
+    tags: list[str] = field(default_factory=list)
+    source_pattern_id: str | None = None
     # §9 — informational only; MUST NOT be used as a filter or scope gate.
-    evidence_host_hint: Optional[str] = None
+    evidence_host_hint: str | None = None
 
     # --- Legacy compatibility fields (preserved for existing callers) ---
     version: str = "1.0.0"
@@ -94,7 +94,7 @@ class BrowserSkill:
     deprecated: bool = False
     deprecation_reason: str = ""
     last_updated: float = 0.0
-    parameters: Dict[str, Any] = field(default_factory=dict)
+    parameters: dict[str, Any] = field(default_factory=dict)
 
     def __init__(
         self,
@@ -103,30 +103,30 @@ class BrowserSkill:
         description: str = "",
         skill_type: str = "",
         execution_context: str = "browser_required",
-        browser_requirements: Optional[Dict[str, Any]] = None,
-        workflow_steps: Optional[List[Dict[str, Any]]] = None,
-        evidence_requirements: Optional[Any] = None,
-        framework: Optional[str] = None,
-        vuln_type: Optional[str] = None,
+        browser_requirements: dict[str, Any] | None = None,
+        workflow_steps: list[dict[str, Any]] | None = None,
+        evidence_requirements: Any | None = None,
+        framework: str | None = None,
+        vuln_type: str | None = None,
         confidence: float = 0.6,
         success_count: int = 0,
         failure_count: int = 0,
         scan_count: int = 0,
-        last_used: Optional[float] = None,
-        created_at: Optional[float] = None,
+        last_used: float | None = None,
+        created_at: float | None = None,
         promoted: bool = False,
-        tags: Optional[List[str]] = None,
-        source_pattern_id: Optional[str] = None,
-        evidence_host_hint: Optional[str] = None,
+        tags: list[str] | None = None,
+        source_pattern_id: str | None = None,
+        evidence_host_hint: str | None = None,
         # --- Legacy kwargs (compat shim) ---
-        success_rate: Optional[float] = None,
+        success_rate: float | None = None,
         version: str = "1.0.0",
-        required_capabilities: Optional[Iterable[str]] = None,
+        required_capabilities: Iterable[str] | None = None,
         usage_count: int = 0,
         deprecated: bool = False,
         deprecation_reason: str = "",
         last_updated: float = 0.0,
-        parameters: Optional[Dict[str, Any]] = None,
+        parameters: dict[str, Any] | None = None,
         **_unknown: Any,
     ) -> None:
         # ---- Contract assignments ----
@@ -218,7 +218,7 @@ class BrowserSkill:
         return self.success_count / max(1, self.success_count + self.failure_count)
 
     # ---- Helpers ----
-    def matches_capabilities(self, caps: Dict[str, bool]) -> bool:
+    def matches_capabilities(self, caps: dict[str, bool]) -> bool:
         """Return True only when every key of `browser_requirements` whose value
         is truthy-boolean is also truthy in `caps`. Non-bool requirement values
         (e.g., a `framework` string) are not capability gates and are skipped.
@@ -230,7 +230,7 @@ class BrowserSkill:
                 return False
         return True
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """JSON-safe serialization. frozensets become lists."""
         return {
             # Contract fields
@@ -267,7 +267,7 @@ class BrowserSkill:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "BrowserSkill":
+    def from_dict(cls, data: dict[str, Any]) -> "BrowserSkill":
         """Strict reverse with field validation.
 
         - Unknown fields are ignored (dropped silently).
@@ -288,21 +288,39 @@ class BrowserSkill:
         )
         missing = [k for k in required if k not in data]
         if missing:
-            raise ValueError(
-                f"BrowserSkill.from_dict missing required fields: {missing}"
-            )
+            raise ValueError(f"BrowserSkill.from_dict missing required fields: {missing}")
 
         # Whitelist of constructor kwargs (contract + legacy compat).
         known = {
-            "skill_id", "name", "description", "skill_type", "execution_context",
-            "browser_requirements", "workflow_steps", "evidence_requirements",
-            "framework", "vuln_type", "confidence",
-            "success_count", "failure_count", "scan_count", "last_used",
-            "created_at", "promoted", "tags", "source_pattern_id",
+            "skill_id",
+            "name",
+            "description",
+            "skill_type",
+            "execution_context",
+            "browser_requirements",
+            "workflow_steps",
+            "evidence_requirements",
+            "framework",
+            "vuln_type",
+            "confidence",
+            "success_count",
+            "failure_count",
+            "scan_count",
+            "last_used",
+            "created_at",
+            "promoted",
+            "tags",
+            "source_pattern_id",
             "evidence_host_hint",
             # Legacy
-            "success_rate", "version", "required_capabilities", "usage_count",
-            "deprecated", "deprecation_reason", "last_updated", "parameters",
+            "success_rate",
+            "version",
+            "required_capabilities",
+            "usage_count",
+            "deprecated",
+            "deprecation_reason",
+            "last_updated",
+            "parameters",
         }
         kwargs = {k: v for k, v in data.items() if k in known}
         return cls(**kwargs)
@@ -313,15 +331,15 @@ def _sanitize_filename(name: str) -> str:
     # Windows invalid characters: < > : " / \ | ? *
     # Replace with safe alternatives
     replacements = {
-        ':': '_',
-        '<': '_',
-        '>': '_',
-        '"': '_',
-        '/': '_',
-        '\\': '_',
-        '|': '_',
-        '?': '_',
-        '*': '_',
+        ":": "_",
+        "<": "_",
+        ">": "_",
+        '"': "_",
+        "/": "_",
+        "\\": "_",
+        "|": "_",
+        "?": "_",
+        "*": "_",
     }
     result = name
     for char, replacement in replacements.items():
@@ -333,30 +351,30 @@ class SkillLibrary:
     """
     Manages persistent storage and retrieval of agent skills.
     """
-    
+
     def __init__(self, brain_dir: str = "brain"):
         self.brain_dir = Path(brain_dir)
         self.skills_dir = self.brain_dir / "skills"
         self.skills_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Create category directories
         self.categories = ["payload", "endpoint", "chain", "evasion"]
         for category in self.categories:
             (self.skills_dir / category).mkdir(exist_ok=True)
-        
+
         # Metadata index
         self.metadata_file = self.skills_dir / "metadata.json"
-        self.metadata: Dict[str, Dict[str, Any]] = {}
-        
+        self.metadata: dict[str, dict[str, Any]] = {}
+
         # Browser skill indexes
-        self.capability_index: Dict[str, set] = {}  # capability -> set of skill_ids
-        self.context_index: Dict[str, set] = {}  # context -> set of skill_ids
-        self.framework_index: Dict[str, set] = {}  # framework -> set of skill_ids
-        self.version_tracking: Dict[str, List[str]] = {}  # skill_name -> list of versions
-        
+        self.capability_index: dict[str, set] = {}  # capability -> set of skill_ids
+        self.context_index: dict[str, set] = {}  # context -> set of skill_ids
+        self.framework_index: dict[str, set] = {}  # framework -> set of skill_ids
+        self.version_tracking: dict[str, list[str]] = {}  # skill_name -> list of versions
+
         self._load_metadata()
         self._rebuild_indexes()
-    
+
     def _load_metadata(self):
         """Load skill metadata index."""
         if self.metadata_file.exists():
@@ -368,21 +386,18 @@ class SkillLibrary:
                 self.metadata = {}
         else:
             self.metadata = {}
-    
+
     def _rebuild_indexes(self):
         """Rebuild indexes - implemented in extension"""
         pass
-    
+
     def _save_metadata(self):
         """Save skill metadata index."""
         try:
-            self.metadata_file.write_text(
-                json.dumps(self.metadata, indent=2),
-                encoding="utf-8"
-            )
+            self.metadata_file.write_text(json.dumps(self.metadata, indent=2), encoding="utf-8")
         except Exception as e:
             logger.error(f"[SkillLibrary] Failed to save metadata: {e}")
-    
+
     def add_skill(self, skill: Skill) -> bool:
         """
         Add a new skill to the library.
@@ -393,18 +408,15 @@ class SkillLibrary:
             if skill.skill_id in self.metadata:
                 logger.warning(f"[SkillLibrary] Skill {skill.skill_id} already exists")
                 return False
-            
+
             # Determine category directory
             category = self._get_category(skill.skill_type)
             safe_id = _sanitize_filename(skill.skill_id)
             skill_file = self.skills_dir / category / f"{safe_id}.json"
-            
+
             # Save skill to file
-            skill_file.write_text(
-                json.dumps(asdict(skill), indent=2),
-                encoding="utf-8"
-            )
-            
+            skill_file.write_text(json.dumps(asdict(skill), indent=2), encoding="utf-8")
+
             # Update metadata index
             self.metadata[skill.skill_id] = {
                 "name": skill.name,
@@ -414,26 +426,26 @@ class SkillLibrary:
                 "version": skill.version,
                 "created_at": skill.created_at,
                 "tags": skill.tags,
-                "file_path": str(skill_file.relative_to(self.skills_dir))
+                "file_path": str(skill_file.relative_to(self.skills_dir)),
             }
-            
+
             self._save_metadata()
-            
+
             logger.info(f"[SkillLibrary] Added skill: {skill.name} ({skill.skill_id})")
             return True
-            
+
         except Exception as e:
             logger.error(f"[SkillLibrary] Failed to add skill: {e}")
             return False
-    
-    def get_skill(self, skill_id: str) -> Optional[Skill]:
+
+    def get_skill(self, skill_id: str) -> Skill | None:
         """
         Retrieve a skill by ID.
         Returns None if not found.
         """
         if skill_id not in self.metadata:
             return None
-        
+
         try:
             file_path = self.skills_dir / self.metadata[skill_id]["file_path"]
             skill_data = json.loads(file_path.read_text(encoding="utf-8"))
@@ -441,7 +453,7 @@ class SkillLibrary:
         except Exception as e:
             logger.error(f"[SkillLibrary] Failed to load skill {skill_id}: {e}")
             return None
-    
+
     def update_skill(self, skill: Skill) -> bool:
         """
         Update an existing skill.
@@ -450,105 +462,104 @@ class SkillLibrary:
         if skill.skill_id not in self.metadata:
             logger.warning(f"[SkillLibrary] Cannot update non-existent skill {skill.skill_id}")
             return False
-        
+
         try:
             # Increment version
             version_parts = skill.version.split(".")
             version_parts[-1] = str(int(version_parts[-1]) + 1)
             skill.version = ".".join(version_parts)
             skill.last_updated = time.time()
-            
+
             # Save updated skill
             file_path = self.skills_dir / self.metadata[skill.skill_id]["file_path"]
-            file_path.write_text(
-                json.dumps(asdict(skill), indent=2),
-                encoding="utf-8"
-            )
-            
+            file_path.write_text(json.dumps(asdict(skill), indent=2), encoding="utf-8")
+
             # Update metadata
-            self.metadata[skill.skill_id].update({
-                "confidence": skill.confidence,
-                "success_rate": skill.success_rate,
-                "version": skill.version,
-                "last_updated": skill.last_updated
-            })
-            
+            self.metadata[skill.skill_id].update(
+                {
+                    "confidence": skill.confidence,
+                    "success_rate": skill.success_rate,
+                    "version": skill.version,
+                    "last_updated": skill.last_updated,
+                }
+            )
+
             self._save_metadata()
-            
+
             logger.info(f"[SkillLibrary] Updated skill: {skill.name} to v{skill.version}")
             return True
-            
+
         except Exception as e:
             logger.error(f"[SkillLibrary] Failed to update skill: {e}")
             return False
-    
+
     def delete_skill(self, skill_id: str) -> bool:
         """
         Delete a skill from the library.
         """
         if skill_id not in self.metadata:
             return False
-        
+
         try:
             # Delete file
             file_path = self.skills_dir / self.metadata[skill_id]["file_path"]
             if file_path.exists():
                 file_path.unlink()
-            
+
             # Remove from metadata
             del self.metadata[skill_id]
             self._save_metadata()
-            
+
             logger.info(f"[SkillLibrary] Deleted skill: {skill_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"[SkillLibrary] Failed to delete skill: {e}")
             return False
-    
+
     def search_skills(
         self,
-        skill_type: Optional[str] = None,
-        min_confidence: Optional[float] = None,
-        min_success_rate: Optional[float] = None,
-        tags: Optional[List[str]] = None,
-        limit: int = 50
-    ) -> List[Skill]:
+        skill_type: str | None = None,
+        min_confidence: float | None = None,
+        min_success_rate: float | None = None,
+        tags: list[str] | None = None,
+        limit: int = 50,
+    ) -> list[Skill]:
         """
         Search for skills matching criteria.
         """
         results = []
-        
+
         for skill_id, meta in self.metadata.items():
             # Apply filters
             if skill_type and meta["skill_type"] != skill_type:
                 continue
-            
+
             if min_confidence and meta["confidence"] < min_confidence:
                 continue
-            
+
             if min_success_rate and meta["success_rate"] < min_success_rate:
                 continue
-            
+
             if tags:
                 skill_tags = set(meta.get("tags", []))
                 if not any(tag in skill_tags for tag in tags):
                     continue
-            
+
             # Load full skill
             skill = self.get_skill(skill_id)
             if skill:
                 results.append(skill)
-            
+
             if len(results) >= limit:
                 break
-        
+
         # Sort by confidence
         results.sort(key=lambda s: s.confidence, reverse=True)
-        
+
         return results
-    
-    def get_all_skills(self) -> List[Skill]:
+
+    def get_all_skills(self) -> list[Skill]:
         """Get all skills in the library."""
         skills = []
         for skill_id in self.metadata.keys():
@@ -556,32 +567,29 @@ class SkillLibrary:
             if skill:
                 skills.append(skill)
         return skills
-    
-    def get_skills_by_type(self, skill_type: str) -> List[Skill]:
+
+    def get_skills_by_type(self, skill_type: str) -> list[Skill]:
         """Get all skills of a specific type."""
         return self.search_skills(skill_type=skill_type, limit=1000)
-    
-    def get_top_skills(self, limit: int = 10) -> List[Skill]:
+
+    def get_top_skills(self, limit: int = 10) -> list[Skill]:
         """Get top skills by confidence and success rate."""
         all_skills = self.get_all_skills()
-        
+
         # Sort by combined score
-        all_skills.sort(
-            key=lambda s: (s.confidence * 0.5 + s.success_rate * 0.5),
-            reverse=True
-        )
-        
+        all_skills.sort(key=lambda s: s.confidence * 0.5 + s.success_rate * 0.5, reverse=True)
+
         return all_skills[:limit]
 
     def get_recommendations(
         self,
         *,
-        target_url: Optional[str] = None,
-        vuln_class: Optional[str] = None,
-        skill_type: Optional[str] = None,
+        target_url: str | None = None,
+        vuln_class: str | None = None,
+        skill_type: str | None = None,
         min_confidence: float = 0.5,
         limit: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Return ranked skill recommendations for planning.
 
         This is the READ path required by Architecture §6.7 and §29.2: Omega,
@@ -591,30 +599,31 @@ class SkillLibrary:
         use them without importing the Skill type.
         """
         candidates = self.search_skills(skill_type=skill_type, min_confidence=min_confidence, limit=1000)
-        recs: List[Dict[str, Any]] = []
+        recs: list[dict[str, Any]] = []
         needle = (vuln_class or skill_type or "").lower()
         target = (target_url or "").lower()
         for skill in candidates:
-            score = (getattr(skill, "confidence", 0.5) * 0.5
-                     + getattr(skill, "success_rate", 0.0) * 0.5)
+            score = getattr(skill, "confidence", 0.5) * 0.5 + getattr(skill, "success_rate", 0.0) * 0.5
             text = f"{getattr(skill, 'name', '')} {getattr(skill, 'description', '')} {getattr(skill, 'skill_type', '')}".lower()
             # Light relevance boost when the recommendation matches the query.
             if needle and needle in text:
                 score += 0.25
             if target and target in text:
                 score += 0.1
-            recs.append({
-                "skill_id": getattr(skill, "skill_id", ""),
-                "name": getattr(skill, "name", ""),
-                "skill_type": getattr(skill, "skill_type", ""),
-                "description": getattr(skill, "description", ""),
-                "confidence": getattr(skill, "confidence", 0.5),
-                "success_rate": getattr(skill, "success_rate", 0.0),
-                "score": round(score, 4),
-            })
+            recs.append(
+                {
+                    "skill_id": getattr(skill, "skill_id", ""),
+                    "name": getattr(skill, "name", ""),
+                    "skill_type": getattr(skill, "skill_type", ""),
+                    "description": getattr(skill, "description", ""),
+                    "confidence": getattr(skill, "confidence", 0.5),
+                    "success_rate": getattr(skill, "success_rate", 0.0),
+                    "score": round(score, 4),
+                }
+            )
         recs.sort(key=lambda r: r["score"], reverse=True)
         return recs[:limit]
-    
+
     def deprecate_skill(self, skill_id: str, reason: str) -> bool:
         """
         Mark a skill as deprecated.
@@ -622,14 +631,14 @@ class SkillLibrary:
         skill = self.get_skill(skill_id)
         if not skill:
             return False
-        
+
         # Add deprecation info to parameters
         skill.parameters["deprecated"] = True
         skill.parameters["deprecation_reason"] = reason
         skill.parameters["deprecated_at"] = time.time()
-        
+
         return self.update_skill(skill)
-    
+
     def export_skill(self, skill_id: str, export_path: str) -> bool:
         """
         Export a skill to a file for sharing.
@@ -637,30 +646,23 @@ class SkillLibrary:
         skill = self.get_skill(skill_id)
         if not skill:
             return False
-        
+
         try:
             export_file = Path(export_path)
             export_file.parent.mkdir(parents=True, exist_ok=True)
-            
-            export_data = {
-                "skill": asdict(skill),
-                "exported_at": time.time(),
-                "exported_from": "Vigilagent"
-            }
-            
-            export_file.write_text(
-                json.dumps(export_data, indent=2),
-                encoding="utf-8"
-            )
-            
+
+            export_data = {"skill": asdict(skill), "exported_at": time.time(), "exported_from": "Vigilagent"}
+
+            export_file.write_text(json.dumps(export_data, indent=2), encoding="utf-8")
+
             logger.info(f"[SkillLibrary] Exported skill {skill_id} to {export_path}")
             return True
-            
+
         except Exception as e:
             logger.error(f"[SkillLibrary] Failed to export skill: {e}")
             return False
-    
-    def import_skill(self, import_path: str) -> Optional[str]:
+
+    def import_skill(self, import_path: str) -> str | None:
         """
         Import a skill from a file.
         Returns skill_id if successful.
@@ -670,32 +672,32 @@ class SkillLibrary:
             if not import_file.exists():
                 logger.error(f"[SkillLibrary] Import file not found: {import_path}")
                 return None
-            
+
             import_data = json.loads(import_file.read_text(encoding="utf-8"))
             skill_data = import_data.get("skill")
-            
+
             if not skill_data:
-                logger.error(f"[SkillLibrary] Invalid import file format")
+                logger.error("[SkillLibrary] Invalid import file format")
                 return None
-            
+
             skill = Skill(**skill_data)
-            
+
             # Reset usage stats for imported skill
             skill.times_used = 0
             skill.times_successful = 0
             skill.created_at = time.time()
             skill.last_updated = time.time()
-            
+
             if self.add_skill(skill):
                 logger.info(f"[SkillLibrary] Imported skill: {skill.name}")
                 return skill.skill_id
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"[SkillLibrary] Failed to import skill: {e}")
             return None
-    
+
     def record_skill_usage(self, skill_id: str, success: bool):
         """
         Record usage of a skill for tracking effectiveness.
@@ -703,17 +705,17 @@ class SkillLibrary:
         skill = self.get_skill(skill_id)
         if not skill:
             return
-        
+
         skill.times_used += 1
         if success:
             skill.times_successful += 1
-        
+
         # Update success rate
         if skill.times_used > 0:
             skill.success_rate = skill.times_successful / skill.times_used
-        
+
         self.update_skill(skill)
-    
+
     def _get_category(self, skill_type: str) -> str:
         """Get category directory for skill type."""
         if "payload" in skill_type:
@@ -726,18 +728,18 @@ class SkillLibrary:
             return "evasion"
         else:
             return "payload"  # Default
-    
-    def get_library_stats(self) -> Dict[str, Any]:
+
+    def get_library_stats(self) -> dict[str, Any]:
         """Get statistics about the skill library."""
         all_skills = self.get_all_skills()
-        
+
         by_type = {}
         for skill in all_skills:
             by_type[skill.skill_type] = by_type.get(skill.skill_type, 0) + 1
-        
+
         total_usage = sum(s.times_used for s in all_skills)
         total_success = sum(s.times_successful for s in all_skills)
-        
+
         return {
             "total_skills": len(all_skills),
             "by_type": by_type,
@@ -745,7 +747,7 @@ class SkillLibrary:
             "total_success": total_success,
             "overall_success_rate": total_success / total_usage if total_usage > 0 else 0.0,
             "avg_confidence": sum(s.confidence for s in all_skills) / len(all_skills) if all_skills else 0.0,
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
 
     # ------------------------------------------------------------------
@@ -768,26 +770,26 @@ class SkillLibrary:
     def add_browser_skill(
         self,
         skill: "BrowserSkill",
-        context_requirements: Optional[Dict[str, Any]] = None,
+        context_requirements: dict[str, Any] | None = None,
     ) -> bool:
         """Validate semver, dedupe by skill_id, persist, update indexes.
-        
+
         Delegates to ``BrowserSkillLibraryExtension.add_browser_skill`` so
         capability/context/framework indexes stay in sync.
         """
         ext = _get_browser_skill_extension(self)
         return ext.add_browser_skill(skill, context_requirements or {})
-    
+
     def search_browser_skills(
         self,
-        context: Optional[str] = None,
-        framework: Optional[str] = None,
-        capabilities: Optional[List[str]] = None,
+        context: str | None = None,
+        framework: str | None = None,
+        capabilities: list[str] | None = None,
         limit: int = 50,
-    ) -> List["BrowserSkill"]:
+    ) -> list["BrowserSkill"]:
         """O(1) index lookups, intersect sets, filter deprecated, sort by
         success_rate then usage.
-        
+
         Per Task 3.4 contract: ``capabilities`` is the agent's capability list;
         a skill is included only when its ``required_capabilities`` is a
         subset of the agent's caps.
@@ -799,12 +801,10 @@ class SkillLibrary:
             framework=framework,
             limit=limit,
         )
-    
-    def compose_workflows(
-        self, skill_ids: List[str]
-    ) -> Optional["BrowserSkill"]:
+
+    def compose_workflows(self, skill_ids: list[str]) -> Optional["BrowserSkill"]:
         """Compose multiple workflow skills (referenced by skill_id) into one.
-        
+
         Per Task 3.6 contract:
           * validate every constituent is a workflow
           * merge ``workflow_steps`` in order
@@ -815,36 +815,28 @@ class SkillLibrary:
         if not isinstance(skill_ids, list) or not skill_ids:
             return None
         # Resolve each skill_id from disk metadata.
-        resolved: List["BrowserSkill"] = []
+        resolved: list[BrowserSkill] = []
         for sid in skill_ids:
             if sid not in self.metadata:
-                logger.warning(
-                    f"[SkillLibrary] compose_workflows: skill_id {sid} not found"
-                )
+                logger.warning(f"[SkillLibrary] compose_workflows: skill_id {sid} not found")
                 return None
             meta = self.metadata[sid]
             skill_path = self.skills_dir / meta["file_path"]
             try:
                 data = json.loads(skill_path.read_text(encoding="utf-8"))
             except Exception as e:
-                logger.error(
-                    f"[SkillLibrary] compose_workflows: cannot read {sid}: {e}"
-                )
+                logger.error(f"[SkillLibrary] compose_workflows: cannot read {sid}: {e}")
                 return None
             # Convert to BrowserSkill iff it has the browser shape.
             if "execution_context" not in data:
-                logger.warning(
-                    f"[SkillLibrary] compose_workflows: {sid} is not a browser skill"
-                )
+                logger.warning(f"[SkillLibrary] compose_workflows: {sid} is not a browser skill")
                 return None
             try:
                 resolved.append(BrowserSkill.from_dict(data))
             except Exception as e:
-                logger.error(
-                    f"[SkillLibrary] compose_workflows: bad skill data for {sid}: {e}"
-                )
+                logger.error(f"[SkillLibrary] compose_workflows: bad skill data for {sid}: {e}")
                 return None
-        
+
         # Delegate the merge logic to the extension, then override the
         # synthesized skill_id with the SHA-256 of the constituent ids
         # (per Task 3.6 contract).
@@ -852,15 +844,14 @@ class SkillLibrary:
         composed = ext.compose_workflows(resolved)
         if composed is None:
             return None
-        
+
         import hashlib as _hl
-        sha = _hl.sha256(
-            json.dumps(skill_ids, sort_keys=True).encode()
-        ).hexdigest()[:24]
+
+        sha = _hl.sha256(json.dumps(skill_ids, sort_keys=True).encode()).hexdigest()[:24]
         composed.skill_id = f"composed_{sha}"
-        
+
         # Union of evidence_requirements (extension already merges browser_reqs).
-        merged_evidence: Dict[str, Any] = {}
+        merged_evidence: dict[str, Any] = {}
         for s in resolved:
             for k, v in (s.evidence_requirements or {}).items():
                 # Booleans OR-merge; non-booleans last-write-wins.
@@ -869,7 +860,7 @@ class SkillLibrary:
                 else:
                     merged_evidence[k] = v
         composed.evidence_requirements = merged_evidence
-        
+
         return composed
 
 
@@ -881,19 +872,20 @@ skill_library = SkillLibrary()
 # BROWSER SKILL LIBRARY EXTENSION
 # ============================================================================
 
+
 class BrowserSkillLibraryExtension:
     """Extension for browser-specific skill management with indexing"""
-    
+
     def __init__(self, skill_library: SkillLibrary):
         self.library = skill_library
-    
+
     def _rebuild_indexes(self):
         """Rebuild all indexes from metadata"""
         self.library.capability_index.clear()
         self.library.context_index.clear()
         self.library.framework_index.clear()
         self.library.version_tracking.clear()
-        
+
         for skill_id, meta in self.library.metadata.items():
             # Index by capabilities
             caps = meta.get("required_capabilities", [])
@@ -902,14 +894,14 @@ class BrowserSkillLibraryExtension:
                     if cap not in self.library.capability_index:
                         self.library.capability_index[cap] = set()
                     self.library.capability_index[cap].add(skill_id)
-            
+
             # Index by execution context
             context = meta.get("execution_context")
             if context:
                 if context not in self.library.context_index:
                     self.library.context_index[context] = set()
                 self.library.context_index[context].add(skill_id)
-            
+
             # Index by framework
             browser_reqs = meta.get("browser_requirements", {})
             framework = browser_reqs.get("framework") if isinstance(browser_reqs, dict) else None
@@ -917,7 +909,7 @@ class BrowserSkillLibraryExtension:
                 if framework not in self.library.framework_index:
                     self.library.framework_index[framework] = set()
                 self.library.framework_index[framework].add(skill_id)
-            
+
             # Track versions
             name = meta.get("name", "")
             version = meta.get("version", "1.0.0")
@@ -926,12 +918,8 @@ class BrowserSkillLibraryExtension:
                     self.library.version_tracking[name] = []
                 if version not in self.library.version_tracking[name]:
                     self.library.version_tracking[name].append(version)
-    
-    def add_browser_skill(
-        self,
-        skill: BrowserSkill,
-        context_requirements: Dict[str, Any]
-    ) -> bool:
+
+    def add_browser_skill(self, skill: BrowserSkill, context_requirements: dict[str, Any]) -> bool:
         """
         Add a browser skill to the library with indexing.
         Returns True if successful.
@@ -942,26 +930,23 @@ class BrowserSkillLibraryExtension:
             if len(version_parts) != 3 or not all(p.isdigit() for p in version_parts):
                 logger.error(f"[SkillLibrary] Invalid version format: {skill.version}")
                 return False
-            
+
             # Check for duplicates
             if skill.skill_id in self.library.metadata:
                 logger.warning(f"[SkillLibrary] Browser skill {skill.skill_id} already exists")
                 return False
-            
+
             # Determine category directory
             category = self.library._get_category(skill.skill_type)
             safe_id = _sanitize_filename(skill.skill_id)
             skill_file = self.library.skills_dir / category / f"{safe_id}.json"
-            
+
             # Save skill to file - convert frozenset to list for proper JSON serialization
             skill_dict = asdict(skill)
             if isinstance(skill_dict.get("required_capabilities"), frozenset):
                 skill_dict["required_capabilities"] = list(skill_dict["required_capabilities"])
-            skill_file.write_text(
-                json.dumps(skill_dict, indent=2, default=str),
-                encoding="utf-8"
-            )
-            
+            skill_file.write_text(json.dumps(skill_dict, indent=2, default=str), encoding="utf-8")
+
             # Update metadata index
             self.library.metadata[skill.skill_id] = {
                 "name": skill.name,
@@ -975,74 +960,70 @@ class BrowserSkillLibraryExtension:
                 "deprecated": skill.deprecated,
                 "created_at": skill.created_at or time.time(),
                 "tags": skill.tags + ["browser_automation"],
-                "file_path": str(skill_file.relative_to(self.library.skills_dir))
+                "file_path": str(skill_file.relative_to(self.library.skills_dir)),
             }
-            
+
             # Update indexes
             for cap in skill.required_capabilities:
                 if cap not in self.library.capability_index:
                     self.library.capability_index[cap] = set()
                 self.library.capability_index[cap].add(skill.skill_id)
-            
+
             if skill.execution_context:
                 if skill.execution_context not in self.library.context_index:
                     self.library.context_index[skill.execution_context] = set()
                 self.library.context_index[skill.execution_context].add(skill.skill_id)
-            
+
             framework = skill.browser_requirements.get("framework")
             if framework:
                 if framework not in self.library.framework_index:
                     self.library.framework_index[framework] = set()
                 self.library.framework_index[framework].add(skill.skill_id)
-            
+
             # Track version
             if skill.name not in self.library.version_tracking:
                 self.library.version_tracking[skill.name] = []
             if skill.version not in self.library.version_tracking[skill.name]:
                 self.library.version_tracking[skill.name].append(skill.version)
-            
+
             self.library._save_metadata()
-            
+
             logger.info(f"[SkillLibrary] Added browser skill: {skill.name} ({skill.skill_id})")
             return True
-            
+
         except Exception as e:
             logger.error(f"[SkillLibrary] Failed to add browser skill: {e}")
             return False
-    
+
     def search_browser_skills(
-        self,
-        agent_capabilities: List[str],
-        context: Optional[str] = None,
-        framework: Optional[str] = None,
-        limit: int = 50
-    ) -> List[BrowserSkill]:
+        self, agent_capabilities: list[str], context: str | None = None, framework: str | None = None, limit: int = 50
+    ) -> list[BrowserSkill]:
         """
         Search for browser skills matching criteria using indexes.
         Returns skills that match agent capabilities.
         """
         # Start with all skills
         candidate_ids = set(self.library.metadata.keys())
-        
+
         # Filter by context if provided
         if context and context in self.library.context_index:
             candidate_ids &= self.library.context_index[context]
-        
+
         # Filter by framework if provided
         if framework and framework in self.library.framework_index:
             candidate_ids &= self.library.framework_index[framework]
-        
+
         # Filter by capabilities (skill capabilities must be subset of agent capabilities)
         agent_caps_set = set(agent_capabilities)
         matching_skills = []
-        
+
         for skill_id in candidate_ids:
             meta = self.library.metadata[skill_id]
-            
+
             # Skip deprecated skills
             if meta.get("deprecated", False):
                 continue
-            
+
             # Check if skill capabilities are subset of agent capabilities
             skill_caps = set(meta.get("required_capabilities", []))
             if skill_caps.issubset(agent_caps_set):
@@ -1059,53 +1040,47 @@ class BrowserSkillLibraryExtension:
                         matching_skills.append(skill)
                 except Exception as e:
                     logger.error(f"[SkillLibrary] Failed to load skill {skill_id}: {e}")
-            
+
             if len(matching_skills) >= limit:
                 break
-        
+
         # Sort by success rate and usage
-        matching_skills.sort(
-            key=lambda s: (s.success_rate * 0.6 + (s.usage_count / 100) * 0.4),
-            reverse=True
-        )
-        
+        matching_skills.sort(key=lambda s: s.success_rate * 0.6 + (s.usage_count / 100) * 0.4, reverse=True)
+
         return matching_skills[:limit]
-    
-    def compose_workflows(
-        self,
-        workflow_skills: List[BrowserSkill]
-    ) -> Optional[BrowserSkill]:
+
+    def compose_workflows(self, workflow_skills: list[BrowserSkill]) -> BrowserSkill | None:
         """
         Compose multiple workflow skills into a single composed skill.
         Returns composed skill or None if incompatible.
         """
         if not workflow_skills:
             return None
-        
+
         # Validate all are workflows
         for skill in workflow_skills:
             if not skill.workflow_steps:
                 logger.error(f"[SkillLibrary] Skill {skill.name} is not a workflow")
                 return None
-        
+
         # Check compatibility (all must have compatible browser requirements)
         base_reqs = workflow_skills[0].browser_requirements
         for skill in workflow_skills[1:]:
             if skill.browser_requirements.get("framework") != base_reqs.get("framework"):
-                logger.error(f"[SkillLibrary] Incompatible frameworks in workflow composition")
+                logger.error("[SkillLibrary] Incompatible frameworks in workflow composition")
                 return None
-        
+
         # Merge workflow steps
         all_steps = []
         for skill in workflow_skills:
             all_steps.extend(skill.workflow_steps)
-        
+
         # Merge success conditions
         all_conditions = []
         for skill in workflow_skills:
             if "success_conditions" in skill.parameters:
                 all_conditions.extend(skill.parameters["success_conditions"])
-        
+
         # Merge browser requirements
         merged_reqs = base_reqs.copy()
         for skill in workflow_skills:
@@ -1115,12 +1090,12 @@ class BrowserSkillLibraryExtension:
                     merged_reqs[key] = merged_reqs.get(key, False) or value
                 else:
                     merged_reqs[key] = value
-        
+
         # Merge capabilities
         all_caps = set()
         for skill in workflow_skills:
             all_caps.update(skill.required_capabilities)
-        
+
         # Create composed skill
         composed = BrowserSkill(
             skill_id=f"composed_{'_'.join(s.skill_id[:8] for s in workflow_skills)}",
@@ -1135,32 +1110,27 @@ class BrowserSkillLibraryExtension:
             confidence=min(s.confidence for s in workflow_skills),
             created_at=time.time(),
             tags=["composed", "workflow"],
-            parameters={"success_conditions": all_conditions}
+            parameters={"success_conditions": all_conditions},
         )
-        
+
         logger.info(f"[SkillLibrary] Composed workflow from {len(workflow_skills)} skills")
         return composed
-    
-    def deprecate_skill(
-        self,
-        skill_id: str,
-        reason: str,
-        migration_path: Optional[str] = None
-    ) -> bool:
+
+    def deprecate_skill(self, skill_id: str, reason: str, migration_path: str | None = None) -> bool:
         """
         Mark a skill as deprecated.
         """
         if skill_id not in self.library.metadata:
             return False
-        
+
         # Update metadata
         self.library.metadata[skill_id]["deprecated"] = True
         self.library.metadata[skill_id]["deprecation_reason"] = reason
         if migration_path:
             self.library.metadata[skill_id]["migration_path"] = migration_path
-        
+
         self.library._save_metadata()
-        
+
         logger.info(f"[SkillLibrary] Deprecated skill {skill_id}: {reason}")
         return True
 
@@ -1176,7 +1146,7 @@ browser_skill_library = BrowserSkillLibraryExtension(skill_library)
 # ------------------------------------------------------------------
 def _get_browser_skill_extension(library: SkillLibrary) -> "BrowserSkillLibraryExtension":
     """Return the BrowserSkillLibraryExtension bound to ``library``.
-    
+
     For the global ``skill_library`` singleton we return the global
     ``browser_skill_library`` instance; for any other ``library`` (e.g. test
     fixtures), we lazily attach a fresh extension so each library gets its

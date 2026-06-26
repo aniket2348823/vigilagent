@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from backend.core.strict_schema import ensure_strict_json_schema
 from backend.core.tool_types import ToolType, get_tool_type
@@ -49,6 +50,7 @@ class ToolRegistry:
         def _wrap(handler: ToolHandler) -> ToolHandler:
             self.register(ToolDefinition(handler=handler, **kwargs))
             return handler
+
         return _wrap
 
     def get(self, name: str) -> ToolDefinition:

@@ -64,8 +64,10 @@ def classify_path(path: str) -> tuple[str, str]:
         return "ADMIN_ENDPOINT", "CRITICAL"
 
     # Auth
-    if any(part in lower for part in ["/login", "/auth", "/token", "/oauth", "/session",
-                                       "/signin", "/signup", "/register", "/password"]):
+    if any(
+        part in lower
+        for part in ["/login", "/auth", "/token", "/oauth", "/session", "/signin", "/signup", "/register", "/password"]
+    ):
         return "AUTH_ENDPOINT", "HIGH"
 
     # Payment
@@ -93,13 +95,11 @@ def classify_path(path: str) -> tuple[str, str]:
         return "API_ENDPOINT", "HIGH"
 
     # Data
-    if any(part in lower for part in ["/user", "/account", "/order", "/profile", "/customer",
-                                       "/payment", "/settings"]):
+    if any(part in lower for part in ["/user", "/account", "/order", "/profile", "/customer", "/payment", "/settings"]):
         return "DATA_ENDPOINT", "MEDIUM"
 
     # File endpoints
-    if lower.endswith((".json", ".xml", ".yaml", ".yml", ".env", ".config",
-                        ".bak", ".sql", ".log", ".csv")):
+    if lower.endswith((".json", ".xml", ".yaml", ".yml", ".env", ".config", ".bak", ".sql", ".log", ".csv")):
         return "FILE_ENDPOINT", "HIGH"
 
     # JS

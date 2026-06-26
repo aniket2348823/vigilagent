@@ -4,10 +4,15 @@ aquatone writes aquatone_session.json with a "pages" map:
   {"pages": {"http__host__443": {"url":"https://host","hostname":"host",
      "status":200,"screenshotPath":"screenshots/..png","tags":[...]}}}
 """
+
 from __future__ import annotations
-from pathlib import Path
+
+from typing import TYPE_CHECKING
 
 from backend.parsers.recon.base import ParsedEntity, safe_json_file
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def parse_aquatone_json(path: Path | str) -> list[ParsedEntity]:
@@ -27,12 +32,20 @@ def parse_aquatone_json(path: Path | str) -> list[ParsedEntity]:
         seen.add(url)
         tags = page.get("tags", []) or []
         tech = [t.get("text", "") for t in tags if isinstance(t, dict)] if tags else []
-        entities.append(ParsedEntity(
-            kind="visual_artifact", label=url, confidence=0.8,
-            properties={"hostname": str(page.get("hostname", "")),
-                        "status_code": page.get("status", 0),
-                        "screenshot": str(page.get("screenshotPath", "")),
-                        "title": str(page.get("pageTitle", "")),
-                        "technologies": [t for t in tech if t]},
-            source_tool="aquatone", phase="visual_documentation"))
+        entities.append(
+            ParsedEntity(
+                kind="visual_artifact",
+                label=url,
+                confidence=0.8,
+                properties={
+                    "hostname": str(page.get("hostname", "")),
+                    "status_code": page.get("status", 0),
+                    "screenshot": str(page.get("screenshotPath", "")),
+                    "title": str(page.get("pageTitle", "")),
+                    "technologies": [t for t in tech if t],
+                },
+                source_tool="aquatone",
+                phase="visual_documentation",
+            )
+        )
     return entities

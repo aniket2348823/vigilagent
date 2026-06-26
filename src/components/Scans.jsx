@@ -529,7 +529,7 @@ const Scans = ({ navigate }) => {
                 />
 
                 <footer className="mt-8 pb-8 text-center text-xs text-gray-500 font-light">
-                    <p>Vigilagent Scanner Intelligence Backbone © 2024</p>
+                    <p>Vigilagent Intelligence Backbone © 2024</p>
                 </footer>
             </div>
         </div>

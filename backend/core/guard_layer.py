@@ -4,19 +4,38 @@ import json
 import logging
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping
+from typing import Any
 
 logger = logging.getLogger("GUARD_LAYER")
 
 
 HOMOGLYPH_MAP = {
-    "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p",
-    "\u0441": "c", "\u0443": "y", "\u0445": "x", "\u0410": "A",
-    "\u0415": "E", "\u041e": "O", "\u0420": "P", "\u0421": "C",
-    "\u0425": "X", "\u03b1": "a", "\u03bf": "o", "\u03c1": "p",
-    "\u03c5": "u", "\u03c7": "x", "\u0391": "A", "\u039f": "O",
-    "\u03a1": "P", "\u2010": "-", "\u2011": "-", "\u2212": "-",
+    "\u0430": "a",
+    "\u0435": "e",
+    "\u043e": "o",
+    "\u0440": "p",
+    "\u0441": "c",
+    "\u0443": "y",
+    "\u0445": "x",
+    "\u0410": "A",
+    "\u0415": "E",
+    "\u041e": "O",
+    "\u0420": "P",
+    "\u0421": "C",
+    "\u0425": "X",
+    "\u03b1": "a",
+    "\u03bf": "o",
+    "\u03c1": "p",
+    "\u03c5": "u",
+    "\u03c7": "x",
+    "\u0391": "A",
+    "\u039f": "O",
+    "\u03a1": "P",
+    "\u2010": "-",
+    "\u2011": "-",
+    "\u2212": "-",
     "\uff0d": "-",
 }
 
@@ -57,9 +76,9 @@ CRITICAL_INJECTION_PATTERNS = [
 
 DANGEROUS_COMMAND_PATTERNS = [
     # --- Reverse Shells ---
-    re.compile(r'(bash\s+-i\s+>&\s+/dev/tcp/|nc\s+-e\s+/bin/(ba)?sh|/bin/sh\s+-i\s+>\s*/dev/tcp)', re.I),
-    re.compile(r'(python\s+-c\s+.*import\s+socket|perl\s+-e\s+.*socket)', re.I),
-    re.compile(r'(mkfs\.|fdisk\s+--erase|dd\s+if=/dev/zero)', re.I),
+    re.compile(r"(bash\s+-i\s+>&\s+/dev/tcp/|nc\s+-e\s+/bin/(ba)?sh|/bin/sh\s+-i\s+>\s*/dev/tcp)", re.I),
+    re.compile(r"(python\s+-c\s+.*import\s+socket|perl\s+-e\s+.*socket)", re.I),
+    re.compile(r"(mkfs\.|fdisk\s+--erase|dd\s+if=/dev/zero)", re.I),
     r"(?i)rm\s+-rf\s+/",
     r"(?i):\(\)\{\s*:\|:&\s*\};:",
     r"(?i)mkfs\.",
@@ -82,7 +101,7 @@ class GuardInspection:
     blocked: bool
     confidence: float
     reason: str = ""
-    patterns: List[str] = field(default_factory=list)
+    patterns: list[str] = field(default_factory=list)
 
 
 def normalize_unicode_homographs(text: str) -> str:
@@ -90,11 +109,22 @@ def normalize_unicode_homographs(text: str) -> str:
     return unicodedata.normalize("NFKD", normalized)
 
 
-def _decoded_payload_hits(text: str) -> List[str]:
-    hits: List[str] = []
+def _decoded_payload_hits(text: str) -> list[str]:
+    hits: list[str] = []
     dangerous_terms = [
-        "nc ", "netcat", "/bin/sh", "bash -i", "curl", "wget", "exec",
-        "eval", "$(env)", "`env`", "192.168", "10.0.", "4444",
+        "nc ",
+        "netcat",
+        "/bin/sh",
+        "bash -i",
+        "curl",
+        "wget",
+        "exec",
+        "eval",
+        "$(env)",
+        "`env`",
+        "192.168",
+        "10.0.",
+        "4444",
     ]
     for token in re.findall(r"[A-Za-z0-9+/]{20,}={0,2}", text):
         try:
@@ -118,19 +148,17 @@ def inspect_prompt_injection(text: Any) -> GuardInspection:
     if not raw.strip():
         return GuardInspection(False, 0.0)
     normalized = normalize_unicode_homographs(raw)
-    patterns = [
-        pattern for pattern in INJECTION_PATTERNS
-        if re.search(pattern, raw) or re.search(pattern, normalized)
-    ]
+    patterns = [pattern for pattern in INJECTION_PATTERNS if re.search(pattern, raw) or re.search(pattern, normalized)]
     critical_hits = [
-        pattern for pattern in CRITICAL_INJECTION_PATTERNS
-        if re.search(pattern, raw) or re.search(pattern, normalized)
+        pattern for pattern in CRITICAL_INJECTION_PATTERNS if re.search(pattern, raw) or re.search(pattern, normalized)
     ]
     if re.search(r"[\$\{\}`;|&><]", raw) or re.search(r"[\$\{\}`;|&><]", normalized):
         patterns.append("shell_metacharacters")
     if re.search(r"\$\(.*\)|`.*`", raw) or re.search(r"\$\(.*\)|`.*`", normalized):
         patterns.append("command_substitution")
-    if normalized != raw and any(cmd in normalized.lower() for cmd in ["curl", "wget", "nc ", "netcat", "bash", "exec", "eval"]):
+    if normalized != raw and any(
+        cmd in normalized.lower() for cmd in ["curl", "wget", "nc ", "netcat", "bash", "exec", "eval"]
+    ):
         patterns.append("unicode_homograph_detected")
     patterns.extend(_decoded_payload_hits(raw))
 
@@ -155,7 +183,9 @@ def inspect_command_output(output: Any) -> GuardInspection:
         if re.search(pattern, raw) or re.search(pattern, normalized):
             patterns.append(pattern)
     patterns.extend(_decoded_payload_hits(raw))
-    if normalized != raw and any(cmd in normalized.lower() for cmd in ["curl", "wget", "nc ", "netcat", "bash", "/bin/sh", "exec", "eval"]):
+    if normalized != raw and any(
+        cmd in normalized.lower() for cmd in ["curl", "wget", "nc ", "netcat", "bash", "/bin/sh", "exec", "eval"]
+    ):
         patterns.append("unicode_homograph_command")
     if patterns:
         return GuardInspection(True, 1.0, "dangerous_command_output", patterns)
@@ -211,19 +241,22 @@ class GuardLayer:
     def sanitize_payload(self, payload: Any, *, max_text_chars: int = 16384) -> Any:
         if isinstance(payload, str):
             if "<EXTERNAL_UNTRUSTED_CONTENT" in payload and "</EXTERNAL_UNTRUSTED_CONTENT" in payload:
-                return payload if len(payload) <= max_text_chars else payload[:max_text_chars] + "\n[TRUNCATED_BY_GUARD_LAYER]"
+                return (
+                    payload
+                    if len(payload) <= max_text_chars
+                    else payload[:max_text_chars] + "\n[TRUNCATED_BY_GUARD_LAYER]"
+                )
             self.assert_safe_text(payload)
-            return payload if len(payload) <= max_text_chars else payload[:max_text_chars] + "\n[TRUNCATED_BY_GUARD_LAYER]"
+            return (
+                payload if len(payload) <= max_text_chars else payload[:max_text_chars] + "\n[TRUNCATED_BY_GUARD_LAYER]"
+            )
         if isinstance(payload, list):
             return [self.sanitize_payload(item, max_text_chars=max_text_chars) for item in payload]
         if isinstance(payload, Mapping):
-            return {
-                key: self.sanitize_payload(value, max_text_chars=max_text_chars)
-                for key, value in payload.items()
-            }
+            return {key: self.sanitize_payload(value, max_text_chars=max_text_chars) for key, value in payload.items()}
         return payload
 
-    def filter(self, findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def filter(self, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         valid = []
         for finding in findings:
             self._stats["total_received"] += 1
@@ -235,19 +268,26 @@ class GuardLayer:
                 logger.debug("GUARD: rejected finding [%s] %s", reason, finding.get("url", "unknown"))
         return valid
 
-    def filter_single(self, finding: Dict[str, Any]) -> bool:
+    def filter_single(self, finding: dict[str, Any]) -> bool:
         self._stats["total_received"] += 1
         passed, reason = self._validate_single(finding)
         if passed:
             self._stats["passed"] += 1
-            logger.debug("[finding-flow] guard_layer.filter_single: PASS url=%s type=%s",
-                         finding.get('url', '?'), finding.get('type', '?'))
+            logger.debug(
+                "[finding-flow] guard_layer.filter_single: PASS url=%s type=%s",
+                finding.get("url", "?"),
+                finding.get("type", "?"),
+            )
         else:
-            logger.debug("[finding-flow] guard_layer.filter_single: DROP reason=%s url=%s type=%s",
-                         reason, finding.get('url', '?'), finding.get('type', '?'))
+            logger.debug(
+                "[finding-flow] guard_layer.filter_single: DROP reason=%s url=%s type=%s",
+                reason,
+                finding.get("url", "?"),
+                finding.get("type", "?"),
+            )
         return passed
 
-    def _validate_single(self, finding: Dict[str, Any]) -> tuple[bool, str]:
+    def _validate_single(self, finding: dict[str, Any]) -> tuple[bool, str]:
         # Check confirmation status FIRST — confirmed findings (VULN_CONFIRMED
         # with VALID/CONFIRMED validation) carry legitimate attack payloads that
         # naturally contain shell/injection keywords. The prompt-injection check
@@ -308,7 +348,7 @@ class GuardLayer:
                 self._seen_hashes.pop()
         return True, "passed"
 
-    def _compute_hash(self, finding: Dict[str, Any]) -> str:
+    def _compute_hash(self, finding: dict[str, Any]) -> str:
         endpoint = str(finding.get("url", finding.get("endpoint", ""))).split("?")[0].lower()
         vuln_type = str(finding.get("vuln_type", finding.get("type", ""))).upper()
         response = str(finding.get("response", finding.get("response_body", "")))[:200]
@@ -316,20 +356,23 @@ class GuardLayer:
         response_sig = hashlib.sha256(response.encode("utf-8", errors="ignore")).hexdigest()[:8]
         return hashlib.sha256(f"{endpoint}|{vuln_type}|{response_sig}".encode()).hexdigest()
 
-    def cluster_findings(self, findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        clusters: Dict[str, Dict[str, Any]] = {}
+    def cluster_findings(self, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        clusters: dict[str, dict[str, Any]] = {}
         for finding in findings:
             endpoint = str(finding.get("url", finding.get("endpoint", ""))).split("?")[0].lower()
             vuln_type = str(finding.get("vuln_type", finding.get("type", ""))).upper()
             cluster_id = f"{endpoint}|{vuln_type}"
-            cluster = clusters.setdefault(cluster_id, {
-                "endpoint": endpoint,
-                "vuln_type": vuln_type,
-                "variants": 0,
-                "max_confidence": 0.0,
-                "representative": finding,
-                "all_payloads": [],
-            })
+            cluster = clusters.setdefault(
+                cluster_id,
+                {
+                    "endpoint": endpoint,
+                    "vuln_type": vuln_type,
+                    "variants": 0,
+                    "max_confidence": 0.0,
+                    "representative": finding,
+                    "all_payloads": [],
+                },
+            )
             cluster["variants"] += 1
             cluster["max_confidence"] = max(cluster["max_confidence"], float(finding.get("confidence", 0)))
             # Cap payloads list to prevent unbounded memory growth

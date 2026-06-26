@@ -1,6 +1,6 @@
-# VigilAgent — Frontend (React + Vite + Tailwind)
+# Vigilagent — Frontend (React + Vite + Tailwind)
 
-This directory holds the entire frontend for the VigilAgent scanner UI. The
+This directory holds the entire frontend for the Vigilagent UI. The
 backend lives in `../backend` and exposes both an HTTP API and a WebSocket
 stream that this app consumes.
 

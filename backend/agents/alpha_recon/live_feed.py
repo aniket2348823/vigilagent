@@ -4,17 +4,14 @@ Alpha V6 Live Recon Feed — WebSocket endpoint for dashboard.
 Provides real-time streaming of recon progress, phase transitions,
 entity discoveries, and vulnerability findings to the React frontend.
 """
+
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from collections import defaultdict
 from typing import Any
-
-from backend.agents.alpha_recon.models import EndpointFinding, ReconPhase
-from backend.core.hive import EventType, HiveEvent
 
 logger = logging.getLogger("alpha.livefeed")
 
@@ -36,8 +33,7 @@ class ReconLiveFeed:
     def unsubscribe(self, scan_id: str, queue: asyncio.Queue):
         """Remove a subscriber."""
         if scan_id in self._subscribers:
-            self._subscribers[scan_id] = [
-                q for q in self._subscribers[scan_id] if q is not queue]
+            self._subscribers[scan_id] = [q for q in self._subscribers[scan_id] if q is not queue]
 
     async def broadcast(self, scan_id: str, event_type: str, data: dict[str, Any]):
         """Broadcast an event to all subscribers of a scan."""
@@ -63,23 +59,27 @@ class ReconLiveFeed:
         stats = self._ensure_stats(scan_id)
         stats["current_phase"] = phase
         stats["phase_started_at"] = time.time()
-        await self.broadcast(scan_id, "phase_started", {
-            "phase": phase, "meta": meta or {},
-            "stats": self._public_stats(stats)})
+        await self.broadcast(
+            scan_id, "phase_started", {"phase": phase, "meta": meta or {}, "stats": self._public_stats(stats)}
+        )
 
-    async def on_phase_completed(self, scan_id: str, phase: str,
-                                  entities_count: int, tools_count: int):
+    async def on_phase_completed(self, scan_id: str, phase: str, entities_count: int, tools_count: int):
         stats = self._ensure_stats(scan_id)
         stats["phases_completed"] = stats.get("phases_completed", 0) + 1
         stats["total_entities"] = stats.get("total_entities", 0) + entities_count
         stats["total_tools_run"] = stats.get("total_tools_run", 0) + tools_count
-        await self.broadcast(scan_id, "phase_completed", {
-            "phase": phase, "entities_found": entities_count,
-            "tools_run": tools_count,
-            "stats": self._public_stats(stats)})
+        await self.broadcast(
+            scan_id,
+            "phase_completed",
+            {
+                "phase": phase,
+                "entities_found": entities_count,
+                "tools_run": tools_count,
+                "stats": self._public_stats(stats),
+            },
+        )
 
-    async def on_entity_discovered(self, scan_id: str, kind: str,
-                                    label: str, source_tool: str):
+    async def on_entity_discovered(self, scan_id: str, kind: str, label: str, source_tool: str):
         stats = self._ensure_stats(scan_id)
         kind_counts = stats.setdefault("entity_counts", {})
         kind_counts[kind] = kind_counts.get(kind, 0) + 1
@@ -89,43 +89,47 @@ class ReconLiveFeed:
         if now - stats.get(f"last_{throttle_key}", 0) < 0.1:
             return
         stats[f"last_{throttle_key}"] = now
-        await self.broadcast(scan_id, "entity_discovered", {
-            "kind": kind, "label": label[:200],
-            "source_tool": source_tool,
-            "kind_total": kind_counts[kind]})
+        await self.broadcast(
+            scan_id,
+            "entity_discovered",
+            {"kind": kind, "label": label[:200], "source_tool": source_tool, "kind_total": kind_counts[kind]},
+        )
 
-    async def on_vulnerability_found(self, scan_id: str, name: str,
-                                      severity: str, target: str, confidence: float):
+    async def on_vulnerability_found(self, scan_id: str, name: str, severity: str, target: str, confidence: float):
         stats = self._ensure_stats(scan_id)
         stats["vulns_found"] = stats.get("vulns_found", 0) + 1
-        await self.broadcast(scan_id, "vulnerability_found", {
-            "name": name, "severity": severity,
-            "target": target, "confidence": confidence,
-            "total_vulns": stats["vulns_found"]})
+        await self.broadcast(
+            scan_id,
+            "vulnerability_found",
+            {
+                "name": name,
+                "severity": severity,
+                "target": target,
+                "confidence": confidence,
+                "total_vulns": stats["vulns_found"],
+            },
+        )
 
     async def on_tool_started(self, scan_id: str, tool_name: str, phase: str):
-        await self.broadcast(scan_id, "tool_started", {
-            "tool": tool_name, "phase": phase})
+        await self.broadcast(scan_id, "tool_started", {"tool": tool_name, "phase": phase})
 
-    async def on_tool_completed(self, scan_id: str, tool_name: str,
-                                 status: str, duration_ms: int, output_bytes: int):
-        await self.broadcast(scan_id, "tool_completed", {
-            "tool": tool_name, "status": status,
-            "duration_ms": duration_ms, "output_bytes": output_bytes})
+    async def on_tool_completed(self, scan_id: str, tool_name: str, status: str, duration_ms: int, output_bytes: int):
+        await self.broadcast(
+            scan_id,
+            "tool_completed",
+            {"tool": tool_name, "status": status, "duration_ms": duration_ms, "output_bytes": output_bytes},
+        )
 
     async def on_scan_complete(self, scan_id: str, summary: dict[str, Any]):
         stats = self._ensure_stats(scan_id)
         stats["status"] = "completed"
         stats["completed_at"] = time.time()
-        await self.broadcast(scan_id, "scan_complete", {
-            "summary": summary, "stats": self._public_stats(stats)})
+        await self.broadcast(scan_id, "scan_complete", {"summary": summary, "stats": self._public_stats(stats)})
         # Clean up stats after a delay
-        asyncio.get_event_loop().call_later(
-            300, lambda: self._scan_stats.pop(scan_id, None))
+        asyncio.get_event_loop().call_later(300, lambda: self._scan_stats.pop(scan_id, None))
 
     async def on_error(self, scan_id: str, error: str, context: str = ""):
-        await self.broadcast(scan_id, "error", {
-            "error": error, "context": context})
+        await self.broadcast(scan_id, "error", {"error": error, "context": context})
 
     # ── Internal ──────────────────────────────────────────────
 

@@ -1,20 +1,22 @@
 import asyncio
-import os as _os
-import logging
-import json
-import time
-import hmac as _hmac
 import hashlib as _hashlib
-from typing import Callable, Dict, List, Any, Awaitable, Optional
-from pydantic import BaseModel, Field
-from enum import Enum
+import hmac as _hmac
+import json
+import logging
+import os as _os
+import time
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-import collections
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 # --- 1. THE VOCABULARY (Strict Schemas) ---
 
-class EventType(str, Enum):
+
+class EventType(StrEnum):
     SYSTEM_START = "SYSTEM_START"
     LOG = "LOG"
     TARGET_ACQUIRED = "TARGET_ACQUIRED"
@@ -32,7 +34,7 @@ class EventType(str, Enum):
     SCOPE_VIOLATION = "SCOPE_VIOLATION"
     REPORT_READY = "REPORT_READY"
     PATTERN_LEARNED = "PATTERN_LEARNED"
-    
+
     # V6 Lifecycle Management Events
     MISSION_PLANNED = "MISSION_PLANNED"
     PHASE_STARTED = "PHASE_STARTED"
@@ -42,38 +44,43 @@ class EventType(str, Enum):
     ENDPOINT_TESTED = "ENDPOINT_TESTED"
     COVERAGE_UPDATE = "COVERAGE_UPDATE"
 
+
 class HiveEvent(BaseModel):
     """
     The fundamental unit of communication.
     Every whisper in the hive must follow this structure.
     """
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     scan_id: str = "GLOBAL"  # CRITICAL FIX 2: Scan Context Isolation
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     type: EventType
     source: str  # The Agent Name
-    payload: Dict[str, Any] = {}
+    payload: dict[str, Any] = {}
+
 
 # --- 2. THE NERVOUS SYSTEM (Event Bus) ---
 
-from backend.core.protocol import ModuleConfig, ResultPacket, Vulnerability
+import contextlib
+
+from backend.core.content_boundary import content_boundary
 from backend.core.context import ScanContext
 from backend.core.guard_layer import PromptInjectionBlocked, guard_layer
-from backend.core.content_boundary import content_boundary
-from backend.core.stdout_watchdog import watch_output
 from backend.core.memory import memory_store
-from backend.core.unified_knowledge_graph import knowledge_graph
+from backend.core.protocol import ResultPacket
+from backend.core.stdout_watchdog import watch_output
 from backend.core.task_manager import TaskManager
-import collections
-
+from backend.core.unified_knowledge_graph import knowledge_graph
 
 # EventBus message authentication (security hardening)
-_EVENT_BUS_HMAC_KEY = _os.getenv('VIGILAGENT_EVENT_BUS_HMAC_KEY', '')
+_EVENT_BUS_HMAC_KEY = _os.getenv("VIGILAGENT_EVENT_BUS_HMAC_KEY", "")
+
 
 def _sign_event(event_json: str) -> str:
     if not _EVENT_BUS_HMAC_KEY:
-        return ''
+        return ""
     return _hmac.new(_EVENT_BUS_HMAC_KEY.encode(), event_json.encode(), _hashlib.sha256).hexdigest()
+
 
 def _verify_event_signature(event_json: str, signature: str) -> bool:
     if not _EVENT_BUS_HMAC_KEY:
@@ -83,20 +90,21 @@ def _verify_event_signature(event_json: str, signature: str) -> bool:
     expected = _hmac.new(_EVENT_BUS_HMAC_KEY.encode(), event_json.encode(), _hashlib.sha256).hexdigest()
     return _hmac.compare_digest(expected, signature)
 
+
 class EventBus:
     """
-    The central message broker. 
+    The central message broker.
     Decouples agents so they never talk directly.
     """
+
     def __init__(self):
-        self.subscribers: Dict[EventType, List[Callable[[HiveEvent], Awaitable[None]]]] = {}
-        self.scan_contexts: Dict[str, ScanContext] = {}
-        self._context_tasks: Dict[str, asyncio.Task] = {}
+        self.subscribers: dict[EventType, list[Callable[[HiveEvent], Awaitable[None]]]] = {}
+        self.scan_contexts: dict[str, ScanContext] = {}
+        self._context_tasks: dict[str, asyncio.Task] = {}
         self._global_tasks = set()
-        self.dead_letters: List[Dict[str, Any]] = []  # Dead Letter Queue
+        self.dead_letters: list[dict[str, Any]] = []  # Dead Letter Queue
         self._max_dead_letters = 500  # Prevent unbounded DLQ growth
         self._task_manager = TaskManager("EventBus")
-
 
     def get_or_create_context(self, scan_id: str) -> ScanContext:
         if scan_id not in self.scan_contexts:
@@ -132,7 +140,7 @@ class EventBus:
         if event_type in self.subscribers and handler in self.subscribers[event_type]:
             self.subscribers[event_type].remove(handler)
 
-    def _sanitize_event_payload(self, event: HiveEvent) -> Dict[str, Any]:
+    def _sanitize_event_payload(self, event: HiveEvent) -> dict[str, Any]:
         # Internal event types that carry legitimate attack payloads (SQLi, XSS,
         # command injection test strings). These naturally contain keywords like
         # "execute", "exec", "eval", "subprocess", "shell" that the
@@ -194,7 +202,10 @@ class EventBus:
                 type=EventType.LOG,
                 source="guard_layer",
                 scan_id=event.scan_id,
-                payload={"message": "Unsafe prompt-injection-like payload blocked before agent ingestion.", "reason": str(exc)},
+                payload={
+                    "message": "Unsafe prompt-injection-like payload blocked before agent ingestion.",
+                    "reason": str(exc),
+                },
             )
         except Exception as exc:
             logging.warning("[EventBus] Guard layer failed open for event %s: %s", event.id, exc)
@@ -202,11 +213,14 @@ class EventBus:
         if event.type == EventType.JOB_COMPLETED:
             await memory_store.remember_notification(event.scan_id, "Background job completed", event.payload)
         if event.type in {EventType.RECON_PACKET, EventType.RECON_COMPLETE, EventType.SCHEMA_DISCOVERED}:
-            await memory_store.remember_episode(event.scan_id, {
-                "event_type": event.type.value,
-                "source": event.source,
-                "payload": event.payload,
-            })
+            await memory_store.remember_episode(
+                event.scan_id,
+                {
+                    "event_type": event.type.value,
+                    "source": event.source,
+                    "payload": event.payload,
+                },
+            )
             if event.type == EventType.RECON_PACKET:
                 try:
                     knowledge_graph.ingest_http_record(event.payload, scan_id=event.scan_id)
@@ -216,7 +230,8 @@ class EventBus:
             knowledge_graph.ingest_finding(event.payload, scan_id=event.scan_id)
             try:
                 from backend.core.metrics import metrics as _m
-                severity = (event.payload or {}).get('severity', 'MEDIUM')
+
+                severity = (event.payload or {}).get("severity", "MEDIUM")
                 _m.record_vuln(str(severity))
             except Exception:
                 pass
@@ -224,12 +239,9 @@ class EventBus:
         if event.scan_id == "GLOBAL":
             if event.type in self.subscribers:
                 for handler in self.subscribers[event.type]:
-                    task = self._task_manager.create_task(
-                        self._safe_execute(handler, event),
-                        name=f"handler_{event.type}"
-                    )
+                    self._task_manager.create_task(self._safe_execute(handler, event), name=f"handler_{event.type}")
             return
-            
+
         ctx = self.get_or_create_context(event.scan_id)
 
         # CRITICAL FIX 1: Exact-once deduplication window (FIFO)
@@ -244,14 +256,13 @@ class EventBus:
         # Enqueue for causal execution
         await ctx.event_queue.put(event)
 
-
     async def _safe_execute(self, handler, event):
         try:
             await handler(event)
         except Exception as e:
-            err_msg = str(e).encode('ascii', errors='replace').decode('ascii')
+            err_msg = str(e).encode("ascii", errors="replace").decode("ascii")
             logging.error(f"[CRITICAL] Handler failed processing {event.type}: {err_msg}")
-            
+
             # Dead Letter Queue: Capture failed events instead of losing them
             dead_entry = {
                 "event_id": event.id,
@@ -261,18 +272,19 @@ class EventBus:
                 "handler": handler.__qualname__,
                 "error": err_msg,
                 "timestamp": datetime.utcnow().isoformat(),
-                "payload_summary": str(event.payload)[:200]
+                "payload_summary": str(event.payload)[:200],
             }
             self.dead_letters.append(dead_entry)
             try:
                 from backend.core.metrics import metrics as _m
+
                 _m.event_handler_errors_total.inc()
             except Exception:
                 pass
-            
+
             # Enforce DLQ size limit
             if len(self.dead_letters) > self._max_dead_letters:
-                self.dead_letters = self.dead_letters[-self._max_dead_letters:]
+                self.dead_letters = self.dead_letters[-self._max_dead_letters :]
 
     def get_dead_letters(self, limit: int = 50) -> list:
         """Retrieve recent dead letter entries for diagnostics."""
@@ -312,10 +324,10 @@ class EventBus:
             ctx.is_cancelled = True
         for task in self._context_tasks.values():
             task.cancel()
-            
+
         if self._context_tasks:
             await asyncio.gather(*self._context_tasks.values(), return_exceptions=True)
-        
+
         # Cancel all tracked tasks
         await self._task_manager.cancel_all()
 
@@ -327,8 +339,8 @@ class EventBus:
             task = self._context_tasks.pop(scan_id, None)
             if task:
                 task.cancel()
-                try: await task
-                except asyncio.CancelledError: pass
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
             logging.info(f"🧹 Scan Context {scan_id} successfully evicted from Hive memory.")
 
 
@@ -337,14 +349,14 @@ class DistributedEventBus(EventBus):
     XYTHERION DISTRIBUTED NERVOUS SYSTEM
     Role: Bridges local agent events to the global Redis cluster.
     """
+
     def __init__(self, redis_url: str):
         super().__init__()
         self._redis_url = redis_url
         self.redis_client = None  # Initialized lazily in start()
         self.pubsub = None
         self.is_running = False
-        self._is_redis_online = None # Lazy check
-
+        self._is_redis_online = None  # Lazy check
 
     async def ping(self) -> bool:
         """Verifies Redis connectivity."""
@@ -358,12 +370,12 @@ class DistributedEventBus(EventBus):
             logger.debug("[Hive] Redis ping failed")
             return False
 
-
     async def start(self):
         """Activates the distributed bridge."""
         self.is_running = True
         try:
             from backend.core.redis_client import get_redis_client
+
             rc = await get_redis_client()
             self.redis_client = rc.client
             self.pubsub = self.redis_client.pubsub()
@@ -399,28 +411,29 @@ class DistributedEventBus(EventBus):
                     # Reset backoff and reconnect counter on successful message
                     backoff = 2.0
                     _reconnect_failures = 0
-                    if message['type'] == 'message':
+                    if message["type"] == "message":
                         try:
-                            raw_data = message['data']
+                            raw_data = message["data"]
                             # Extract signature if present (format: "signature|json")
                             signature = None
-                            if isinstance(raw_data, str) and '|' in raw_data:
-                                sep_idx = raw_data.index('|')
+                            if isinstance(raw_data, str) and "|" in raw_data:
+                                sep_idx = raw_data.index("|")
                                 signature = raw_data[:sep_idx]
-                                raw_data = raw_data[sep_idx + 1:]
+                                raw_data = raw_data[sep_idx + 1 :]
 
                             event_data = json.loads(raw_data)
 
                             # HMAC verification when key is configured
                             if _EVENT_BUS_HMAC_KEY:
-                                if not _verify_event_signature(raw_data, signature or ''):
+                                if not _verify_event_signature(raw_data, signature or ""):
                                     logging.warning(
                                         "[DistributedEventBus] HMAC verification failed — "
-                                        "dropping potentially tampered event")
+                                        "dropping potentially tampered event"
+                                    )
                                 continue
 
                             event = HiveEvent(**event_data)
-                            
+
                             # Local Broadcast
                             await super().publish(event)
                         except Exception as e:
@@ -430,9 +443,7 @@ class DistributedEventBus(EventBus):
             except Exception as e:
                 if not self.is_running:
                     break
-                logging.warning(
-                    "[DistributedEventBus] Listen loop error: %s — reconnecting in %.1fs",
-                    e, backoff)
+                logging.warning("[DistributedEventBus] Listen loop error: %s — reconnecting in %.1fs", e, backoff)
                 try:
                     await asyncio.sleep(backoff)
                 except asyncio.CancelledError:
@@ -445,30 +456,29 @@ class DistributedEventBus(EventBus):
                 if _reconnect_failures >= _REDIS_RECREATE_THRESHOLD:
                     try:
                         from backend.core.redis_client import get_redis_client
+
                         rc = await get_redis_client()
                         self.redis_client = rc.client
                         logging.info(
-                            "[DistributedEventBus] Refreshed Redis client "
-                            "after %d failed reconnects", _reconnect_failures)
+                            "[DistributedEventBus] Refreshed Redis client after %d failed reconnects",
+                            _reconnect_failures,
+                        )
                         _reconnect_failures = 0
                     except Exception as pool_err:
-                        logging.warning(
-                            "[DistributedEventBus] Client refresh failed: %s", pool_err)
+                        logging.warning("[DistributedEventBus] Client refresh failed: %s", pool_err)
                 # Attempt to re-subscribe
                 try:
                     self.pubsub = self.redis_client.pubsub()
                     await self.pubsub.subscribe("xytherion_events")
                     logging.info("[DistributedEventBus] Reconnected to Redis")
                 except Exception as re_err:
-                    logging.warning(
-                        "[DistributedEventBus] Reconnect failed: %s", re_err)
-
+                    logging.warning("[DistributedEventBus] Reconnect failed: %s", re_err)
 
     async def publish(self, event: HiveEvent):
         """Broadcasts local events to the global cluster and routes jobs with safety locking."""
         # 1. Local Broadcast (Memory-only sink always happens)
         await super().publish(event)
-        
+
         # 2. Global Broadcast (Resilient Redis Attempt)
         try:
             event_json = event.model_dump_json()
@@ -477,29 +487,27 @@ class DistributedEventBus(EventBus):
             signature = _sign_event(event_json)
             signed_payload = f"{signature}|{event_json}" if signature else event_json
             await self.redis_client.publish("xytherion_events", signed_payload)
-            
+
             # 3. WORKER ROUTING & SAFETY LOCKING (Async-Harden)
             if event.type == EventType.JOB_ASSIGNED:
                 task_id = event.payload.get("task_id", event.id)
                 lock_key = f"job_lock:{task_id}"
-                
+
                 # Check Redis connection or health
                 if await self.redis_client.set(lock_key, "LOCKED", nx=True, ex=3600):
                     # ROUTE A: Audit Layer
                     await self.redis_client.lpush("xytherion_audit_queue", event_json)
-                    
+
                     # ROUTE B: Work Queue
                     logging.info(f"🚀 [Hive] Routing Job {task_id} to global work queue.")
                     await self.redis_client.lpush("pending_tasks", event_json)
                 else:
                     logging.debug(f"[DistributedEventBus] Job {task_id} already locked.")
-                    
+
         except Exception as e:
             # V6-OMEGA Resilience: If Redis fails, we stop the global sync but keep the process alive
             err_type = type(e).__name__
             logging.warning(f"⚠️ [Hive] Distributed broadcast failed ({err_type}). Reverting to Local memory sink.")
-
-
 
 
 # --- 3. THE DNA (Base Agent) ---
@@ -520,6 +528,7 @@ class _HiveFacade:
         """Return all currently active agent instances."""
         try:
             from backend.core.orchestrator import HiveOrchestrator
+
             return list(HiveOrchestrator.active_agents.values())
         except Exception:
             return []
@@ -563,19 +572,20 @@ class BaseAgent:
     The template for all Hive Agents.
     Enforces a standard lifecycle: Wake -> Think -> Act.
     """
+
     def __init__(self, name: str, bus: EventBus):
         self.name = name
         self.bus = bus
-        self.db = db_manager # Distributed Intelligence Backbone
+        self.db = db_manager  # Distributed Intelligence Backbone
         self.active = False
         self.status = "IDLE"
         self._delegation_mgr = None  # Lazy-init via delegation_mgr property
-        
+
         # Health monitoring
         self._last_task_time = time.time()
         self._task_count = 0
         self._task_success_count = 0
-        
+
         # Self-awareness (optional)
         self.self_awareness = None
         self._init_self_awareness()
@@ -591,8 +601,8 @@ class BaseAgent:
         """
         try:
             from backend.core.feature_flags import get_feature_flags
-            from backend.core.self_awareness_module import SelfAwarenessModule
             from backend.core.self_awareness_config import SelfAwarenessConfig
+            from backend.core.self_awareness_module import SelfAwarenessModule
 
             flags = get_feature_flags()
             if not getattr(flags, "enable_self_awareness", False):
@@ -609,45 +619,43 @@ class BaseAgent:
         except Exception as e:
             logging.error(f"[BaseAgent] Failed to initialize self-awareness: {e}")
             self.self_awareness = None
-    
+
     async def start(self):
         """Wakes the agent up."""
         self.active = True
         self.status = "ACTIVE"
         self._agent_tasks = set()
-        
+
         # Task manager for agent background tasks
         self._task_manager = TaskManager(f"Agent-{self.name}")
-        
+
         # Ensure DB connections are active
         await self.db.initialize()
-        
+
         logging.info(f"🤖 {self.name} is ONLINE. Intelligence backbone synced.")
-        
+
         # Initialize self-awareness
         if self.self_awareness:
             await self.self_awareness.initialize()
-        
+
         # Subscribe to relevant events
         await self.setup()
-        
+
         # Announce presence
         # Don't track this publish, it's safe to fire-and-forget to bus, because bus tracks it
-        await self.bus.publish(HiveEvent(
-            type=EventType.AGENT_STATUS,
-            source=self.name,
-            payload={"status": "ONLINE"}
-        ))
-        
+        await self.bus.publish(HiveEvent(type=EventType.AGENT_STATUS, source=self.name, payload={"status": "ONLINE"}))
+
         # Start the internal thinking loop (if needed)
         task = self._task_manager.create_task(self.lifecycle(), name=f"lifecycle_{self.name}")
         self._agent_tasks.add(task)
         # Store primary task reference so the zombie sweep health check
         # can detect crashed agents (checks self._task.done()).
         self._task = task
-        
+
         # Start health reporting loop
-        health_task = self._task_manager.create_task(self._health_reporting_loop(), name=f"health_reporting_{self.name}")
+        health_task = self._task_manager.create_task(
+            self._health_reporting_loop(), name=f"health_reporting_{self.name}"
+        )
         self._agent_tasks.add(health_task)
         self._background_task = health_task
 
@@ -655,32 +663,33 @@ class BaseAgent:
         """Puts the agent to sleep."""
         self.active = False
         self.status = "OFFLINE"
-        
+
         # Shutdown self-awareness
         if self.self_awareness:
             await self.self_awareness.shutdown()
-        
+
         # Shutdown AI Engine if it exists (CortexEngine holds aiohttp session)
         for attr in ["cortex", "ai"]:
             engine = getattr(self, attr, None)
             if engine and hasattr(engine, "shutdown"):
                 await engine.shutdown()
-        
+
         # Cancel all tracked tasks
-        if hasattr(self, '_task_manager'):
+        if hasattr(self, "_task_manager"):
             await self._task_manager.cancel_all()
-            
+
         logging.info(f"💤 {self.name} is OFFLINE.")
-    
+
     async def _health_reporting_loop(self):
         """Report health metrics periodically."""
-        import psutil
         import time as time_module
-        
+
+        import psutil
+
         while self.active:
             try:
                 await asyncio.sleep(10)  # Report every 10 seconds
-                
+
                 # Calculate metrics.
                 #
                 # WHY: ``_last_task_time`` is the wall-clock time of the most
@@ -697,35 +706,38 @@ class BaseAgent:
                 # agents that mostly delegate. Genuine unresponsiveness is
                 # still detected by ``check_heartbeats`` (heartbeat_timeout).
                 idle_ms = (time_module.time() - self._last_task_time) * 1000
-                success_rate = self._task_success_count / self._task_count if self._task_count > 0 else 1.0
-                
+                self._task_success_count / self._task_count if self._task_count > 0 else 1.0
+
                 # Get resource usage
                 process = psutil.Process()
                 memory_mb = process.memory_info().rss / 1024 / 1024
                 cpu_percent = process.cpu_percent(interval=0.1)
-                
+
                 # Report to health monitor. ``idle=True`` tells the monitor
                 # this is a keep-alive sample, not a real per-task latency,
                 # so response_time alerts are suppressed for it. The numeric
                 # value is still recorded under ``idle_time_ms`` for
                 # diagnostics.
                 from backend.core.agent_health_monitor import health_monitor
-                health_monitor.report_metrics(self.name, {
-                    "idle_time_ms": idle_ms,
-                    "idle": True,
-                    "memory_mb": memory_mb,
-                    "cpu_percent": cpu_percent,
-                    "task_queue_depth": len(getattr(self, "_agent_tasks", []))
-                })
-                
+
+                health_monitor.report_metrics(
+                    self.name,
+                    {
+                        "idle_time_ms": idle_ms,
+                        "idle": True,
+                        "memory_mb": memory_mb,
+                        "cpu_percent": cpu_percent,
+                        "task_queue_depth": len(getattr(self, "_agent_tasks", [])),
+                    },
+                )
+
                 # Send heartbeat
                 health_monitor.report_heartbeat(self.name)
-                
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logging.error(f"[{self.name}] Health reporting error: {e}")
-    
 
     @property
     def delegation_mgr(self) -> "DelegationManager":
@@ -737,6 +749,7 @@ class BaseAgent:
         """
         if self._delegation_mgr is None:
             from backend.core.delegation_manager import DelegationManager
+
             self._delegation_mgr = DelegationManager()
         return self._delegation_mgr
 
@@ -744,12 +757,12 @@ class BaseAgent:
         self,
         objective: str,
         *,
-        agent_class: Optional[str] = None,
-        worker_specialty: Optional[str] = None,
+        agent_class: str | None = None,
+        worker_specialty: str | None = None,
         budget: int = 10,
         timeout: int = 30,
-        tools: Optional[List[str]] = None,
-        context: Optional[Dict[str, Any]] = None,
+        tools: list[str] | None = None,
+        context: dict[str, Any] | None = None,
     ) -> "ChildResult":
         """Delegate work to an isolated child worker.
 
@@ -773,6 +786,7 @@ class BaseAgent:
         - Parent blocks until child completes (or timeout)
         """
         from backend.core.delegation_manager import ChildSpec
+
         spec = ChildSpec(
             objective=objective,
             agent_class=agent_class or self.__class__.__name__,
@@ -787,6 +801,7 @@ class BaseAgent:
     def report_task_result(self, success: bool):
         """Report task execution result for health tracking."""
         import time as time_module
+
         self._task_count += 1
         if success:
             self._task_success_count += 1
@@ -800,7 +815,7 @@ class BaseAgent:
 
     async def lifecycle(self):
         """
-        The Agent's internal 'Heartbeat'. 
+        The Agent's internal 'Heartbeat'.
         Some agents react (Event-driven), others act (Loop-driven).
         """
         pass
@@ -817,15 +832,13 @@ class BaseAgent:
         Synchronous task execution for Defense API.
         Subclasses (Prism, Chi) should override this.
         """
-        from backend.core.protocol import ResultPacket, Vulnerability
-        
+
         # Default implementation - subclasses should override
         return ResultPacket(
-            job_id=packet.id if hasattr(packet, 'id') else "unknown",
+            job_id=packet.id if hasattr(packet, "id") else "unknown",
             source_agent=self.name,
             status="SAFE",
             vulnerabilities=[],
             execution_time_ms=0,
-            data={}
+            data={},
         )
-

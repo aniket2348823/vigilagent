@@ -1,7 +1,13 @@
 """Parser for naabu JSONL output."""
+
 from __future__ import annotations
-from pathlib import Path
+
+from typing import TYPE_CHECKING
+
 from backend.parsers.recon.base import ParsedEntity, safe_json_lines, safe_lines
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def parse_naabu_jsonl(path: Path | str) -> list[ParsedEntity]:
@@ -12,15 +18,23 @@ def parse_naabu_jsonl(path: Path | str) -> list[ParsedEntity]:
     for row in safe_json_lines(path):
         host = str(row.get("host", row.get("ip", ""))).strip()
         port = int(row.get("port", 0) or 0)
-        if not host or not port: continue
+        if not host or not port:
+            continue
         key = f"{host}:{port}"
-        if key in seen: continue
+        if key in seen:
+            continue
         seen.add(key)
         protocol = str(row.get("protocol", row.get("scheme", "tcp")))
-        entities.append(ParsedEntity(kind="open_port", label=key, confidence=0.95,
-            properties={"host": host, "port": port, "protocol": protocol,
-                         "tls": bool(row.get("tls", False))},
-            source_tool="naabu", phase="dns_infrastructure"))
+        entities.append(
+            ParsedEntity(
+                kind="open_port",
+                label=key,
+                confidence=0.95,
+                properties={"host": host, "port": port, "protocol": protocol, "tls": bool(row.get("tls", False))},
+                source_tool="naabu",
+                phase="dns_infrastructure",
+            )
+        )
 
     # Fallback to line-based output (host:port)
     if not entities:
@@ -30,11 +44,20 @@ def parse_naabu_jsonl(path: Path | str) -> list[ParsedEntity]:
                 host, port_str = parts
                 try:
                     port = int(port_str)
-                except ValueError: continue
+                except ValueError:
+                    continue
                 key = f"{host}:{port}"
-                if key in seen: continue
+                if key in seen:
+                    continue
                 seen.add(key)
-                entities.append(ParsedEntity(kind="open_port", label=key, confidence=0.9,
-                    properties={"host": host, "port": port, "protocol": "tcp"},
-                    source_tool="naabu", phase="dns_infrastructure"))
+                entities.append(
+                    ParsedEntity(
+                        kind="open_port",
+                        label=key,
+                        confidence=0.9,
+                        properties={"host": host, "port": port, "protocol": "tcp"},
+                        source_tool="naabu",
+                        phase="dns_infrastructure",
+                    )
+                )
     return entities

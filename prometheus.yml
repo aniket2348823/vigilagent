@@ -1,0 +1,55 @@
+# Prometheus configuration for Vigilagent
+# Scrapes the backend /metrics endpoint for Grafana dashboards.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Vigilagent backend — exposes Prometheus text format at /metrics
+  - job_name: "vigilagent"
+    metrics_path: "/metrics"
+    scheme: "http"
+    static_configs:
+      - targets: ["backend:8000"]
+        labels:
+          service: "vigilagent"
+          environment: "production"
+
+  # Redis exporter — scrapes Redis metrics via redis_exporter sidecar
+  - job_name: "redis"
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+        labels:
+          service: "redis"
+
+  # Grafana — scrapes Grafana's built-in /metrics endpoint
+  - job_name: "grafana"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["grafana:3000"]
+        labels:
+          service: "grafana"
+
+  # Alertmanager — scrapes Alertmanager's built-in /metrics endpoint
+  - job_name: "alertmanager"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["alertmanager:9093"]
+        labels:
+          service: "alertmanager"
+
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: "prometheus"
+
+rule_files:
+  - "alerting/rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]

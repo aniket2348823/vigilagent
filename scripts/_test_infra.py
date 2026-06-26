@@ -18,7 +18,8 @@ import sys
 import time
 
 # Force test mode hooks off — we're testing real infra.
-os.environ.pop("VULAGENT_TEST_MODE", None)
+os.environ.pop("VIGILAGENT_TEST_MODE", None)
+os.environ.pop("VULAGENT_TEST_MODE", None)  # legacy compat
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:

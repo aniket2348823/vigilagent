@@ -1,57 +1,132 @@
-# Python
+# ══════════════════════════════════════════════════════════════════
+# Vigilagent .gitignore
+# ══════════════════════════════════════════════════════════════════
+
+# ── Python ────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.pyo
-.pytest_cache/
 *.pyc
+*.egg-info/
+*.egg
+.eggs/
+*.whl
 
-# Node
+# ── Python Virtual Environments ──────────────────────────────────
+.venv/
+.venv_win/
+venv/
+env/
+
+# ── Python Tooling Caches ────────────────────────────────────────
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+htmlcov/
+.tox/
+
+# ── Node.js ──────────────────────────────────────────────────────
 node_modules/
 .node/
 local_node/
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# ── Build Artifacts ──────────────────────────────────────────────
 dist/
 build/
 
-# Test artifacts
-scan_states/
-logs/
-*.log
-
-# Build
-dist/
-build/
-
-# IDE
+# ── IDE / Editor ─────────────────────────────────────────────────
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
 
-# OS
+# ── OS Generated ─────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+Desktop.ini
+nul
 
-# Archives
-.archive/
-
-# Environment
+# ── Environment Files (contain secrets) ──────────────────────────
 .env
 .env.local
 .env.*.local
 
-# Generated
-graphify-out/
-*.generated.json
+# ── Runtime Data (generated during scans) ────────────────────────
+stats.json
+stats.json.tmp
+keyring.json
+user_config.json
+skills-lock.json
+.session
 
-# Cache
+# ── Brain (AI-generated runtime data — large, scan-specific) ────
+brain/episodes/
+brain/healing/
+brain/health/
+brain/improvement/
+brain/exploit_vectors.json
+brain/semantic_patterns.json
+brain/memory.json
+brain/learned_patterns.json
+brain/learning_metrics.json
+brain/notifications.json
+
+# ── Scan Data (generated per-scan, can be huge) ──────────────────
+data/scans/
+data/backups/
+data/graph.json
+scan_states/
+
+# ── Reports (generated PDFs and test outputs) ────────────────────
+reports/*.pdf
+reports/benchmark-tests/
+reports/torture-tests/
+reports/runtime/
+reports/uuid-reports/
+reports/named-reports/
+
+# ── Logs ─────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Graphify (knowledge graph build output) ──────────────────────
+graphify-out/
+
+# ── Browser Data (Playwright Chromium binaries, ~500MB) ──────────
+.browsers/
+
+# ── Recon Tool Binaries (compiled Go/Rust .exe files) ────────────
+tools/recon_bin/
+
+# ── Docker Volumes ───────────────────────────────────────────────
+docker/data/
+docker/logs/
+
+# ── Vite Temp Files ──────────────────────────────────────────────
+vite.config.js.timestamp-*
+
+# ── Monitoring (generated dashboards/state) ──────────────────────
+grafana/data/
+
+# ── Generated Files ──────────────────────────────────────────────
+*.generated.json
+*.pid
+
+# ── Archives ─────────────────────────────────────────────────────
+.archive/
+
+# ── Temp Scripts ─────────────────────────────────────────────────
+*.ps1
+
+# ── Cache ────────────────────────────────────────────────────────
 .cache/
 .parcel-cache/
 .eslintcache
-
-# Local Runtime Data
-brain/episodes/*.json
-!brain/episodes/test_scan.json
-brain/healing/
-data/scans/
-.browsers/
-.session
-vite.config.js.timestamp-*

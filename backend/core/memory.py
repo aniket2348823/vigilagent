@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -11,6 +12,7 @@ from typing import Any
 # fcntl is POSIX-only; on Windows file locking is best-effort (no advisory locks)
 try:
     import fcntl
+
     _HAS_FCNTL = True
 except ImportError:
     _HAS_FCNTL = False
@@ -83,10 +85,8 @@ class DualStoreMemory:
         except Exception as exc:
             logger.warning("DualStoreMemory: write to %s failed: %s", path, exc)
             # Clean up temp file on failure
-            try:
+            with contextlib.suppress(Exception):
                 tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
 
     def _episode_file(self, scan_id: str) -> Path:
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", scan_id or "GLOBAL")
@@ -100,8 +100,10 @@ class DualStoreMemory:
         # FIX: Log when truncation occurs instead of silently losing data
         if len(rows) > 1000:
             logger.info(
-                "DualStoreMemory: episode %s hit cap (had %d, keeping 1000). "
-                "Consider archiving old episodes.", scan_id, len(rows))
+                "DualStoreMemory: episode %s hit cap (had %d, keeping 1000). Consider archiving old episodes.",
+                scan_id,
+                len(rows),
+            )
         self._write_list(path, rows[-1000:])
 
     async def remember_episode(self, scan_id: str, event: dict[str, Any]) -> None:
@@ -113,8 +115,9 @@ class DualStoreMemory:
         # FIX: Log when truncation occurs instead of silently losing data
         if len(rows) > 5000:
             logger.info(
-                "DualStoreMemory: semantic hit cap (had %d, keeping 5000). "
-                "Consider pruning low-confidence patterns.", len(rows))
+                "DualStoreMemory: semantic hit cap (had %d, keeping 5000). Consider pruning low-confidence patterns.",
+                len(rows),
+            )
         self._write_list(self.semantic_file, rows[-5000:])
 
     async def remember_semantic(self, record: dict[str, Any]) -> None:
@@ -122,11 +125,18 @@ class DualStoreMemory:
 
     def _remember_notification_sync(self, scan_id: str, message: str, payload: dict[str, Any] | None = None) -> None:
         rows = self._read_list(self.notifications_file)
-        rows.append({"timestamp": time.time(), "scan_id": scan_id, "message": message, "payload": payload or {}})
+        new_entry = {"timestamp": time.time(), "scan_id": scan_id, "message": message, "payload": payload or {}}
+        # Dedup: skip if a notification with the same scan_id + job_id already exists
+        new_job_id = (payload or {}).get("job_id")
+        if new_job_id:
+            for existing in rows:
+                if existing.get("scan_id") == scan_id and (existing.get("payload") or {}).get("job_id") == new_job_id:
+                    logger.debug("DualStoreMemory: duplicate notification for job %s — skipping", new_job_id)
+                    return
+        rows.append(new_entry)
         # FIX: Log when truncation occurs instead of silently losing data
         if len(rows) > 500:
-            logger.info(
-                "DualStoreMemory: notifications hit cap (had %d, keeping 500).", len(rows))
+            logger.info("DualStoreMemory: notifications hit cap (had %d, keeping 500).", len(rows))
         self._write_list(self.notifications_file, rows[-500:])
 
     async def remember_notification(self, scan_id: str, message: str, payload: dict[str, Any] | None = None) -> None:
@@ -142,7 +152,9 @@ class DualStoreMemory:
     async def pop_notifications(self, scan_id: str) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._pop_notifications_sync, scan_id)
 
-    def _recall_semantic_sync(self, query_vector: list[float], top_k: int = 3, threshold: float = 0.3) -> list[dict[str, Any]]:
+    def _recall_semantic_sync(
+        self, query_vector: list[float], top_k: int = 3, threshold: float = 0.3
+    ) -> list[dict[str, Any]]:
         rows = self._read_list(self.semantic_file)
         scored = []
         for row in rows:
@@ -152,7 +164,9 @@ class DualStoreMemory:
         scored.sort(key=lambda item: item[0], reverse=True)
         return [{**row, "similarity": score} for score, row in scored[:top_k]]
 
-    async def recall_semantic(self, query_vector: list[float], top_k: int = 3, threshold: float = 0.3) -> list[dict[str, Any]]:
+    async def recall_semantic(
+        self, query_vector: list[float], top_k: int = 3, threshold: float = 0.3
+    ) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._recall_semantic_sync, query_vector, top_k, threshold)
 
 

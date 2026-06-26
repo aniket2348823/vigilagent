@@ -4,11 +4,12 @@ Skill catalog + metadata model (Architecture §5.3.1, §5.3.6)
 Normalized metadata extracted from every skill (Architecture §5.3.1) and an
 in-memory catalog that caches it. Source skill files remain read-only.
 """
+
 from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from backend.skills.policy import PromotionState, RiskClass
 
@@ -16,12 +17,13 @@ from backend.skills.policy import PromotionState, RiskClass
 @dataclass
 class SkillMeta:
     """Normalized skill metadata (Architecture §5.3.1)."""
+
     skill_id: str
     name: str
     goal: str = ""
-    domain: str = "uncategorized"          # see classifier domains (§5.3.2)
+    domain: str = "uncategorized"  # see classifier domains (§5.3.2)
     description: str = ""
-    source_path: str = ""                  # read-only source location
+    source_path: str = ""  # read-only source location
     # Capability descriptors
     required_tools: list[str] = field(default_factory=list)
     required_files: list[str] = field(default_factory=list)
@@ -100,7 +102,7 @@ class SkillCatalog:
         with self._lock:
             self._skills[meta.skill_id] = meta
 
-    def get(self, skill_id: str) -> Optional[SkillMeta]:
+    def get(self, skill_id: str) -> SkillMeta | None:
         with self._lock:
             return self._skills.get(skill_id)
 
@@ -115,8 +117,7 @@ class SkillCatalog:
     def by_agent(self, agent: str) -> list[SkillMeta]:
         a = agent.lower()
         with self._lock:
-            return [s for s in self._skills.values()
-                    if any(a == t.lower() for t in s.agent_targets)]
+            return [s for s in self._skills.values() if any(a == t.lower() for t in s.agent_targets)]
 
     def by_risk(self, risk: RiskClass) -> list[SkillMeta]:
         with self._lock:

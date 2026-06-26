@@ -14,10 +14,13 @@ verify install state regardless of ownership.
 Binaries resolve from PATH first, then the project-local recon bin
 (tools/recon_bin), then ALPHA_TOOL_ROOT (D:\\projects), Go bin, and pip Scripts.
 """
+
 from __future__ import annotations
+
 import logging
 import shutil
 from pathlib import Path
+
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -25,48 +28,64 @@ logger = logging.getLogger(__name__)
 
 RECON_TOOLS = {
     # ── Phase 1: Passive Intelligence ──────────────────────────────────────
-    "subfinder":        {"phase": "passive_intelligence",    "binary": "subfinder",         "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"]},
-    "amass":            {"phase": "passive_intelligence",    "binary": "amass",             "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"]},
-    "assetfinder":      {"phase": "passive_intelligence",    "binary": "assetfinder",       "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"]},
-    "github-subdomains":{"phase": "passive_intelligence",    "binary": "github-subdomains", "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"]},
-    "gau":              {"phase": "passive_intelligence",    "binary": "gau",               "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"]},
-    "waybackurls":      {"phase": "passive_intelligence",    "binary": "waybackurls",       "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"]},
-    "cloudlist":        {"phase": "passive_intelligence",    "binary": "cloudlist",         "modes": ["STANDARD", "AGGRESSIVE"]},
-    "spiderfoot":       {"phase": "passive_intelligence",    "binary": "python",            "modes": ["AGGRESSIVE"]},
+    "subfinder": {
+        "phase": "passive_intelligence",
+        "binary": "subfinder",
+        "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"],
+    },
+    "amass": {"phase": "passive_intelligence", "binary": "amass", "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"]},
+    "assetfinder": {
+        "phase": "passive_intelligence",
+        "binary": "assetfinder",
+        "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"],
+    },
+    "github-subdomains": {
+        "phase": "passive_intelligence",
+        "binary": "github-subdomains",
+        "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"],
+    },
+    "gau": {"phase": "passive_intelligence", "binary": "gau", "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"]},
+    "waybackurls": {
+        "phase": "passive_intelligence",
+        "binary": "waybackurls",
+        "modes": ["PASSIVE_ONLY", "STANDARD", "AGGRESSIVE"],
+    },
+    "cloudlist": {"phase": "passive_intelligence", "binary": "cloudlist", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "spiderfoot": {"phase": "passive_intelligence", "binary": "python", "modes": ["AGGRESSIVE"]},
     # ── Phase 2: DNS & Infrastructure ──────────────────────────────────────
-    "dnsx":         {"phase": "dns_infrastructure",      "binary": "dnsx",         "modes": ["STANDARD", "AGGRESSIVE"]},
-    "shuffledns":   {"phase": "dns_infrastructure",      "binary": "shuffledns",   "modes": ["AGGRESSIVE"]},
-    "puredns":      {"phase": "dns_infrastructure",      "binary": "puredns",      "modes": ["AGGRESSIVE"]},
-    "cdncheck":     {"phase": "dns_infrastructure",      "binary": "cdncheck",     "modes": ["STANDARD", "AGGRESSIVE"]},
-    "naabu":        {"phase": "dns_infrastructure",      "binary": "naabu",        "modes": ["STANDARD", "AGGRESSIVE"]},
-    "masscan":      {"phase": "dns_infrastructure",      "binary": "masscan",      "modes": ["AGGRESSIVE"]},
-    "nmap":         {"phase": "dns_infrastructure",      "binary": "nmap",         "modes": ["AGGRESSIVE"]},
-    "tlsx":         {"phase": "dns_infrastructure",      "binary": "tlsx",         "modes": ["STANDARD", "AGGRESSIVE"]},
-    "testssl":      {"phase": "dns_infrastructure",      "binary": "testssl.sh",   "modes": ["AGGRESSIVE"]},
+    "dnsx": {"phase": "dns_infrastructure", "binary": "dnsx", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "shuffledns": {"phase": "dns_infrastructure", "binary": "shuffledns", "modes": ["AGGRESSIVE"]},
+    "puredns": {"phase": "dns_infrastructure", "binary": "puredns", "modes": ["AGGRESSIVE"]},
+    "cdncheck": {"phase": "dns_infrastructure", "binary": "cdncheck", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "naabu": {"phase": "dns_infrastructure", "binary": "naabu", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "masscan": {"phase": "dns_infrastructure", "binary": "masscan", "modes": ["AGGRESSIVE"]},
+    "nmap": {"phase": "dns_infrastructure", "binary": "nmap", "modes": ["AGGRESSIVE"]},
+    "tlsx": {"phase": "dns_infrastructure", "binary": "tlsx", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "testssl": {"phase": "dns_infrastructure", "binary": "testssl.sh", "modes": ["AGGRESSIVE"]},
     # ── Phase 3: HTTP & Browser Intelligence ───────────────────────────────
     # NOTE: httpx, whatweb, wafw00f moved to SIGMA_TOOLS (Sigma-exclusive).
-    "httprobe":     {"phase": "http_browser_intelligence","binary": "httprobe",    "modes": ["STANDARD", "AGGRESSIVE"]},
-    "katana":       {"phase": "http_browser_intelligence","binary": "katana",      "modes": ["STANDARD", "AGGRESSIVE"]},
-    "gospider":     {"phase": "http_browser_intelligence","binary": "gospider",    "modes": ["STANDARD", "AGGRESSIVE"]},
-    "hakrawler":    {"phase": "http_browser_intelligence","binary": "hakrawler",   "modes": ["STANDARD", "AGGRESSIVE"]},
-    "linkfinder":   {"phase": "http_browser_intelligence","binary": "python",      "modes": ["STANDARD", "AGGRESSIVE"]},
-    "secretfinder": {"phase": "http_browser_intelligence","binary": "python",      "modes": ["STANDARD", "AGGRESSIVE"]},
-    "arjun":        {"phase": "http_browser_intelligence","binary": "arjun",       "modes": ["STANDARD", "AGGRESSIVE"]},
-    "paramspider":  {"phase": "http_browser_intelligence","binary": "python",      "modes": ["STANDARD", "AGGRESSIVE"]},
+    "httprobe": {"phase": "http_browser_intelligence", "binary": "httprobe", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "katana": {"phase": "http_browser_intelligence", "binary": "katana", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "gospider": {"phase": "http_browser_intelligence", "binary": "gospider", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "hakrawler": {"phase": "http_browser_intelligence", "binary": "hakrawler", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "linkfinder": {"phase": "http_browser_intelligence", "binary": "python", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "secretfinder": {"phase": "http_browser_intelligence", "binary": "python", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "arjun": {"phase": "http_browser_intelligence", "binary": "arjun", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "paramspider": {"phase": "http_browser_intelligence", "binary": "python", "modes": ["STANDARD", "AGGRESSIVE"]},
     # ── Phase 4: Directory & Route Discovery ───────────────────────────────
-    "feroxbuster":  {"phase": "directory_route_discovery","binary": "feroxbuster", "modes": ["STANDARD", "AGGRESSIVE"]},
-    "ffuf":         {"phase": "directory_route_discovery","binary": "ffuf",        "modes": ["STANDARD", "AGGRESSIVE"]},
-    "dirsearch":    {"phase": "directory_route_discovery","binary": "python",      "modes": ["STANDARD", "AGGRESSIVE"]},
-    "gobuster":     {"phase": "directory_route_discovery","binary": "gobuster",    "modes": ["STANDARD", "AGGRESSIVE"]},
+    "feroxbuster": {"phase": "directory_route_discovery", "binary": "feroxbuster", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "ffuf": {"phase": "directory_route_discovery", "binary": "ffuf", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "dirsearch": {"phase": "directory_route_discovery", "binary": "python", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "gobuster": {"phase": "directory_route_discovery", "binary": "gobuster", "modes": ["STANDARD", "AGGRESSIVE"]},
     # ── Phase 5: API Reconnaissance ────────────────────────────────────────
-    "kiterunner":   {"phase": "api_reconnaissance",      "binary": "kr",           "modes": ["STANDARD", "AGGRESSIVE"]},
-    "inql":         {"phase": "api_reconnaissance",      "binary": "python",       "modes": ["AGGRESSIVE"]},
+    "kiterunner": {"phase": "api_reconnaissance", "binary": "kr", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "inql": {"phase": "api_reconnaissance", "binary": "python", "modes": ["AGGRESSIVE"]},
     # ── Phase 6: Visual Documentation ──────────────────────────────────────
-    "gowitness":    {"phase": "visual_documentation",    "binary": "gowitness",    "modes": ["STANDARD", "AGGRESSIVE"]},
-    "aquatone":     {"phase": "visual_documentation",    "binary": "aquatone",     "modes": ["STANDARD", "AGGRESSIVE"]},
+    "gowitness": {"phase": "visual_documentation", "binary": "gowitness", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "aquatone": {"phase": "visual_documentation", "binary": "aquatone", "modes": ["STANDARD", "AGGRESSIVE"]},
     # ── Phase 7: Template Validation ───────────────────────────────────────
     # NOTE: nuclei, dalfox moved to SIGMA_TOOLS (Sigma-exclusive).
-    "interactsh":   {"phase": "template_validation",     "binary": "interactsh-client", "modes": ["AGGRESSIVE"]},
+    "interactsh": {"phase": "template_validation", "binary": "interactsh-client", "modes": ["AGGRESSIVE"]},
 }
 
 
@@ -77,12 +96,22 @@ RECON_TOOLS = {
 # ═══════════════════════════════════════════════════════════════════════════════
 SIGMA_TOOLS = {
     # ── Vulnerability Validation (Sigma §5.2, §29.4) ──────────────────────
-    "nuclei":       {"phase": "sigma_validation",        "binary": "nuclei",       "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
-    "dalfox":       {"phase": "sigma_validation",        "binary": "dalfox",       "modes": ["AGGRESSIVE"],             "owner": "sigma"},
+    "nuclei": {"phase": "sigma_validation", "binary": "nuclei", "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
+    "dalfox": {"phase": "sigma_validation", "binary": "dalfox", "modes": ["AGGRESSIVE"], "owner": "sigma"},
     # ── Fingerprinting & WAF Detection (Sigma §5.2) ───────────────────────
-    "httpx":        {"phase": "sigma_fingerprint",       "binary": "httpx",        "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
-    "whatweb":      {"phase": "sigma_fingerprint",       "binary": "whatweb",      "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
-    "wafw00f":      {"phase": "sigma_fingerprint",       "binary": "wafw00f",      "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
+    "httpx": {"phase": "sigma_fingerprint", "binary": "httpx", "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
+    "whatweb": {
+        "phase": "sigma_fingerprint",
+        "binary": "whatweb",
+        "modes": ["STANDARD", "AGGRESSIVE"],
+        "owner": "sigma",
+    },
+    "wafw00f": {
+        "phase": "sigma_fingerprint",
+        "binary": "wafw00f",
+        "modes": ["STANDARD", "AGGRESSIVE"],
+        "owner": "sigma",
+    },
 }
 
 # Combined registry for availability lookups (all 39 tools).
@@ -114,6 +143,7 @@ def check_tool_availability(name: str) -> dict:
     # install. This is the preferred backend for Linux-native tools on Windows.
     try:
         from backend.tools.recon.docker_runtime import DOCKER_ALL_TOOLS, docker_recon_ready
+
         if name in DOCKER_ALL_TOOLS and docker_recon_ready():
             return {"installed": True, "path": "docker://vigilagent-recon", "source": "docker"}
     except Exception as e:
@@ -130,19 +160,23 @@ def check_tool_availability(name: str) -> dict:
             return {"installed": True, "path": str(cand), "source": "project_bin"}
 
     # 3. Tool root (D:\projects): binary, binary.exe, binary/binary[.exe]
-    for cand in (tool_root / binary, tool_root / f"{binary}.exe",
-                 tool_root / binary / binary, tool_root / binary / f"{binary}.exe"):
+    for cand in (
+        tool_root / binary,
+        tool_root / f"{binary}.exe",
+        tool_root / binary / binary,
+        tool_root / binary / f"{binary}.exe",
+    ):
         if cand.exists():
             return {"installed": True, "path": str(cand), "source": "tool_root"}
 
     # 4. Go bin, Python Scripts dir, user-local bins
     import os
+
     _home = Path(os.path.expanduser("~"))
     go_bin = _home / "go" / "bin"
     local_bin = _home / ".local" / "bin"
     user_tools = _home / "tools"
-    for cand in (go_bin / binary, go_bin / f"{binary}.exe",
-                 local_bin / binary, local_bin / f"{binary}.exe"):
+    for cand in (go_bin / binary, go_bin / f"{binary}.exe", local_bin / binary, local_bin / f"{binary}.exe"):
         if cand.exists():
             return {"installed": True, "path": str(cand), "source": "user_bin"}
     # Also check ~/tools/<ToolName>/<binary> for git-cloned tools
@@ -152,6 +186,7 @@ def check_tool_availability(name: str) -> dict:
                 return {"installed": True, "path": str(cand), "source": "user_tools"}
     try:
         import sysconfig
+
         scripts_dir = Path(sysconfig.get_path("scripts"))
         for cand in (scripts_dir / binary, scripts_dir / f"{binary}.exe"):
             if cand.exists():
@@ -164,18 +199,38 @@ def check_tool_availability(name: str) -> dict:
         # Check both tool_root (D:\projects), project_bin, and user ~/tools/
         _user_tools = Path(os.path.expanduser("~")) / "tools"
         script_map = {
-            "linkfinder": [tool_root / "LinkFinder" / "linkfinder.py", project_bin / "LinkFinder" / "linkfinder.py",
-                           _user_tools / "LinkFinder" / "linkfinder.py"],
-            "secretfinder": [tool_root / "SecretFinder" / "SecretFinder.py", project_bin / "SecretFinder" / "SecretFinder.py",
-                              _user_tools / "SecretFinder" / "SecretFinder.py"],
-            "dirsearch": [tool_root / "dirsearch" / "dirsearch.py", project_bin / "dirsearch" / "dirsearch.py",
-                           _user_tools / "dirsearch" / "dirsearch.py", Path("/usr/local/bin/dirsearch")],
-            "inql": [tool_root / "inql" / "inql.py", project_bin / "inql" / "inql.py",
-                      _user_tools / "inql" / "inql.py"],
-            "spiderfoot": [tool_root / "spiderfoot" / "sf.py", project_bin / "spiderfoot" / "sf.py",
-                            _user_tools / "spiderfoot" / "sf.py", _user_tools / "spiderfoot" / "spiderfoot"],
-            "paramspider": [tool_root / "ParamSpider" / "paramspider.py", project_bin / "ParamSpider" / "paramspider.py",
-                             _user_tools / "ParamSpider" / "paramspider.py"],
+            "linkfinder": [
+                tool_root / "LinkFinder" / "linkfinder.py",
+                project_bin / "LinkFinder" / "linkfinder.py",
+                _user_tools / "LinkFinder" / "linkfinder.py",
+            ],
+            "secretfinder": [
+                tool_root / "SecretFinder" / "SecretFinder.py",
+                project_bin / "SecretFinder" / "SecretFinder.py",
+                _user_tools / "SecretFinder" / "SecretFinder.py",
+            ],
+            "dirsearch": [
+                tool_root / "dirsearch" / "dirsearch.py",
+                project_bin / "dirsearch" / "dirsearch.py",
+                _user_tools / "dirsearch" / "dirsearch.py",
+                Path("/usr/local/bin/dirsearch"),
+            ],
+            "inql": [
+                tool_root / "inql" / "inql.py",
+                project_bin / "inql" / "inql.py",
+                _user_tools / "inql" / "inql.py",
+            ],
+            "spiderfoot": [
+                tool_root / "spiderfoot" / "sf.py",
+                project_bin / "spiderfoot" / "sf.py",
+                _user_tools / "spiderfoot" / "sf.py",
+                _user_tools / "spiderfoot" / "spiderfoot",
+            ],
+            "paramspider": [
+                tool_root / "ParamSpider" / "paramspider.py",
+                project_bin / "ParamSpider" / "paramspider.py",
+                _user_tools / "ParamSpider" / "paramspider.py",
+            ],
             # NOTE: testssl has binary="testssl.sh" (not python), so it's
             # resolved by the user_tools.iterdir() loop in step 4 above.
         }
@@ -185,4 +240,3 @@ def check_tool_availability(name: str) -> dict:
         return {"installed": False, "reason": f"script_not_found:{name}"}
 
     return {"installed": False, "reason": f"binary_not_in_path:{binary}"}
-

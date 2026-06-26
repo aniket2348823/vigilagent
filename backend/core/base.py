@@ -7,6 +7,7 @@ BaseArsenalModule has been extracted to backend.core.arsenal_base.
 This file re-exports BaseArsenalModule so existing module imports
 (from backend.core.base import BaseArsenalModule) continue to work.
 """
+
 from backend.core.arsenal_base import BaseArsenalModule  # noqa: F401
 
 # NOTE: The BaseAgent class that was here has been REMOVED.

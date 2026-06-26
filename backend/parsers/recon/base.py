@@ -1,28 +1,35 @@
 """
 Base types and utilities shared by all recon parsers.
 """
+
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
-from urllib.parse import urlparse, parse_qsl
+from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qsl, urlparse
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # Module-level regex cache — base.is_valid_domain / is_ip_address are called
 # from every recon parser per emitted host/IP, so compiling these once shaves
 # real time off bulk parses.
 # FIX: Require minimum 2 chars per label to reject 'a.com' as valid domain,
 # but still accept 2-label domains like example.com
-_DOMAIN_RE = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$')
-_IPV4_RE = re.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
-_IPV6_HEX_RE = re.compile(r'^[0-9a-fA-F:]+$')
+_DOMAIN_RE = re.compile(
+    r"^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$"
+)
+_IPV4_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+_IPV6_HEX_RE = re.compile(r"^[0-9a-fA-F:]+$")
 
 
 @dataclass
 class ParsedEntity:
     """Normalized output entity from any parser."""
+
     kind: str  # subdomain, ip, endpoint, port, service, parameter, secret, cloud_asset, certificate, vulnerability_candidate, oob_interaction, visual_artifact
     label: str
     confidence: float = 0.5
@@ -104,9 +111,7 @@ def is_ip_address(value: str) -> bool:
     if _IPV4_RE.match(value):
         return True
     # IPv6 simplified
-    if ":" in value and _IPV6_HEX_RE.match(value):
-        return True
-    return False
+    return bool(":" in value and _IPV6_HEX_RE.match(value))
 
 
 def redact_secret(value: str, visible_chars: int = 8) -> str:

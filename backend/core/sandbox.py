@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shlex
 import shutil
 import uuid
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import gettempdir
 
-from backend.core.guard_layer import guard_layer
 from backend.core.queue import command_lane
 from backend.core.stdout_watchdog import watch_output
 
 logger = logging.getLogger(__name__)
 
 temp_workspace_root = Path(os.getenv("VIGILAGENT_WORKSPACE_ROOT", Path(gettempdir()) / "vigilagent-workspaces"))
+
 
 class TempWorkspace:
     """
@@ -25,6 +25,7 @@ class TempWorkspace:
     cleanup of artifacts when the context manager exits, mirroring OpenClaw's
     private-temp-workspace.ts.
     """
+
     def __init__(self, prefix: str = "workspace"):
         self.workspace_id = f"{prefix}-{uuid.uuid4().hex[:12]}"
         self.path = temp_workspace_root / self.workspace_id
@@ -50,7 +51,7 @@ class TempWorkspace:
         # Prevent path traversal outside workspace
         if not str(file_path.resolve()).startswith(str(self.path.resolve())):
             raise PermissionError(f"Path traversal attempt: {name}")
-            
+
         mode = "wb" if isinstance(content, bytes) else "w"
         encoding = None if isinstance(content, bytes) else "utf-8"
         with open(file_path, mode, encoding=encoding) as f:
@@ -62,12 +63,12 @@ class TempWorkspace:
         file_path = self.path / name
         if not str(file_path.resolve()).startswith(str(self.path.resolve())):
             raise PermissionError(f"Path traversal attempt: {name}")
-            
+
         if not file_path.exists():
             raise FileNotFoundError(f"File not found in workspace: {name}")
-            
+
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 return f.read()
         except UnicodeDecodeError:
             with open(file_path, "rb") as f:
@@ -93,7 +94,9 @@ class DockerSandbox:
         cpus: str = "1.0",
         network: str = "none",
     ):
-        self.image = image or os.getenv("VIGILAGENT_SANDBOX_IMAGE", os.getenv("VULAGENT_SANDBOX_IMAGE", "python:3.12-slim"))
+        self.image = image or os.getenv(
+            "VIGILAGENT_SANDBOX_IMAGE", "python:3.12-slim"
+        )
         self.workspace_root = Path(workspace_root)
         self.memory = memory
         self.cpus = cpus
@@ -112,19 +115,31 @@ class DockerSandbox:
         # sandbox itself IS the security boundary. Only check for control
         # tokens that could break out of the sandbox.
         from backend.core.content_boundary import content_boundary
+
         # FIX: Use the sanitized result instead of discarding it
         sanitized_command = content_boundary.sanitize_control_tokens(command)
         workspace = self.workspace_for(engagement_id)
-        container_name = f"vulagent-{engagement_id.lower()}-{uuid.uuid4().hex[:8]}"
+        container_name = f"vigilagent-{engagement_id.lower()}-{uuid.uuid4().hex[:8]}"
         docker_cmd = [
-            "docker", "run", "--rm", "--name", container_name,
-            "--network", self.network,
-            "--memory", self.memory,
-            "--cpus", self.cpus,
-            "-v", f"{workspace}:/workspace",
-            "-w", "/workspace",
+            "docker",
+            "run",
+            "--rm",
+            "--name",
+            container_name,
+            "--network",
+            self.network,
+            "--memory",
+            self.memory,
+            "--cpus",
+            self.cpus,
+            "-v",
+            f"{workspace}:/workspace",
+            "-w",
+            "/workspace",
             self.image,
-            "sh", "-lc", sanitized_command,
+            "sh",
+            "-lc",
+            sanitized_command,
         ]
         try:
             async with command_lane.slot():
@@ -137,10 +152,12 @@ class DockerSandbox:
             stdout = stdout_b.decode("utf-8", errors="replace")
             stderr = stderr_b.decode("utf-8", errors="replace")
             watched = await watch_output(stdout)
-            return SandboxResult(proc.returncode or 0, watched.content, stderr, command, container_name, watched.truncated)
+            return SandboxResult(
+                proc.returncode or 0, watched.content, stderr, command, container_name, watched.truncated
+            )
         except FileNotFoundError:
             return SandboxResult(127, "", "Docker executable not found; sandbox execution unavailable.", command)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return SandboxResult(124, "", f"Sandbox command timed out after {timeout}s.", command, container_name)
 
 

@@ -4,11 +4,12 @@ Role: Template for all attack/scan modules (weapons).
 Extracted from base.py to eliminate the duplicate BaseAgent class.
 The canonical BaseAgent lives in hive.py.
 """
+
 import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, List
+from typing import Any
 
 from backend.core.protocol import JobPacket, TaskTarget, Vulnerability
 
@@ -31,15 +32,18 @@ class BaseArsenalModule(ABC):
         pass
 
     @abstractmethod
-    async def analyze_responses(self, interactions: list[tuple[TaskTarget, str]], packet: JobPacket) -> list[Vulnerability]:
+    async def analyze_responses(
+        self, interactions: list[tuple[TaskTarget, str]], packet: JobPacket
+    ) -> list[Vulnerability]:
         """OBSERVE. Pure string evaluation of all generated payloads."""
         pass
 
     @property
     def cortex(self):
         """Lazy-load CortexEngine for hybrid AI in arsenal modules."""
-        if not hasattr(self, '_cortex') or self._cortex is None:
-            from backend.ai.cortex import CortexEngine, get_cortex_engine
+        if not hasattr(self, "_cortex") or self._cortex is None:
+            from backend.ai.cortex import get_cortex_engine
+
             self._cortex = get_cortex_engine()
         return self._cortex
 
@@ -56,20 +60,22 @@ class BaseArsenalModule(ABC):
         if url.startswith("file:///"):
             path = url.replace("file:///", "").replace("%20", " ")
             try:
-                with open(path, 'r', encoding='utf-8') as f:
+                with open(path, encoding="utf-8") as f:
                     return await asyncio.wait_for(asyncio.to_thread(f.read), timeout=10)
             except Exception as e:
                 return f"Error reading file: {e}"
         else:
             import aiohttp
+
             from backend.core.content_boundary import content_boundary
             from backend.core.proxy import network_interceptor
+
             try:
                 async with aiohttp.ClientSession() as session:
                     response = await network_interceptor.fetch("GET", url, session=session, timeout=timeout)
-                    body = response.body[:5 * 1024 * 1024]
+                    body = response.body[: 5 * 1024 * 1024]
                     return content_boundary.wrap_http_response(response.status, response.headers, body, response.url)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return f"Error: Request timed out after {timeout}s (Possible Tarpit)"
             except Exception as e:
                 return f"Error: Request failed {e}"
@@ -83,11 +89,11 @@ class BaseArsenalModule(ABC):
         depth = 0
         max_seen = 0
         for char in raw_text[:10000]:
-            if char in ('{', '['):
+            if char in ("{", "["):
                 depth += 1
                 if depth > max_seen:
                     max_seen = depth
-            elif char in ('}', ']'):
+            elif char in ("}", "]"):
                 depth -= 1
 
         if max_seen > max_depth:

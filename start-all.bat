@@ -6,7 +6,15 @@ echo ========================================
 echo.
 
 echo [1/2] Starting Backend (port 8000)...
-start "Vigilagent Backend" cmd /k "cd /d D:\Antigravity 2\penetration testing system copy\penetration testing system && call .venv_win\Scripts\activate.bat && set API_AUTH_KEY=dev-test-key-12345678901234567890 && set REDIS_URL=redis://:vigilagent-redis-secret@127.0.0.1:6379/0 && set VIGILAGENT_DEV_MODE=true && echo Starting backend... && python -m backend.main --mode serve"
+if "%API_AUTH_KEY%"=="" (
+    set /p API_AUTH_KEY="  Enter API_AUTH_KEY: "
+    if "%API_AUTH_KEY%"=="" (
+        echo   ERROR: API_AUTH_KEY is required.
+        goto :end
+    )
+)
+if "%REDIS_PASSWORD%"=="" set /p REDIS_PASSWORD="  Enter Redis password: "
+start "Vigilagent Backend" cmd /k "cd /d "%~dp0" && call .venv_win\Scripts\activate.bat && set API_AUTH_KEY=%API_AUTH_KEY% && set REDIS_URL=redis://:%REDIS_PASSWORD%@127.0.0.1:6379/0 && set VIGILAGENT_DEV_MODE=true && echo Starting backend... && python -m backend.main --mode serve"
 
 echo Waiting for backend to start (this takes about 60 seconds)...
 :wait_loop
@@ -19,7 +27,7 @@ if errorlevel 1 (
 echo   Backend is ready!
 
 echo [2/2] Starting Frontend (port 5173)...
-start "Vigilagent Frontend" cmd /k "cd /d D:\Antigravity 2\penetration testing system copy\penetration testing system && set API_AUTH_KEY=dev-test-key-12345678901234567890 && echo Starting frontend... && npm run dev"
+start "Vigilagent Frontend" cmd /k "cd /d "%~dp0" && set API_AUTH_KEY=%API_AUTH_KEY% && echo Starting frontend... && npm run dev"
 
 echo.
 echo ========================================
@@ -27,6 +35,6 @@ echo  Both servers are running!
 echo  Backend:  http://127.0.0.1:8000
 echo  Frontend: http://localhost:5173
 echo ========================================
-echo.
-echo Close this window anytime. The servers run in their own windows.
+echo.echo  Close this window anytime. The servers run in their own windows.
+:end
 pause

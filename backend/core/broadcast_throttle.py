@@ -25,11 +25,15 @@ Behavior is documented + opt-in: the throttle is bypassed if you pass
 ``window_ms=0``, which keeps the legacy "broadcast every event" semantics
 for tests that assert on broadcast counts.
 """
+
 from __future__ import annotations
 
 import time
 from collections import deque
-from typing import Any, Deque, Dict, Hashable, Tuple
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Hashable
 
 
 class BroadcastThrottle:
@@ -51,10 +55,10 @@ class BroadcastThrottle:
         self._window_s: float = window_ms / 1000.0
         self._max_keys: int = max(64, int(max_keys))
         # key -> expiry monotonic timestamp (seconds)
-        self._seen_at: Dict[Hashable, float] = {}
+        self._seen_at: dict[Hashable, float] = {}
         # Parallel FIFO so we can evict the oldest entry in O(1) without
         # paying for a full dict scan when we hit the cap.
-        self._fifo: Deque[Tuple[Hashable, float]] = deque()
+        self._fifo: deque[tuple[Hashable, float]] = deque()
 
     def should_emit(self, key: Hashable) -> bool:
         """Return True the first time ``key`` is seen inside the window.
@@ -103,7 +107,7 @@ class BroadcastThrottle:
     def __len__(self) -> int:
         return len(self._seen_at)
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Lightweight diagnostics for /api/runtime/health."""
         return {
             "tracked_keys": len(self._seen_at),

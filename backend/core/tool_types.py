@@ -1,8 +1,7 @@
-from enum import Enum
-from typing import Iterable
+from enum import StrEnum
 
 
-class ToolType(str, Enum):
+class ToolType(StrEnum):
     NONE = "none"
     ENVIRONMENT = "environment"
     SEARCH_NETWORK = "search_network"
@@ -80,4 +79,3 @@ def tools_by_type(tool_type: ToolType) -> list[str]:
 
 def is_barrier_tool(name: str) -> bool:
     return get_tool_type(name) in {ToolType.BARRIER, ToolType.USER}
-

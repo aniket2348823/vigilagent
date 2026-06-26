@@ -5,6 +5,7 @@ Additive, read-mostly endpoints exposing the skill catalog, stats, and the
 generated-skill lifecycle. New routes only — no existing contract changes
 (Architecture §13.4 frontend contract invariance).
 """
+
 from __future__ import annotations
 
 import logging
@@ -17,12 +18,14 @@ router = APIRouter()
 
 
 @router.get("/")
-async def list_skills(domain: str | None = Query(None), agent: str | None = Query(None),
-                      risk: str | None = Query(None)):
+async def list_skills(
+    domain: str | None = Query(None), agent: str | None = Query(None), risk: str | None = Query(None)
+):
     """List catalog skills, optionally filtered by domain/agent/risk."""
     try:
         from backend.skills import skill_catalog
         from backend.skills.policy import RiskClass
+
         skills = skill_catalog.all()
         if domain:
             skills = [s for s in skills if s.domain == domain]
@@ -46,6 +49,7 @@ async def skill_stats():
     """Catalog statistics: totals by domain and risk class."""
     try:
         from backend.skills import skill_catalog
+
         return JSONResponse(content=skill_catalog.stats())
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -56,6 +60,7 @@ async def get_skill(skill_id: str):
     """Get a single skill's normalized metadata."""
     try:
         from backend.skills import skill_catalog
+
         meta = skill_catalog.get(skill_id)
         if not meta:
             return JSONResponse(status_code=404, content={"error": "skill not found"})
@@ -69,6 +74,7 @@ async def reload_skills():
     """Re-ingest the skill catalog from disk (Architecture §5.3.1)."""
     try:
         from backend.skills import ingest_skills, skill_catalog
+
         n = ingest_skills()
         return JSONResponse(content={"ingested": n, "stats": skill_catalog.stats()})
     except Exception as e:

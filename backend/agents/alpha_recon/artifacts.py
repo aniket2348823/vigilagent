@@ -33,8 +33,7 @@ class ArtifactStore:
         """
         resolved = (self.root / relative).resolve()
         if not str(resolved).startswith(str(self.root.resolve())):
-            raise ValueError(
-                f"Path traversal blocked: '{relative}' resolves outside artifact root")
+            raise ValueError(f"Path traversal blocked: '{relative}' resolves outside artifact root")
         return resolved
 
     async def write_json(self, relative: str, payload: Any, *, tool_name: str, artifact_type: str, scan_id: str) -> str:
@@ -50,7 +49,9 @@ class ArtifactStore:
         path.write_text(text, encoding="utf-8", errors="replace")
         return await self.register(path, tool_name=tool_name, artifact_type=artifact_type, scan_id=scan_id)
 
-    async def register(self, path: Path, *, tool_name: str, artifact_type: str, scan_id: str, metadata: dict[str, Any] | None = None) -> str:
+    async def register(
+        self, path: Path, *, tool_name: str, artifact_type: str, scan_id: str, metadata: dict[str, Any] | None = None
+    ) -> str:
         content = path.read_bytes() if path.exists() else b""
         sha256 = hashlib.sha256(content).hexdigest()
         artifact_id = stable_id(scan_id, tool_name, artifact_type, str(path))

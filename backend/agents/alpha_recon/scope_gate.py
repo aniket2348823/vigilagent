@@ -8,11 +8,11 @@ Enforces:
 - Active scanning authorization requirement
 - Rate limit enforcement per scope mode
 """
+
 from __future__ import annotations
 
 import ipaddress
 import logging
-import re
 from urllib.parse import urlparse
 
 from backend.agents.alpha_recon.models import ReconScope, ScanMode
@@ -21,21 +21,39 @@ from backend.core.config import settings
 logger = logging.getLogger("alpha.scope_gate")
 
 # TLDs that MUST have explicit authorization
-RESTRICTED_TLDS = frozenset({
-    ".gov", ".mil", ".edu", ".gov.uk", ".gov.au", ".gov.in",
-    ".gov.br", ".gov.cn", ".mil.br", ".police.uk", ".nhs.uk",
-    ".judiciary.uk", ".parliament.uk", ".mod.uk",
-})
+RESTRICTED_TLDS = frozenset(
+    {
+        ".gov",
+        ".mil",
+        ".edu",
+        ".gov.uk",
+        ".gov.au",
+        ".gov.in",
+        ".gov.br",
+        ".gov.cn",
+        ".mil.br",
+        ".police.uk",
+        ".nhs.uk",
+        ".judiciary.uk",
+        ".parliament.uk",
+        ".mod.uk",
+    }
+)
 
 # Domains that should never be scanned
-GLOBAL_DENY_LIST = frozenset({
-    "metadata.google.internal", "169.254.169.254",
-    "instance-data", "metadata.azure.com",
-})
+GLOBAL_DENY_LIST = frozenset(
+    {
+        "metadata.google.internal",
+        "169.254.169.254",
+        "instance-data",
+        "metadata.azure.com",
+    }
+)
 
 
 class ScopeGateViolation(PermissionError):
     """Raised when a target or URL is outside the authorized scope."""
+
     def __init__(self, target: str, reason: str):
         self.target = target
         self.reason = reason
@@ -66,22 +84,18 @@ class ScopeGate:
         # 2. Restricted TLD check
         if self._is_restricted_tld(host):
             if not self.scope.explicit_authorization:
-                raise ScopeGateViolation(target_url,
-                    f"restricted_tld_requires_authorization:{host}")
+                raise ScopeGateViolation(target_url, f"restricted_tld_requires_authorization:{host}")
             logger.warning(f"[SCOPE] Scanning restricted TLD {host} WITH explicit authorization")
 
         # 3. Private network check
-        if self._is_private_ip(host):
-            if not self.scope.explicit_authorization:
-                raise ScopeGateViolation(target_url,
-                    f"private_network_requires_authorization:{host}")
+        if self._is_private_ip(host) and not self.scope.explicit_authorization:
+            raise ScopeGateViolation(target_url, f"private_network_requires_authorization:{host}")
 
         # 4. Active scanning authorization
         if self.scope.scan_mode in (ScanMode.STANDARD, ScanMode.AGGRESSIVE):
             auth_required = getattr(settings, "ALPHA_EXPLICIT_AUTHORIZATION", False)
             if auth_required and not self.scope.explicit_authorization:
-                raise ScopeGateViolation(target_url,
-                    "active_scanning_requires_explicit_authorization")
+                raise ScopeGateViolation(target_url, "active_scanning_requires_explicit_authorization")
 
         logger.info(f"[SCOPE] Target validated: {host} (mode={self.scope.scan_mode.value})")
 
@@ -109,11 +123,7 @@ class ScopeGate:
                     return True
 
         # Check allowed suffixes
-        for suffix in self.scope.allowed_host_suffixes:
-            if host.endswith(suffix.lower()):
-                return True
-
-        return False
+        return any(host.endswith(suffix.lower()) for suffix in self.scope.allowed_host_suffixes)
 
     def filter_in_scope(self, urls: list[str]) -> list[str]:
         """Filter a list of URLs to only those in scope."""
@@ -130,19 +140,15 @@ class ScopeGate:
         return {
             "phase": phase,
             "authorized": True,
-            "requires_approval": mode == ScanMode.AGGRESSIVE and phase in (
-                "directory_route_discovery", "api_reconnaissance",
-                "template_validation"),
+            "requires_approval": mode == ScanMode.AGGRESSIVE
+            and phase in ("directory_route_discovery", "api_reconnaissance", "template_validation"),
             "max_rps": self.scope.max_rps,
             "max_depth": self.scope.max_depth,
         }
 
     @staticmethod
     def _is_restricted_tld(host: str) -> bool:
-        for tld in RESTRICTED_TLDS:
-            if host.endswith(tld):
-                return True
-        return False
+        return any(host.endswith(tld) for tld in RESTRICTED_TLDS)
 
     @staticmethod
     def _is_private_ip(host: str) -> bool:

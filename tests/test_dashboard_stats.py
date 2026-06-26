@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 # Set test mode before importing
-os.environ["VULAGENT_TEST_MODE"] = "true"
+os.environ["VIGILAGENT_TEST_MODE"] = "true"
 os.environ["TESTING"] = "true"
 
 

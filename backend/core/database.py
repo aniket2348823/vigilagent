@@ -1,28 +1,31 @@
 import asyncio
+import contextlib
 import logging
-import json
 import time as _time
-import uuid
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional
-from supabase import create_client, Client
+from datetime import UTC, datetime
+from typing import Any
+
 import redis.asyncio as aioredis
+from supabase import Client, create_client
+
 from backend.core.config import settings
 
 logger = logging.getLogger("ELITE-DB")
 
+
 class EliteDBManager:
     """
-    The Single Source of Truth Manager for the Vulagent Scanner.
+    The Single Source of Truth Manager for Vigilagent.
     Coordinates distributed state across Supabase (Persistence) and Redis (Hot Cache/Locking).
     """
+
     def __init__(self):
         self.supabase_url = settings.SUPABASE_URL
         self.supabase_key = settings.SUPABASE_KEY
         self.redis_url = settings.REDIS_URL
-        
-        self.supabase: Optional[Client] = None
-        self.redis: Optional[aioredis.Redis] = None
+
+        self.supabase: Client | None = None
+        self.redis: aioredis.Redis | None = None
         self._initialized = False
         # Fallback in-process lock when Redis is unavailable for dedup
         self._vuln_lock = asyncio.Lock()
@@ -58,7 +61,7 @@ class EliteDBManager:
                     self._supabase_record_failure()
                     logger.warning("ELITE-DB: Supabase init failed: %s", sup_e)
                     self.supabase = None
-            
+
             # 2. Redis Initialization
             if self.redis_url:
                 try:
@@ -69,7 +72,7 @@ class EliteDBManager:
                 except Exception as redis_e:
                     logger.warning("ELITE-DB: Redis unavailable, falling back to local caching. (%s)", redis_e)
                     self.redis = None
-            
+
             self._initialized = True
         except Exception as e:
             # Always mark initialized so callers don't retry indefinitely;
@@ -103,7 +106,7 @@ class EliteDBManager:
             )
             self._supabase_record_success()
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # FIX: Timeouts don't count toward the circuit breaker threshold.
             # A slow but connected Supabase query shouldn't trip the breaker.
             # Log at DEBUG so operators can still see timeout patterns.
@@ -119,13 +122,12 @@ class EliteDBManager:
     # FIX: Extract the repeated lambda-d=data closure pattern into a reusable
     # method.  The original pattern was duplicated 15+ times with lambda
     # captures that are error-prone.
-    async def _upsert(self, table: str, data: Dict[str, Any], on_conflict: str, timeout: float = 30.0) -> Optional[Any]:
+    async def _upsert(self, table: str, data: dict[str, Any], on_conflict: str, timeout: float = 30.0) -> Any | None:
         """Atomic upsert helper — runs the blocking Supabase call on a worker
         thread and returns the result.data or None on failure."""
         try:
             result = await self._run_sync(
-                lambda t=table, d=data, c=on_conflict: self.supabase.table(t)
-                    .upsert(d, on_conflict=c).execute(),
+                lambda t=table, d=data, c=on_conflict: self.supabase.table(t).upsert(d, on_conflict=c).execute(),
                 _timeout=timeout,
             )
             return result.data
@@ -136,7 +138,9 @@ class EliteDBManager:
                 logger.warning("_upsert(%s) failed: %s", table, e)
             return None
 
-    async def report_vulnerability(self, scan_id: str, endpoint: str, vuln_type: str, severity: str, evidence: Dict[str, Any], validated_by: str) -> Optional[str]:
+    async def report_vulnerability(
+        self, scan_id: str, endpoint: str, vuln_type: str, severity: str, evidence: dict[str, Any], validated_by: str
+    ) -> str | None:
         """Reports a verified vulnerability with strict deduplication.
 
         Uses a hash-based hot-cache in Redis before performing the Supabase UPSERT.
@@ -146,10 +150,10 @@ class EliteDBManager:
         """
         if not self.supabase:
             return None
-        
+
         # 1. Generate Deduplication Signature
         signature = f"vuln:{scan_id}:{endpoint}:{vuln_type}"
-        
+
         # 2. Acquire a dedup lock to prevent TOCTOU race.
         # When Redis is available we use a distributed SETNX lock.
         # When Redis is unavailable, we fall back to an in-process asyncio.Lock
@@ -167,7 +171,7 @@ class EliteDBManager:
                     return "CACHED"
         else:
             await self._vuln_lock.acquire()
-        
+
         # 3. Upsert into Supabase (ON CONFLICT guarantees idempotency)
         data = {
             "scan_id": scan_id,
@@ -176,12 +180,11 @@ class EliteDBManager:
             "severity": severity,
             "evidence": evidence,
             "validated_by": validated_by,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         try:
-            result_data = await self._upsert(
-                "vulnerabilities", data, "scan_id,endpoint,vuln_type")
+            result_data = await self._upsert("vulnerabilities", data, "scan_id,endpoint,vuln_type")
 
             if result_data:
                 vuln_id = result_data[0]["id"]
@@ -194,13 +197,11 @@ class EliteDBManager:
         finally:
             # Always release the dedup lock
             if _use_redis_lock:
-                try:
+                with contextlib.suppress(Exception):
                     await self.redis.delete(f"lock:{signature}")
-                except Exception:
-                    pass
             else:
                 self._vuln_lock.release()
-        
+
         return None
 
     # --- 2. DISTRIBUTED TASK MANAGEMENT (Coordination) ---
@@ -215,7 +216,7 @@ class EliteDBManager:
         callers can pass it to renew_task_lock() periodically.
         """
         lock_key = f"lock:task:{task_id}"
-        
+
         # 1. Atomic Redis Lock (expires in 10 minutes in case worker crashes)
         if self.redis:
             locked = await self.redis.set(lock_key, worker_id, nx=True, ex=600)
@@ -228,25 +229,29 @@ class EliteDBManager:
 
         # 2. Sync State to Supabase
         try:
-            data = {
-                "status": "RUNNING",
-                "locked_by": worker_id,
-                "lock_time": datetime.now(timezone.utc).isoformat()
-            }
+            data = {"status": "RUNNING", "locked_by": worker_id, "lock_time": datetime.now(UTC).isoformat()}
             result = await self._run_sync(
-                lambda: self.supabase.table("distributed_tasks").update(data)
-                    .eq("id", task_id).eq("status", "PENDING").execute())
+                lambda: (
+                    self.supabase.table("distributed_tasks")
+                    .update(data)
+                    .eq("id", task_id)
+                    .eq("status", "PENDING")
+                    .execute()
+                )
+            )
 
             if not result.data:
                 # Task was already claimed or moved state
-                if self.redis: await self.redis.delete(lock_key)
+                if self.redis:
+                    await self.redis.delete(lock_key)
                 return False
-            
+
             return True
         except Exception as e:
             if not self._supabase_circuit_open:
                 logger.error(f"Supabase task lock failed: {e}")
-            if self.redis: await self.redis.delete(lock_key)
+            if self.redis:
+                await self.redis.delete(lock_key)
             return False
 
     async def complete_task(self, task_id: str, status: str = "COMPLETED"):
@@ -258,71 +263,89 @@ class EliteDBManager:
             return
         try:
             await self._run_sync(
-                lambda: self.supabase.table("distributed_tasks").update({
-                    "status": status,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }).eq("id", task_id).execute())
+                lambda: (
+                    self.supabase.table("distributed_tasks")
+                    .update({"status": status, "updated_at": datetime.now(UTC).isoformat()})
+                    .eq("id", task_id)
+                    .execute()
+                )
+            )
         except Exception as e:
             if not self._supabase_circuit_open:
                 logger.error(f"Failed to complete task {task_id}: {e}")
 
     # --- 3. BATCH OPERATIONS (Optimization) ---
 
-    async def create_tasks_batch(self, tasks: List[Dict[str, Any]]):
+    async def create_tasks_batch(self, tasks: list[dict[str, Any]]):
         """Inserts multiple tasks in a single Supabase request."""
-        if not self.supabase or not tasks: return
+        if not self.supabase or not tasks:
+            return
         try:
-            await self._run_sync(
-                lambda: self.supabase.table("distributed_tasks").insert(tasks).execute())
+            await self._run_sync(lambda: self.supabase.table("distributed_tasks").insert(tasks).execute())
         except Exception as e:
             if not self._supabase_circuit_open:
                 logger.error(f"Batch task creation failed: {e}")
 
     # --- 4. EXPLOIT & REMEDIATION ( Intelligence ) ---
 
-    async def log_exploit_result(self, vuln_id: str, result: Dict[str, Any]):
+    async def log_exploit_result(self, vuln_id: str, result: dict[str, Any]):
         """Logs the final evidence of a successful exploit."""
-        if not self.supabase: return
+        if not self.supabase:
+            return
         try:
             await self._run_sync(
-                lambda: self.supabase.table("exploit_results").insert({
-                    "vuln_id": vuln_id,
-                    "payload": result.get("payload", "N/A"),
-                    "worker_id": result.get("worker_id", "local"),
-                    "status": result.get("status", "EXPLOITED"),
-                    "response_dump": result.get("response", ""),
-                    "execution_time_ms": result.get("time_ms", 0)
-                }).execute())
+                lambda: (
+                    self.supabase.table("exploit_results")
+                    .insert(
+                        {
+                            "vuln_id": vuln_id,
+                            "payload": result.get("payload", "N/A"),
+                            "worker_id": result.get("worker_id", "local"),
+                            "status": result.get("status", "EXPLOITED"),
+                            "response_dump": result.get("response", ""),
+                            "execution_time_ms": result.get("time_ms", 0),
+                        }
+                    )
+                    .execute()
+                )
+            )
         except Exception as e:
             if not self._supabase_circuit_open:
                 logger.error(f"Failed to log exploit result: {e}")
 
     # --- 5. QUERY HELPERS ---
 
-    async def get_vulnerabilities(self, scan_id: str) -> List[Dict[str, Any]]:
+    async def get_vulnerabilities(self, scan_id: str) -> list[dict[str, Any]]:
         """Fetch all vulnerabilities for a given scan from Supabase."""
         if not self.supabase:
             return []
         try:
             result = await self._run_sync(
-                lambda: self.supabase.table("vulnerabilities").select("*")
-                    .eq("scan_id", scan_id).execute())
+                lambda: self.supabase.table("vulnerabilities").select("*").eq("scan_id", scan_id).execute()
+            )
             return result.data or []
         except Exception as e:
             if not self._supabase_circuit_open:
                 logger.error(f"Failed to fetch vulnerabilities for scan {scan_id}: {e}")
             return []
 
-    async def store_scan_episode(self, scan_id: str, event_type: str, payload: Dict[str, Any]):
+    async def store_scan_episode(self, scan_id: str, event_type: str, payload: dict[str, Any]):
         if not self.supabase:
             return None
         try:
             result = await self._run_sync(
-                lambda: self.supabase.table("scan_episodes").insert({
-                    "scan_id": scan_id,
-                    "event_type": event_type,
-                    "payload": payload,
-                }).execute())
+                lambda: (
+                    self.supabase.table("scan_episodes")
+                    .insert(
+                        {
+                            "scan_id": scan_id,
+                            "event_type": event_type,
+                            "payload": payload,
+                        }
+                    )
+                    .execute()
+                )
+            )
             return result.data[0]["id"] if result.data else None
         except Exception as e:
             if not self._supabase_circuit_open:
@@ -360,9 +383,10 @@ class EliteDBManager:
             self._supabase_circuit_open = True
             self._supabase_circuit_open_until = _time.time() + self._CB_COOLDOWN_SECONDS
             logger.warning(
-                "ELITE-DB: Supabase circuit breaker OPEN — %d consecutive failures, "
-                "pausing retries for %.0fs",
-                self._supabase_failures, self._CB_COOLDOWN_SECONDS)
+                "ELITE-DB: Supabase circuit breaker OPEN — %d consecutive failures, pausing retries for %.0fs",
+                self._supabase_failures,
+                self._CB_COOLDOWN_SECONDS,
+            )
 
     async def store_semantic_memory(
         self,
@@ -371,23 +395,30 @@ class EliteDBManager:
         content: str,
         endpoint_pattern: str = "",
         vuln_type: str = "",
-        metadata: Dict[str, Any] | None = None,
-        embedding: List[float] | None = None,
+        metadata: dict[str, Any] | None = None,
+        embedding: list[float] | None = None,
         confidence: float = 0.0,
     ):
         if not self.supabase:
             return None
         try:
             result = await self._run_sync(
-                lambda: self.supabase.table("semantic_memory").insert({
-                    "memory_type": memory_type,
-                    "endpoint_pattern": endpoint_pattern,
-                    "vuln_type": vuln_type,
-                    "content": content,
-                    "metadata": metadata or {},
-                    "embedding": embedding,
-                    "confidence": confidence,
-                }).execute())
+                lambda: (
+                    self.supabase.table("semantic_memory")
+                    .insert(
+                        {
+                            "memory_type": memory_type,
+                            "endpoint_pattern": endpoint_pattern,
+                            "vuln_type": vuln_type,
+                            "content": content,
+                            "metadata": metadata or {},
+                            "embedding": embedding,
+                            "confidence": confidence,
+                        }
+                    )
+                    .execute()
+                )
+            )
             return result.data[0]["id"] if result.data else None
         except Exception as e:
             if not self._supabase_circuit_open:
@@ -400,7 +431,7 @@ class EliteDBManager:
         scan_id: str,
         target: str,
         mode: str,
-        scope: Dict[str, Any],
+        scope: dict[str, Any],
         artifact_root: str,
         status: str = "running",
     ):
@@ -408,15 +439,23 @@ class EliteDBManager:
             return None
         try:
             result = await self._run_sync(
-                lambda: self.supabase.table("recon_runs").upsert({
-                    "scan_id": scan_id,
-                    "target": target,
-                    "mode": mode,
-                    "scope": scope,
-                    "artifact_root": artifact_root,
-                    "status": status,
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                }, on_conflict="scan_id").execute())
+                lambda: (
+                    self.supabase.table("recon_runs")
+                    .upsert(
+                        {
+                            "scan_id": scan_id,
+                            "target": target,
+                            "mode": mode,
+                            "scope": scope,
+                            "artifact_root": artifact_root,
+                            "status": status,
+                            "started_at": datetime.now(UTC).isoformat(),
+                        },
+                        on_conflict="scan_id",
+                    )
+                    .execute()
+                )
+            )
             return result.data[0]["scan_id"] if result.data else scan_id
         except Exception as e:
             logger.debug(f"Failed to create recon run: {e}")
@@ -427,10 +466,18 @@ class EliteDBManager:
             return None
         try:
             await self._run_sync(
-                lambda: self.supabase.table("recon_runs").update({
-                    "status": status,
-                    "finished_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("scan_id", scan_id).execute())
+                lambda: (
+                    self.supabase.table("recon_runs")
+                    .update(
+                        {
+                            "status": status,
+                            "finished_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                    .eq("scan_id", scan_id)
+                    .execute()
+                )
+            )
             return scan_id
         except Exception as e:
             logger.debug(f"Failed to finish recon run: {e}")
@@ -443,24 +490,32 @@ class EliteDBManager:
         scan_id: str,
         kind: str,
         label: str,
-        normalized: Dict[str, Any],
-        sources: List[Dict[str, Any]],
+        normalized: dict[str, Any],
+        sources: list[dict[str, Any]],
         confidence: float = 0.0,
     ):
         if not self.supabase:
             return None
         try:
             result = await self._run_sync(
-                lambda: self.supabase.table("recon_entities").upsert({
-                    "id": id,
-                    "scan_id": scan_id,
-                    "kind": kind,
-                    "label": label,
-                    "normalized": normalized,
-                    "sources": sources,
-                    "confidence": confidence,
-                    "last_seen": datetime.now(timezone.utc).isoformat(),
-                }, on_conflict="id").execute())
+                lambda: (
+                    self.supabase.table("recon_entities")
+                    .upsert(
+                        {
+                            "id": id,
+                            "scan_id": scan_id,
+                            "kind": kind,
+                            "label": label,
+                            "normalized": normalized,
+                            "sources": sources,
+                            "confidence": confidence,
+                            "last_seen": datetime.now(UTC).isoformat(),
+                        },
+                        on_conflict="id",
+                    )
+                    .execute()
+                )
+            )
             return result.data[0]["id"] if result.data else id
         except Exception as e:
             logger.debug(f"Failed to upsert recon entity: {e}")
@@ -476,22 +531,30 @@ class EliteDBManager:
         path: str,
         sha256: str = "",
         bytes: int = 0,
-        metadata: Dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ):
         if not self.supabase:
             return None
         try:
             result = await self._run_sync(
-                lambda: self.supabase.table("recon_artifacts").upsert({
-                    "id": id,
-                    "scan_id": scan_id,
-                    "tool_name": tool_name,
-                    "artifact_type": artifact_type,
-                    "path": path,
-                    "sha256": sha256,
-                    "bytes": bytes,
-                    "metadata": metadata or {},
-                }, on_conflict="id").execute())
+                lambda: (
+                    self.supabase.table("recon_artifacts")
+                    .upsert(
+                        {
+                            "id": id,
+                            "scan_id": scan_id,
+                            "tool_name": tool_name,
+                            "artifact_type": artifact_type,
+                            "path": path,
+                            "sha256": sha256,
+                            "bytes": bytes,
+                            "metadata": metadata or {},
+                        },
+                        on_conflict="id",
+                    )
+                    .execute()
+                )
+            )
             return result.data[0]["id"] if result.data else id
         except Exception as e:
             logger.debug(f"Failed to create recon artifact: {e}")
@@ -504,21 +567,29 @@ class EliteDBManager:
         scan_id: str,
         endpoint_id: str,
         score: int,
-        reasons: List[str],
-        omega_modules: List[str] | None = None,
+        reasons: list[str],
+        omega_modules: list[str] | None = None,
     ):
         if not self.supabase:
             return None
         try:
             result = await self._run_sync(
-                lambda: self.supabase.table("recon_endpoint_scores").upsert({
-                    "id": id,
-                    "scan_id": scan_id,
-                    "endpoint_id": endpoint_id,
-                    "score": score,
-                    "reasons": reasons,
-                    "omega_modules": omega_modules or [],
-                }, on_conflict="id").execute())
+                lambda: (
+                    self.supabase.table("recon_endpoint_scores")
+                    .upsert(
+                        {
+                            "id": id,
+                            "scan_id": scan_id,
+                            "endpoint_id": endpoint_id,
+                            "score": score,
+                            "reasons": reasons,
+                            "omega_modules": omega_modules or [],
+                        },
+                        on_conflict="id",
+                    )
+                    .execute()
+                )
+            )
             return result.data[0]["id"] if result.data else id
         except Exception as e:
             logger.debug(f"Failed to upsert endpoint score: {e}")
@@ -531,7 +602,7 @@ class EliteDBManager:
         scan_id: str,
         tool_name: str,
         agent: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         status: str = "running",
         error: str = "",
     ):
@@ -539,16 +610,23 @@ class EliteDBManager:
             return None
         try:
             result = await self._run_sync(
-                lambda: self.supabase.table("toolcalls").insert({
-                    "call_id": call_id,
-                    "scan_id": scan_id,
-                    "tool_name": tool_name,
-                    "agent": agent,
-                    "args": args,
-                    "status": status,
-                    "error": error,
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                }).execute())
+                lambda: (
+                    self.supabase.table("toolcalls")
+                    .insert(
+                        {
+                            "call_id": call_id,
+                            "scan_id": scan_id,
+                            "tool_name": tool_name,
+                            "agent": agent,
+                            "args": args,
+                            "status": status,
+                            "error": error,
+                            "started_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                    .execute()
+                )
+            )
             return result.data[0]["id"] if result.data else None
         except Exception as e:
             logger.debug(f"Failed to create toolcall: {e}")
@@ -575,11 +653,11 @@ class EliteDBManager:
                 "duration_ms": duration_ms,
                 "result_bytes": result_bytes,
                 "result_sha256": result_sha256,
-                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "finished_at": datetime.now(UTC).isoformat(),
             }
             await self._run_sync(
-                lambda: self.supabase.table("toolcalls").update(payload)
-                    .eq("call_id", call_id).execute())
+                lambda: self.supabase.table("toolcalls").update(payload).eq("call_id", call_id).execute()
+            )
         except Exception as e:
             logger.debug(f"Failed to finish toolcall: {e}")
             return None
@@ -591,22 +669,29 @@ class EliteDBManager:
         scan_id: str,
         tool_name: str,
         reason: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         status: str = "pending",
     ):
         if not self.supabase:
             return None
         try:
             result = await self._run_sync(
-                lambda: self.supabase.table("approvals").insert({
-                    "approval_id": approval_id,
-                    "scan_id": scan_id,
-                    "tool_name": tool_name,
-                    "reason": reason,
-                    "payload": payload,
-                    "status": status,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                }).execute())
+                lambda: (
+                    self.supabase.table("approvals")
+                    .insert(
+                        {
+                            "approval_id": approval_id,
+                            "scan_id": scan_id,
+                            "tool_name": tool_name,
+                            "reason": reason,
+                            "payload": payload,
+                            "status": status,
+                            "created_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                    .execute()
+                )
+            )
             return result.data[0]["id"] if result.data else None
         except Exception as e:
             logger.debug(f"Failed to create approval: {e}")
@@ -619,10 +704,10 @@ class EliteDBManager:
         request_id: str,
         method: str,
         url: str,
-        request_headers: Dict[str, str],
+        request_headers: dict[str, str],
         request_body: Any,
         status: int,
-        response_headers: Dict[str, str],
+        response_headers: dict[str, str],
         response_body: str,
         elapsed_ms: int,
     ):
@@ -630,26 +715,40 @@ class EliteDBManager:
             return None
         try:
             req = await self._run_sync(
-                lambda: self.supabase.table("http_requests").insert({
-                    "request_id": request_id,
-                    "scan_id": scan_id,
-                    "method": method,
-                    "url": url,
-                    "headers": request_headers,
-                    "body": request_body,
-                    "elapsed_ms": elapsed_ms,
-                }).execute())
+                lambda: (
+                    self.supabase.table("http_requests")
+                    .insert(
+                        {
+                            "request_id": request_id,
+                            "scan_id": scan_id,
+                            "method": method,
+                            "url": url,
+                            "headers": request_headers,
+                            "body": request_body,
+                            "elapsed_ms": elapsed_ms,
+                        }
+                    )
+                    .execute()
+                )
+            )
             db_request_id = req.data[0]["id"] if req.data else None
             await self._run_sync(
-                lambda: self.supabase.table("http_responses").insert({
-                    "request_db_id": db_request_id,
-                    "request_id": request_id,
-                    "scan_id": scan_id,
-                    "status": status,
-                    "headers": response_headers,
-                    "body": response_body,
-                    "body_preview": response_body[:4000],
-                }).execute())
+                lambda: (
+                    self.supabase.table("http_responses")
+                    .insert(
+                        {
+                            "request_db_id": db_request_id,
+                            "request_id": request_id,
+                            "scan_id": scan_id,
+                            "status": status,
+                            "headers": response_headers,
+                            "body": response_body,
+                            "body_preview": response_body[:4000],
+                        }
+                    )
+                    .execute()
+                )
+            )
             return db_request_id
         except Exception as e:
             logger.debug(f"Failed to log HTTP exchange: {e}")
@@ -692,6 +791,7 @@ class EliteDBManager:
         finally:
             self.supabase = None
             self._initialized = False
+
 
 # Global Instance
 db_manager = EliteDBManager()

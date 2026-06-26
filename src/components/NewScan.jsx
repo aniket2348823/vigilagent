@@ -219,7 +219,7 @@ const NewScan = ({ navigate }) => {
             // console.error("Launch failed:", err);
             const msg = err && err.message ? err.message : 'Unknown error';
             const friendly = msg.includes('Failed to reach backend')
-                ? "Backend is offline. Please ensure the VulAgent Terminal is running on port 8000."
+                ? "Backend is offline. Please ensure the Vigilagent Terminal is running on port 8000."
                 : msg;
             setLaunchError(friendly);
         } finally {
@@ -446,7 +446,7 @@ const NewScan = ({ navigate }) => {
                     </main>
 
                     <footer className="py-8 text-center text-sm text-gray-500">
-                        Vulagent Scanner Intelligence Backbone © 2024
+                        Vigilagent Intelligence Backbone © 2024
                     </footer>
                 </div>
             </div>

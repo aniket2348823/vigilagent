@@ -3,20 +3,21 @@ PROBLEM 11 FIX: KeyringIntelligence — Token classifier, deduplicator, and expi
 Replaces raw unstructured keyring.json dump with classified, deduplicated intelligence.
 """
 
-import re
-import json
-import time
-import hashlib
+import asyncio
 import base64
+import hashlib
+import json
 import logging
+import re
+import time
 from enum import Enum
-
 
 
 def _read_json_file(path: str) -> dict:
     """Read and parse a JSON file (sync helper for use with asyncio.to_thread)."""
-    with open(path, "r") as f:
+    with open(path) as f:
         return json.load(f)
+
 
 logger = logging.getLogger("KeyringIntelligence")
 
@@ -34,12 +35,12 @@ class TokenType(Enum):
 class KeyringIntelligence:
     KEYRING_FILE = "keyring.json"
 
-    JWT_PATTERN = re.compile(r'^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$')
+    JWT_PATTERN = re.compile(r"^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
     API_KEY_PATTERNS = [
-        re.compile(r'^sk-[A-Za-z0-9]{32,}$'),       # OpenAI style
-        re.compile(r'^Bearer [A-Za-z0-9_-]{20,}$'),
-        re.compile(r'^[A-Za-z0-9]{32}$'),             # generic 32-char key
-        re.compile(r'^[A-Za-z0-9]{40}$'),             # generic 40-char key
+        re.compile(r"^sk-[A-Za-z0-9]{32,}$"),  # OpenAI style
+        re.compile(r"^Bearer [A-Za-z0-9_-]{20,}$"),
+        re.compile(r"^[A-Za-z0-9]{32}$"),  # generic 32-char key
+        re.compile(r"^[A-Za-z0-9]{40}$"),  # generic 40-char key
     ]
 
     def classify(self, token: str) -> TokenType:
@@ -79,6 +80,15 @@ class KeyringIntelligence:
         """Generate a short unique fingerprint for deduplication."""
         return hashlib.sha256(token.encode()).hexdigest()[:16]
 
+    def _load_keyring(self) -> dict:
+        """Load and return the keyring data, or an empty structure on failure."""
+        try:
+            with open(self.KEYRING_FILE) as f:
+                return json.load(f)
+        except Exception as exc:
+            logger.debug("KeyringIntelligence: keyring file load failed: %s", exc)
+            return {"tokens": [], "stats": {"total": 0, "deduplicated": 0}}
+
     async def process_and_store(self, token: str, url: str, context: str = "") -> dict:
         """Classify, deduplicate, and store a captured token."""
         fp = self.fingerprint(token)
@@ -97,15 +107,10 @@ class KeyringIntelligence:
             "source_url": url,
             "context": context,
             "expired": expired,
-            "captured_at": time.time()
+            "captured_at": time.time(),
         }
 
-        try:
-            with open(self.KEYRING_FILE, "r") as f:
-                keyring = json.load(f)
-        except Exception as exc:
-            logger.debug("KeyringIntelligence: keyring file load failed: %s", exc)
-            keyring = {"tokens": [], "stats": {"total": 0, "deduplicated": 0}}
+        keyring = self._load_keyring()
 
         # Deduplicate by fingerprint
         existing_fps = {t["fingerprint"] for t in keyring.get("tokens", [])}
@@ -113,6 +118,7 @@ class KeyringIntelligence:
             keyring.setdefault("tokens", []).append(entry)
             keyring["stats"] = keyring.get("stats", {})
             keyring["stats"]["total"] = len(keyring["tokens"])
+
             def _write_sync():
                 with open(self.KEYRING_FILE, "w") as f:
                     json.dump(keyring, f, indent=2)
@@ -126,6 +132,9 @@ class KeyringIntelligence:
 
     async def get_active_tokens(self) -> list:
         """Return only non-expired, classified tokens."""
+        keyring = self._load_keyring()
+        if not keyring.get("tokens"):
+            return []
         active = []
         for t in keyring.get("tokens", []):
             if not t.get("expired", False):
@@ -134,6 +143,7 @@ class KeyringIntelligence:
 
     async def get_stats(self) -> dict:
         """Return keyring statistics."""
+        keyring = self._load_keyring()
         tokens = keyring.get("tokens", [])
         by_type = {}
         expired_count = 0
@@ -147,5 +157,5 @@ class KeyringIntelligence:
             "total": len(tokens),
             "by_type": by_type,
             "expired": expired_count,
-            "active": len(tokens) - expired_count
+            "active": len(tokens) - expired_count,
         }

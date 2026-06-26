@@ -6,13 +6,14 @@
 #          reasoning via OpenAI GPT-OSS-20B (free model, cloud inference).
 # ═══════════════════════════════════════════════════════════════════════════════
 
-import aiohttp
 import asyncio
 import json
 import logging
 import os
 import time as _time
-from typing import Optional, Dict, Any
+from typing import Any
+
+import aiohttp
 
 logger = logging.getLogger("OPENROUTER")
 
@@ -25,7 +26,7 @@ _MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB limit to prevent OOM
 
 # ─── Master System Prompts ────────────────────────────────────────────────────
 
-ARBITRATION_SYSTEM_PROMPT = """You are the Central Reasoning Engine of an autonomous distributed penetration testing system (Xyphorax / VulAgent).
+ARBITRATION_SYSTEM_PROMPT = """You are the Central Reasoning Engine of an autonomous distributed penetration testing system (Vigilagent / Vigilagent).
 
 You operate using:
 - GI-5 -> deterministic truth engine (PRIMARY SOURCE OF TRUTH)
@@ -104,21 +105,22 @@ class OpenRouterClient:
     Powers all high-level reasoning tasks via OpenAI GPT-OSS-20B (free model).
     """
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: str | None = None):
         # 1. Check direct argument
         # 2. Check current OS environment
         # 3. Load from .env file (Robust fix)
         from dotenv import load_dotenv
+
         load_dotenv(override=True)
-        
+
         self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
-        
+
         # Security Guard: Detect if the key is still a placeholder
         if self._api_key == "your_openrouter_api_key_here":
             logger.warning("OPENROUTER: Key is still the placeholder! Please update .env")
             self._api_key = ""
 
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._session_lock = asyncio.Lock()  # FIX: Eagerly initialized lock prevents race condition
         self._telemetry = {
             "calls": 0,
@@ -188,9 +190,7 @@ class OpenRouterClient:
 
         for attempt in range(MAX_RETRIES + 1):
             try:
-                async with self._session.post(
-                    OPENROUTER_API_URL, headers=headers, json=payload
-                ) as response:
+                async with self._session.post(OPENROUTER_API_URL, headers=headers, json=payload) as response:
                     if response.status == 200:
                         # FIX: Check response size before reading to prevent OOM
                         content_length = response.headers.get("Content-Length")
@@ -198,7 +198,9 @@ class OpenRouterClient:
                             try:
                                 if int(content_length) > _MAX_RESPONSE_BYTES:
                                     self._telemetry["errors"] += 1
-                                    logger.error("OPENROUTER: Response Content-Length too large: %s bytes", content_length)
+                                    logger.error(
+                                        "OPENROUTER: Response Content-Length too large: %s bytes", content_length
+                                    )
                                     return "[OPENROUTER ERROR] Response exceeded size limit."
                             except (ValueError, TypeError):
                                 pass
@@ -219,19 +221,23 @@ class OpenRouterClient:
                         self._telemetry["successes"] += 1
                         self._telemetry["total_latency"] += latency
 
-                        logger.info(f"OPENROUTER: Call succeeded in {latency:.2f}s (tokens: {usage.get('total_tokens', 'N/A')})")
+                        logger.info(
+                            f"OPENROUTER: Call succeeded in {latency:.2f}s (tokens: {usage.get('total_tokens', 'N/A')})"
+                        )
                         return result.strip()
 
                     elif response.status == 429:
                         # Rate limited — wait and retry
                         logger.warning(f"OPENROUTER: Rate limited (429). Retry {attempt + 1}/{MAX_RETRIES}")
-                        await asyncio.sleep(2 ** attempt)
+                        await asyncio.sleep(2**attempt)
                         continue
 
                     elif response.status in (502, 503, 504):
                         # Transient server error — retry with backoff
-                        logger.warning(f"OPENROUTER: Transient HTTP {response.status}. Retry {attempt + 1}/{MAX_RETRIES}")
-                        await asyncio.sleep(2 ** attempt)
+                        logger.warning(
+                            f"OPENROUTER: Transient HTTP {response.status}. Retry {attempt + 1}/{MAX_RETRIES}"
+                        )
+                        await asyncio.sleep(2**attempt)
                         continue
 
                     else:
@@ -258,21 +264,27 @@ class OpenRouterClient:
 
     # ─── Specialized Call Methods ─────────────────────────────────────────────
 
-    async def arbitrate(self, candidate_data: Dict[str, Any], scan_ctx=None) -> str:
+    async def arbitrate(self, candidate_data: dict[str, Any], scan_ctx=None) -> str:
         """Final arbitration on a vulnerability candidate."""
         prompt = json.dumps(candidate_data, indent=2, default=str)
-        return await self.call(prompt, system_prompt=ARBITRATION_SYSTEM_PROMPT, temperature=0.1, max_tokens=500, scan_ctx=scan_ctx)
+        return await self.call(
+            prompt, system_prompt=ARBITRATION_SYSTEM_PROMPT, temperature=0.1, max_tokens=500, scan_ctx=scan_ctx
+        )
 
-    async def plan_exploit(self, finding: Dict[str, Any], scan_ctx=None) -> str:
+    async def plan_exploit(self, finding: dict[str, Any], scan_ctx=None) -> str:
         """Generate exploit verification plan."""
         prompt = json.dumps(finding, indent=2, default=str)
-        return await self.call(prompt, system_prompt=EXPLOIT_PLANNING_SYSTEM_PROMPT, temperature=0.1, max_tokens=800, scan_ctx=scan_ctx)
+        return await self.call(
+            prompt, system_prompt=EXPLOIT_PLANNING_SYSTEM_PROMPT, temperature=0.1, max_tokens=800, scan_ctx=scan_ctx
+        )
 
-    async def generate_remediation(self, finding: Dict[str, Any], framework: str = "Generic", scan_ctx=None) -> str:
+    async def generate_remediation(self, finding: dict[str, Any], framework: str = "Generic", scan_ctx=None) -> str:
         """Generate framework-specific remediation with code patches."""
         finding_with_fw = {**finding, "framework": framework}
         prompt = json.dumps(finding_with_fw, indent=2, default=str)
-        return await self.call(prompt, system_prompt=REMEDIATION_SYSTEM_PROMPT, temperature=0.1, max_tokens=1500, scan_ctx=scan_ctx)
+        return await self.call(
+            prompt, system_prompt=REMEDIATION_SYSTEM_PROMPT, temperature=0.1, max_tokens=1500, scan_ctx=scan_ctx
+        )
 
     async def generate_summary(self, vuln_type: str, payload: str, url: str, scan_ctx=None) -> str:
         """Generate professional vulnerability summary for report."""
@@ -309,7 +321,9 @@ JSON SCHEMA (STRICT — follow this exactly):
 Output ONLY valid JSON. No markdown. No explanations."""
         return await self.call(prompt, temperature=0.1, max_tokens=1500, scan_ctx=scan_ctx)
 
-    async def reconstruct_forensics(self, vuln_type: str, payload: str, response_snippet: str, url: str, scan_ctx=None) -> str:
+    async def reconstruct_forensics(
+        self, vuln_type: str, payload: str, response_snippet: str, url: str, scan_ctx=None
+    ) -> str:
         """Reconstruct forensic evidence for report."""
         prompt = f"""Reconstruct why this security exploit succeeded based on evidence.
 

@@ -1,4 +1,5 @@
 import logging
+
 _logger = logging.getLogger(__name__)
 """
 Vigilagent Delegation Manager (Architecture §5.5, §5.1.2, §29.13)
@@ -30,25 +31,32 @@ Routing pattern (Architecture §5.1.2):
 """
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Dict, Any, ClassVar, Awaitable, Callable, Literal, AsyncGenerator
+from typing import Any, Literal
 
-from backend.core.iteration_budget import IterationBudget, budget_config
+from backend.core.iteration_budget import IterationBudget
 
 logger = logging.getLogger("vigilagent.delegation")
 
-ChildStatus = Literal[
-    "completed", "failed", "budget_exhausted", "cancelled", "timeout", "rejected"
-]
+ChildStatus = Literal["completed", "failed", "budget_exhausted", "cancelled", "timeout", "rejected"]
 
 # The closed set of valid statuses, used to validate worker-returned packets so a
 # malformed/untrusted result payload can't inject an unknown status.
-_VALID_STATUSES: frozenset[str] = frozenset({
-    "completed", "failed", "budget_exhausted", "cancelled", "timeout", "rejected",
-})
+_VALID_STATUSES: frozenset[str] = frozenset(
+    {
+        "completed",
+        "failed",
+        "budget_exhausted",
+        "cancelled",
+        "timeout",
+        "rejected",
+    }
+)
 
 # A child runner is any coroutine that takes a context dict + budget and returns
 # a dict of findings/artifacts/summary. Specialized agents register builders.
@@ -62,19 +70,38 @@ EventHook = Callable[[dict], None]
 # Tools a child agent must NEVER receive. Prevents recursive delegation, user
 # interaction, and writes to shared memory from leaking into an isolated child
 # (Architecture §5 memory isolation + budget boundedness). Compared lowercased.
-BLOCKED_CHILD_TOOLS: frozenset[str] = frozenset({
-    "delegate", "delegate_task", "delegation",   # no recursive delegation
-    "spawn", "spawn_many",
-    "clarify", "ask_user", "ask",                 # no user interaction
-    "memory", "global_memory", "write_memory",    # no writes to shared memory
-    "approval_override", "approve",               # cannot self-approve
-})
+BLOCKED_CHILD_TOOLS: frozenset[str] = frozenset(
+    {
+        "delegate",
+        "delegate_task",
+        "delegation",  # no recursive delegation
+        "spawn",
+        "spawn_many",
+        "clarify",
+        "ask_user",
+        "ask",  # no user interaction
+        "memory",
+        "global_memory",
+        "write_memory",  # no writes to shared memory
+        "approval_override",
+        "approve",  # cannot self-approve
+    }
+)
 
 # ── Canonical worker specialties (Architecture §5.1.2) ──────────────────────────
-WORKER_SPECIALTIES: frozenset[str] = frozenset({
-    "recon", "browser", "api", "network",
-    "validation", "forensics", "reporting", "skill", "hybrid",
-})
+WORKER_SPECIALTIES: frozenset[str] = frozenset(
+    {
+        "recon",
+        "browser",
+        "api",
+        "network",
+        "validation",
+        "forensics",
+        "reporting",
+        "skill",
+        "hybrid",
+    }
+)
 _DEFAULT_SPECIALTY = "hybrid"
 
 # Routing hints: substring of an agent_class -> worker specialty. Lets a spec
@@ -92,11 +119,18 @@ _AGENT_CLASS_SPECIALTY: dict[str, str] = {
 }
 
 # Bounded delegation defaults (Hermes MAX_DEPTH / max_concurrent_children).
-DEFAULT_MAX_DEPTH = 3          # parent(0) -> child(1) -> ... bounded subtree
+DEFAULT_MAX_DEPTH = 3  # parent(0) -> child(1) -> ... bounded subtree
 # Per-specialty concurrency limits
-WORKER_SPECIALTY_LIMITS: Dict[str, int] = {
-    "recon": 4, "browser": 2, "network": 6, "api": 4,
-    "hybrid": 3, "validation": 4, "forensics": 2, "reporting": 2, "skill": 2,
+WORKER_SPECIALTY_LIMITS: dict[str, int] = {
+    "recon": 4,
+    "browser": 2,
+    "network": 6,
+    "api": 4,
+    "hybrid": 3,
+    "validation": 4,
+    "forensics": 2,
+    "reporting": 2,
+    "skill": 2,
 }
 DEFAULT_MAX_CONCURRENT = 4  # Fallback for unknown specialties
 
@@ -136,15 +170,15 @@ def normalize_specialty(specialty: str | None, agent_class: str = "") -> str:
 class ChildSpec:
     """Specification for a delegated child agent (Architecture §5)."""
 
-    agent_class: str                       # e.g. "ReconChild", "AttackChild"
+    agent_class: str  # e.g. "ReconChild", "AttackChild"
     objective: str
-    tools: list[str] = field(default_factory=list)   # tool allowlist (sanitized)
+    tools: list[str] = field(default_factory=list)  # tool allowlist (sanitized)
     budget: int = 50
-    context: dict = field(default_factory=dict)       # isolated parent summary
+    context: dict = field(default_factory=dict)  # isolated parent summary
     phase: str = ""
     timeout_s: int = 600
-    worker_specialty: str = "hybrid"       # recon|browser|api|network|validation|...
-    depth: int = 1                          # position in the delegation subtree
+    worker_specialty: str = "hybrid"  # recon|browser|api|network|validation|...
+    depth: int = 1  # position in the delegation subtree
 
     def __post_init__(self) -> None:
         # Enforce the restricted allowlist + canonical specialty up front so every
@@ -169,23 +203,44 @@ class ChildSpec:
             },
         }
 
-
-
     # Context sanitization: allowlist-based to prevent secret leakage
-    SAFE_CONTEXT_KEYS = frozenset({
-        "target", "target_url", "scope", "scope_policy",
-        "scan_id", "phase", "strategy",
-        "previous_findings", "entities", "endpoints", "services", "ports",
-        "wordlist_path", "aggression_level", "method", "targets",
-    })
+    SAFE_CONTEXT_KEYS = frozenset(
+        {
+            "target",
+            "target_url",
+            "scope",
+            "scope_policy",
+            "scan_id",
+            "phase",
+            "strategy",
+            "previous_findings",
+            "entities",
+            "endpoints",
+            "services",
+            "ports",
+            "wordlist_path",
+            "aggression_level",
+            "method",
+            "targets",
+        }
+    )
 
-    BLOCKED_CONTEXT_KEYS = frozenset({
-        "api_keys", "tokens", "credentials", "secrets",
-        "passwords", "private_keys", "session_cookies",
-        "jwt_tokens", "auth_headers", "vault_tokens",
-    })
+    BLOCKED_CONTEXT_KEYS = frozenset(
+        {
+            "api_keys",
+            "tokens",
+            "credentials",
+            "secrets",
+            "passwords",
+            "private_keys",
+            "session_cookies",
+            "jwt_tokens",
+            "auth_headers",
+            "vault_tokens",
+        }
+    )
 
-    def sanitize_context(self) -> Dict[str, Any]:
+    def sanitize_context(self) -> dict[str, Any]:
         """Return only safe context keys for child workers.
 
         Uses allowlist approach: only passes known-safe keys.
@@ -203,6 +258,7 @@ class ChildSpec:
                 )
         return safe
 
+
 @dataclass
 class ChildResult:
     """Structured child-agent return object (Architecture §5, ResultPacket)."""
@@ -216,8 +272,8 @@ class ChildResult:
     budget_used: int = 0
     duration_ms: int = 0
     error: str = ""
-    worker_specialty: str = "hybrid"        # which §5.1.2 pool handled the task
-    depth: int = 1                           # position in the delegation subtree
+    worker_specialty: str = "hybrid"  # which §5.1.2 pool handled the task
+    depth: int = 1  # position in the delegation subtree
     tools_allowed: list[str] = field(default_factory=list)  # restricted allowlist
 
     def to_dict(self) -> dict[str, Any]:
@@ -248,21 +304,27 @@ class DelegationManager:
     # Registry of in-process child runners keyed by agent_class.
     _runners: dict[str, ChildRunner] = {}
 
-    def __init__(self, bus: Any = None, master: Any = None, *, scan_id: str = "GLOBAL",
-                 max_depth: int = DEFAULT_MAX_DEPTH,
-                 max_concurrent: int = DEFAULT_MAX_CONCURRENT,
-                 depth: int = 0,
-                 event_hook: EventHook | None = None) -> None:
+    def __init__(
+        self,
+        bus: Any = None,
+        master: Any = None,
+        *,
+        scan_id: str = "GLOBAL",
+        max_depth: int = DEFAULT_MAX_DEPTH,
+        max_concurrent: int = DEFAULT_MAX_CONCURRENT,
+        depth: int = 0,
+        event_hook: EventHook | None = None,
+    ) -> None:
         self.bus = bus
         self.master = master
         self.scan_id = scan_id
         self.max_depth = max(1, int(max_depth))
-        self.depth = max(0, int(depth))             # this manager's tree depth
+        self.depth = max(0, int(depth))  # this manager's tree depth
         self._event_hook = event_hook
         # Bound concurrent fan-out so a parent can't spawn an unbounded child swarm
         # (Architecture §5 budget boundedness; Hermes max_concurrent_children).
         self._sema = asyncio.Semaphore(max(1, int(max_concurrent)))
-        self._specialty_semaphores: Dict[str, asyncio.Semaphore] = {}
+        self._specialty_semaphores: dict[str, asyncio.Semaphore] = {}
         self._active: dict[str, asyncio.Task] = {}
         self.telemetry = {
             "spawned": 0,
@@ -309,12 +371,23 @@ class DelegationManager:
         child_depth = self.depth + 1
         if child_depth > self.max_depth:
             self.telemetry["rejected"] += 1
-            self._emit("delegate.rejected", child_id=child_id, agent_class=spec.agent_class,
-                       reason="max_depth", depth=child_depth)
-            return self._stamp(spec, ChildResult(
-                child_id, spec.agent_class, "rejected",
-                summary=f"delegation depth limit reached (depth={child_depth}, max={self.max_depth})",
-            ), child_depth)
+            self._emit(
+                "delegate.rejected",
+                child_id=child_id,
+                agent_class=spec.agent_class,
+                reason="max_depth",
+                depth=child_depth,
+            )
+            return self._stamp(
+                spec,
+                ChildResult(
+                    child_id,
+                    spec.agent_class,
+                    "rejected",
+                    summary=f"delegation depth limit reached (depth={child_depth}, max={self.max_depth})",
+                ),
+                child_depth,
+            )
         spec.depth = child_depth
 
         if parent_budget is not None:
@@ -324,9 +397,15 @@ class DelegationManager:
 
         self.telemetry["spawned"] += 1
         started = time.time()
-        self._emit("delegate.spawned", child_id=child_id, agent_class=spec.agent_class,
-                   worker_specialty=spec.worker_specialty, depth=child_depth,
-                   tools_allowed=list(spec.tools), budget=spec.budget)
+        self._emit(
+            "delegate.spawned",
+            child_id=child_id,
+            agent_class=spec.agent_class,
+            worker_specialty=spec.worker_specialty,
+            depth=child_depth,
+            tools_allowed=list(spec.tools),
+            budget=spec.budget,
+        )
 
         # Prefer the distributed substrate when available (Architecture §5.1.2).
         use_worker = self.master is not None and getattr(self.master, "redis_client", None) is not None
@@ -345,19 +424,32 @@ class DelegationManager:
                 result.duration_ms = int((time.time() - started) * 1000)
                 self._stamp(spec, result, child_depth)
                 self._tally(result.status)
-                self._emit("delegate.completed", child_id=child_id, agent_class=spec.agent_class,
-                           status=result.status, duration_ms=result.duration_ms,
-                           budget_used=result.budget_used)
+                self._emit(
+                    "delegate.completed",
+                    child_id=child_id,
+                    agent_class=spec.agent_class,
+                    status=result.status,
+                    duration_ms=result.duration_ms,
+                    budget_used=result.budget_used,
+                )
                 return result
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await self._cancel_child(child_id)
                 self.telemetry["timeouts"] += 1
-                self._emit("delegate.timeout", child_id=child_id, agent_class=spec.agent_class,
-                           timeout_s=spec.timeout_s)
-                return self._stamp(spec, ChildResult(
-                    child_id, spec.agent_class, "timeout",
-                    summary=f"child exceeded timeout {spec.timeout_s}s",
-                    duration_ms=int((time.time() - started) * 1000)), child_depth)
+                self._emit(
+                    "delegate.timeout", child_id=child_id, agent_class=spec.agent_class, timeout_s=spec.timeout_s
+                )
+                return self._stamp(
+                    spec,
+                    ChildResult(
+                        child_id,
+                        spec.agent_class,
+                        "timeout",
+                        summary=f"child exceeded timeout {spec.timeout_s}s",
+                        duration_ms=int((time.time() - started) * 1000),
+                    ),
+                    child_depth,
+                )
             except asyncio.CancelledError:
                 await self._cancel_child(child_id)
                 self.telemetry["cancelled"] += 1
@@ -366,11 +458,18 @@ class DelegationManager:
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error("Delegation error for %s: %s", child_id, exc)
                 self.telemetry["failed"] += 1
-                self._emit("delegate.failed", child_id=child_id, agent_class=spec.agent_class,
-                           error=str(exc))
-                return self._stamp(spec, ChildResult(
-                    child_id, spec.agent_class, "failed", error=str(exc),
-                    duration_ms=int((time.time() - started) * 1000)), child_depth)
+                self._emit("delegate.failed", child_id=child_id, agent_class=spec.agent_class, error=str(exc))
+                return self._stamp(
+                    spec,
+                    ChildResult(
+                        child_id,
+                        spec.agent_class,
+                        "failed",
+                        error=str(exc),
+                        duration_ms=int((time.time() - started) * 1000),
+                    ),
+                    child_depth,
+                )
             finally:
                 self._active.pop(child_id, None)
 
@@ -383,8 +482,9 @@ class DelegationManager:
             result.tools_allowed = list(spec.tools)
         return result
 
-    async def spawn_many(self, specs: list[ChildSpec],
-                         parent_budget: IterationBudget | None = None) -> list[ChildResult]:
+    async def spawn_many(
+        self, specs: list[ChildSpec], parent_budget: IterationBudget | None = None
+    ) -> list[ChildResult]:
         """Spawn several children concurrently; ordered results (Architecture §29.3
         concurrent tool dispatch with ordered result collection)."""
         results = await asyncio.gather(
@@ -396,21 +496,21 @@ class DelegationManager:
             if isinstance(res, ChildResult):
                 normalized.append(res)
             else:
-                normalized.append(ChildResult(
-                    f"{spec.agent_class}-error", spec.agent_class, "failed", error=str(res)))
+                normalized.append(ChildResult(f"{spec.agent_class}-error", spec.agent_class, "failed", error=str(res)))
         return normalized
 
     # ── In-process execution ───────────────────────────────────────────────────
 
-    async def _run_in_process(self, spec: ChildSpec, child_id: str,
-                              budget: IterationBudget) -> ChildResult:
+    async def _run_in_process(self, spec: ChildSpec, child_id: str, budget: IterationBudget) -> ChildResult:
         runner = self._runners.get(spec.agent_class)
         if runner is None:
-            return ChildResult(child_id, spec.agent_class, "failed",
-                               error=f"no in-process runner registered for {spec.agent_class}")
+            return ChildResult(
+                child_id, spec.agent_class, "failed", error=f"no in-process runner registered for {spec.agent_class}"
+            )
         if budget.exhausted():
-            return ChildResult(child_id, spec.agent_class, "budget_exhausted",
-                               summary="child budget exhausted before start")
+            return ChildResult(
+                child_id, spec.agent_class, "budget_exhausted", summary="child budget exhausted before start"
+            )
         # Isolated context: the child receives a COPY augmented with its scope
         # metadata, so it can never mutate the parent's live context dict and the
         # runner can self-restrict to the allowlist (Architecture §5 isolation).
@@ -425,8 +525,7 @@ class DelegationManager:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            return ChildResult(child_id, spec.agent_class, "failed", error=str(exc),
-                               budget_used=budget.consumed)
+            return ChildResult(child_id, spec.agent_class, "failed", error=str(exc), budget_used=budget.consumed)
         status: ChildStatus = "budget_exhausted" if budget.exhausted() and not out else "completed"
         return ChildResult(
             child_id=child_id,
@@ -440,8 +539,7 @@ class DelegationManager:
 
     # ── Distributed (worker) execution (Architecture §5.1.2) ─────────────────────
 
-    async def _run_on_worker(self, spec: ChildSpec, child_id: str,
-                             budget: IterationBudget) -> ChildResult:
+    async def _run_on_worker(self, spec: ChildSpec, child_id: str, budget: IterationBudget) -> ChildResult:
         master = self.master
         task = spec.to_task(self.scan_id, child_id)
         result_key = f"delegation_result:{child_id}"
@@ -462,6 +560,7 @@ class DelegationManager:
                 raw = None
             if raw:
                 import json
+
                 data = json.loads(raw)
                 raw_status = str(data.get("status", "completed"))
                 status: ChildStatus = (
@@ -477,8 +576,7 @@ class DelegationManager:
                     budget_used=data.get("budget_used", 0),
                 )
             await asyncio.sleep(1.0)
-        return ChildResult(child_id, spec.agent_class, "timeout",
-                           summary="worker result not received in time")
+        return ChildResult(child_id, spec.agent_class, "timeout", summary="worker result not received in time")
 
     # ── Cancellation (Architecture §5 interrupt propagation) ─────────────────────
 
@@ -490,11 +588,8 @@ class DelegationManager:
         task = self._active.get(child_id)
         if task and not task.done():
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
-            except (asyncio.CancelledError, Exception):
-                pass
-
 
     def _get_specialty_semaphore(self, specialty: str) -> asyncio.Semaphore:
         """Get or create a semaphore for a specific worker specialty."""
@@ -552,12 +647,22 @@ class DelegationManager:
         return dict(self.telemetry)
 
 
-def make_delegation_manager(bus: Any = None, master: Any = None,
-                            scan_id: str = "GLOBAL", *,
-                            max_depth: int = DEFAULT_MAX_DEPTH,
-                            max_concurrent: int = DEFAULT_MAX_CONCURRENT,
-                            depth: int = 0,
-                            event_hook: EventHook | None = None) -> DelegationManager:
-    return DelegationManager(bus=bus, master=master, scan_id=scan_id,
-                             max_depth=max_depth, max_concurrent=max_concurrent,
-                             depth=depth, event_hook=event_hook)
+def make_delegation_manager(
+    bus: Any = None,
+    master: Any = None,
+    scan_id: str = "GLOBAL",
+    *,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT,
+    depth: int = 0,
+    event_hook: EventHook | None = None,
+) -> DelegationManager:
+    return DelegationManager(
+        bus=bus,
+        master=master,
+        scan_id=scan_id,
+        max_depth=max_depth,
+        max_concurrent=max_concurrent,
+        depth=depth,
+        event_hook=event_hook,
+    )

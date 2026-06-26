@@ -9,6 +9,7 @@ sibling computed here.
 
 Stays intentionally tiny — no I/O, no logging, no lookups beyond a dict.
 """
+
 from __future__ import annotations
 
 AGENT_ROLES: dict[str, str] = {
@@ -37,7 +38,7 @@ def _humanize(agent_id: str) -> str:
         return "Unknown"
     cleaned = agent_id
     if cleaned.startswith("agent_"):
-        cleaned = cleaned[len("agent_"):]
+        cleaned = cleaned[len("agent_") :]
     cleaned = cleaned.replace("_", " ").replace("-", " ").strip()
     return cleaned.title() if cleaned else agent_id
 
