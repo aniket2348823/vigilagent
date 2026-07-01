@@ -49,6 +49,44 @@ root_logger.handlers = [log_handler]
 
 logger = logging.getLogger(__name__)
 
+# Load .env file before validating environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+# Validate required environment variables at startup
+def _validate_env_vars():
+    """Validate required environment variables are set.
+
+    Only API_AUTH_KEY is truly required. Other API keys (SUPABASE, OPENROUTER,
+    GEMINI) are optional — the system degrades gracefully without them
+    (GI5 deterministic engine still works, LLM features are simply unavailable).
+    """
+    required_vars = [
+        "API_AUTH_KEY",
+    ]
+    optional_vars = [
+        "SUPABASE_URL",
+        "SUPABASE_KEY",
+        "OPENROUTER_API_KEY",
+        "GEMINI_API_KEY",
+    ]
+    missing_required = [var for var in required_vars if not os.getenv(var)]
+    if missing_required:
+        raise RuntimeError(
+            f"Missing required environment variables: {', '.join(missing_required)}. "
+            f"Please set them in .env or shell environment."
+        )
+    missing_optional = [var for var in optional_vars if not os.getenv(var)]
+    if missing_optional:
+        logger.warning(
+            f"Optional API keys not configured: {', '.join(missing_optional)}. "
+            f"LLM features (Gemini/OpenRouter) will be unavailable. "
+            f"System will use GI5 deterministic engine only."
+        )
+
+# Run validation immediately
+_validate_env_vars()
+
 # Vigilagent Core Imports
 from backend.api import defense
 from backend.api.endpoints import ai, attack, dashboard, recon, reports, runtime
@@ -182,7 +220,7 @@ async def lifespan(app: FastAPI):
 
     # Start session expiry cleanup task
     try:
-        from backend.api.dashboard import start_session_cleanup
+        from backend.core.auth import start_session_cleanup
         session_cleanup_task = _background_task_manager.create_task(start_session_cleanup(), name="session_cleanup")
         logger.info("[SESSION] Expiry cleanup task started")
     except Exception as _sc:

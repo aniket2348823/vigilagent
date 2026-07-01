@@ -16,6 +16,7 @@ lambda_agent = LambdaAgent("agent_lambda", None)
 class CodePayload(BaseModel):
     code: str
     language: str = "python"
+    filename: str = ""
 
 
 class FilePayload(BaseModel):
@@ -29,7 +30,7 @@ async def analyze_code(payload: CodePayload):
     Analyze source code for security vulnerabilities.
     Returns findings with line numbers, severity, and fix recommendations.
     """
-    findings = await lambda_agent.analyze(payload.code, payload.language)
+    findings = await lambda_agent.analyze(payload.code, payload.language, filename=payload.filename)
     return {
         "findings": findings,
         "total": len(findings),

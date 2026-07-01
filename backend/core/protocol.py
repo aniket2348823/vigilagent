@@ -65,6 +65,7 @@ class Vulnerability(BaseModel):
     description: str
     evidence: str  # The payload that worked
     remediation: str | None = None  # Fix suggestion
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)  # 0.0–1.0 detection confidence score
 
 
 class ResultPacket(BaseModel):

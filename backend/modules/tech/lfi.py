@@ -27,6 +27,31 @@ import urllib.parse
 
 from backend.core.base import BaseArsenalModule
 from backend.core.protocol import JobPacket, TaskTarget, Vulnerability
+from backend.core.verification import (
+    negative_proof_check,
+    entropy_delta,
+    fingerprint_length_delta,
+    calculate_final_confidence,
+    generate_oob_exfil_payloads,
+)
+
+# Module-level canary reference (set by orchestrator before scan)
+_canary = None
+_oob_tokens: list[str] = []
+
+
+def set_canary(canary) -> None:
+    """Set the canary receiver for OOB verification."""
+    global _canary, _oob_tokens
+    _canary = canary
+    _oob_tokens = []
+
+
+def clear_canary() -> None:
+    """Reset canary state after a scan."""
+    global _canary, _oob_tokens
+    _canary = None
+    _oob_tokens = []
 
 logger = logging.getLogger("FileInclusionProbe")
 
@@ -125,6 +150,24 @@ class FileInclusionProbe(BaseArsenalModule):
                 targets.append(
                     TaskTarget(url=attack, method="GET", headers=dict(headers), payload=packet.target.payload)
                 )
+
+        # Method 20: OOB exfiltration payloads (canary-backed SSRF via LFI)
+        if _canary and hasattr(_canary, 'generate_token') and len(_oob_tokens) < 50:
+            try:
+                oob_token = _canary.generate_token()
+                _oob_tokens.append(oob_token)
+                oob_domain = _canary.base_url.replace("http://", "").replace("https://", "")
+                for oob_payload, _oob_path in generate_oob_exfil_payloads(oob_domain, oob_token, "SSRF"):
+                    for param in target_params:
+                        mutated = {k: list(v) for k, v in params.items()}
+                        mutated[param] = [oob_payload]
+                        attack = f"{base}?{urllib.parse.urlencode(mutated, doseq=True)}"
+                        targets.append(
+                            TaskTarget(url=attack, method="GET", headers=dict(headers), payload=packet.target.payload)
+                        )
+            except Exception:
+                pass
+
         return targets
 
     async def analyze_responses(
@@ -169,6 +212,11 @@ class FileInclusionProbe(BaseArsenalModule):
             if ev.signals >= 1 or ev.verified:
                 signals.append("response_differential")
 
+            # Method 3: Negative proof — check for innocent explanations
+            is_genuine, neg_reasons = negative_proof_check(text, baseline_text, "LFI")
+            if not is_genuine:
+                continue
+
             # Confirm only when at least 2 independent signals agree AND one
             # of them is a CANONICAL inclusion marker (not just diff or error).
             canonical = "etc_passwd_line" in signals or "windows_boot_ini" in signals or "php_wrapper_b64" in signals
@@ -181,6 +229,38 @@ class FileInclusionProbe(BaseArsenalModule):
             seen.add(key)
 
             severity = "CRITICAL" if "etc_passwd_line" in signals or "php_wrapper_b64" in signals else "HIGH"
+
+            # Method 16: Content-length fingerprint — LFI response should match file size
+            # Use baseline as the "false" reference since LFI doesn't have a boolean toggle
+            fp = fingerprint_length_delta(baseline_text, text, baseline_text, "LFI")
+            if fp.matches_expectation:
+                signals.append("length_fingerprint_match")
+
+            # Method 14: Entropy analysis — /etc/passwd is high-entropy
+            ent_d = entropy_delta(baseline_text, text)
+            if abs(ent_d) > 0.5:
+                signals.append("entropy_change")
+
+            # Method 20: OOB canary callback verification (SSRF via LFI)
+            if _canary and _oob_tokens:
+                try:
+                    for oob_tok in _oob_tokens:
+                        if _canary.check_token(oob_tok):
+                            signals.append("oob_canary_callback")
+                            evidence_bits.append(f"OOB canary hit: token={oob_tok}")
+                            break
+                except Exception:
+                    pass
+
+            canonical_count = sum(1 for s in ("etc_passwd_line", "windows_boot_ini", "php_wrapper_b64") if s in signals)
+
+            confidence = calculate_final_confidence(
+                base_confidence=0.90 if canonical_count >= 2 else 0.80,
+                has_negative_proof_pass=is_genuine,
+                has_length_fingerprint="length_fingerprint_match" in signals,
+                has_entropy_signal="entropy_change" in signals,
+            )
+
             vulns.append(
                 Vulnerability(
                     name="File Inclusion (LFI / Path Traversal)",
@@ -190,7 +270,9 @@ class FileInclusionProbe(BaseArsenalModule):
                         f"Independent signals: {', '.join(signals)}."
                     ),
                     evidence=(
-                        f"Target: {target.url}\nEvidence: {'; '.join(evidence_bits)}\nDifferential: {ev.summary}"
+                        f"Target: {target.url}\nEvidence: {'; '.join(evidence_bits)}\n"
+                        f"Length fingerprint: baseline={fp.baseline_len} test={fp.test_len} delta={fp.delta}\n"
+                        f"Differential: {ev.summary}"
                     ),
                     remediation=(
                         "Resolve user-supplied path against an explicit allow-list of files. "
@@ -198,6 +280,7 @@ class FileInclusionProbe(BaseArsenalModule):
                         "allow_url_include=Off and open_basedir. Strip null bytes and "
                         "encoded traversal sequences before any filesystem call."
                     ),
+                    confidence=confidence,
                 )
             )
             # One confirmed LFI per URL is enough.

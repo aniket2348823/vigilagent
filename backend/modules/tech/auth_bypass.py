@@ -1,5 +1,59 @@
 from backend.core.base import BaseArsenalModule
 from backend.core.protocol import JobPacket, TaskTarget, Vulnerability
+from backend.core.verification import (
+    analyze_csrf_tokens,
+    calculate_final_confidence,
+    negative_proof_check,
+    entropy_delta,
+)
+
+# Module-level canary reference (set by orchestrator before scan)
+_canary = None
+_oob_tokens: list[str] = []
+
+
+def set_canary(canary) -> None:
+    """Set the canary receiver for OOB verification."""
+    global _canary, _oob_tokens
+    _canary = canary
+    _oob_tokens = []
+
+
+def clear_canary() -> None:
+    """Reset canary state after a scan to prevent stale tokens."""
+    global _canary, _oob_tokens
+    _canary = None
+    _oob_tokens = []
+
+
+# Non-SSRF auth bypass headers — these bypass authentication via method
+# override, proxy user spoofing, etc. but do NOT inject the canary URL.
+# Sent as separate requests in generate_payloads() (outside the canary block).
+_AUTH_BYPASS_HEADERS = [
+    # Method override (triggers different code paths)
+    {"X-HTTP-Method-Override": "DELETE"},
+    {"X-HTTP-Method": "DELETE"},
+    {"X-Method-Override": "DELETE"},
+
+    # Proxy user spoofing
+    {"X-ProxyUser": "admin"},
+
+    # Protocol override (can trick auth middleware into thinking request is internal)
+    {"X-Forwarded-Proto": "https"},
+    {"X-Forwarded-Ssl": "on"},
+    {"X-Forwarded-For-SSL": "1"},
+
+    # Cloud metadata headers (trigger metadata fetch in some frameworks)
+    {"X-aws-dataresponse": "true"},
+    {"X-aws-ec2-metadata-token": "token"},
+    {"X-Amzn-Trace-Id": "Root=1-test"},
+
+    # Custom auth bypass headers
+    {"Authorization": "Bearer admin"},
+    {"X-Api-Key": "admin"},
+    {"X-Auth-Token": "admin"},
+]
+
 
 # Lazy-init: import at call time to avoid blocking app startup (HIGH-49)
 _cortex = None
@@ -29,6 +83,75 @@ class AuthBypassTester(BaseArsenalModule):
         for bypass_set in ai_headers:
             targets.append(TaskTarget(url=packet.target.url, method="GET", headers=bypass_set))
 
+        # 3. Method 20: OOB SSRF payloads — inject canary callback URL as a
+        #    header value so that if the target reflects it in an outbound
+        #    request (e.g. webhook, redirect, admin notification), the canary
+        #    records the hit as irrefutable proof of server-side processing.
+        if _canary and hasattr(_canary, 'generate_token') and len(_oob_tokens) < 50:
+            try:
+                oob_token = _canary.generate_token()
+                _oob_tokens.append(oob_token)
+                oob_domain = _canary.base_url.replace("http://", "").replace("https://", "")
+                oob_url = f"http://{oob_domain}/ssrf?token={oob_token}"
+                # Inject the canary URL into headers that the server might
+                # forward to internal services, webhooks, or metadata endpoints.
+                # These headers are known to cause SSRF when proxies/CDNs
+                # forward them to backend services or webhooks.
+                _SSRF_HEADER_VECTORS = [
+                    # Standard proxy forwarding (RFC 7239)
+                    {"Forwarded": f"for={oob_url};by={oob_url};host={oob_url};proto=http"},
+                    {"Referer": oob_url},
+
+                    # Generic reverse proxy / load balancer
+                    {"X-Forwarded-For": oob_url},
+                    {"X-Forwarded-Host": oob_url},
+                    {"X-Forwarded-Server": oob_url},
+                    {"X-Real-IP": oob_url},
+                    {"X-Client-IP": oob_url},
+                    {"X-Host": oob_url},
+
+                    # Nginx-specific path override
+                    {"X-Original-URL": oob_url},
+                    {"X-Rewrite-URL": oob_url},
+
+                    # CDN-specific (Akamai, Cloudflare)
+                    {"True-Client-IP": oob_url},
+                    {"CF-Connecting-IP": oob_url},
+
+                    # Proxy auth bypass
+                    {"X-Custom-IP-Authorization": oob_url},
+                    {"X-ProxyUser-IP": oob_url},
+
+                    # Distributed tracing (forwarded to internal services)
+                    {"X-Request-ID": oob_url},
+                    {"X-Correlation-ID": oob_url},
+
+                    # WAF/CDN product-specific (Sucuri, IPX, Bolt, Azure Front Door)
+                    {"X-Sucuri-ID": oob_url},
+                    {"X-IPX-Forwarded-For": oob_url},
+                    {"X-Bolt-IP-Address": oob_url},
+                    {"X-Forwarded-Authorization": oob_url},
+
+                    # Host override (virtual host routing bypass)
+                    {"X-Original-Host": oob_url},
+                    {"X-Host-Header": oob_url},
+                    {"Host": oob_url},
+                ]
+                for hdr_payload in _SSRF_HEADER_VECTORS:
+                    targets.append(
+                        TaskTarget(url=packet.target.url, method="GET", headers=hdr_payload)
+                    )
+            except Exception:
+                pass
+
+        # 4. Non-SSRF auth bypass headers — method overrides, proxy user
+        #    spoofing, protocol overrides, cloud metadata triggers. These
+        #    don't inject the canary URL but bypass auth via different mechanisms.
+        for hdr_payload in _AUTH_BYPASS_HEADERS:
+            targets.append(
+                TaskTarget(url=packet.target.url, method="GET", headers=hdr_payload)
+            )
+
         return targets
 
     async def analyze_responses(
@@ -38,24 +161,57 @@ class AuthBypassTester(BaseArsenalModule):
 
         A success keyword alone is insufficient. We require the bypass response
         to (a) contain authenticated-context markers AND (b) differ materially
-        from a deny/baseline response, so >= 2 independent signals agree."""
-        from backend.modules.evidence import differential
+        from a deny/baseline response, so >= 2 independent signals agree.
+
+        Architecture §17/§25: WRONG-CLASS SUPPRESSION — if any response body
+        clearly belongs to a different vuln class (SQL error, /etc/passwd,
+        executable XSS, CMDI output), suppress the finding.
+        """
+        from backend.modules.evidence import classify_response_evidence, differential
 
         vulnerabilities = []
         if not interactions:
             return vulnerabilities
 
-        success_markers = ["admin", "dashboard", "welcome", "logout", "account", "profile"]
+        # WRONG-CLASS SUPPRESSION: drop everything if any response clearly
+        # belongs to a different vuln class.
+        for _t, text in interactions:
+            if isinstance(text, str):
+                classes = classify_response_evidence(text)
+                if classes - {"AUTH_BYPASS"}:
+                    return []
+
+        # More specific success markers — require authenticated-session indicators,
+        # not just any page that happens to say "admin" or "profile".
+        _AUTH_SESSION_MARKERS = (
+            "logout",  # only present in authenticated sessions
+            "my account",  # authenticated user dashboard
+            "welcome back",  # authenticated greeting
+            "change password",  # settings only for auth'd users
+            "sign out",  # only in authenticated views
+        )
+        _GENERIC_MARKERS = (
+            "admin", "dashboard", "welcome", "account", "profile",
+        )
 
         baseline_target, baseline_text = interactions[0]
         baseline_text = baseline_text if isinstance(baseline_text, str) else ""
+
+        # Method 23: CSRF token analysis on baseline
+        csrf_info = analyze_csrf_tokens(baseline_text)
 
         for idx, (target, text) in enumerate(interactions):
             if not isinstance(text, str) or not text:
                 continue
             low = text.lower()
-            has_auth_markers = any(m in low for m in success_markers)
-            if not has_auth_markers:
+
+            # Strong signal: session-specific markers that only appear when
+            # authenticated (logout, my account, welcome back, etc.)
+            has_session_marker = any(m in low for m in _AUTH_SESSION_MARKERS)
+            # Weak signal: generic keywords that could appear on public pages
+            has_generic_marker = any(m in low for m in _GENERIC_MARKERS)
+
+            if not has_session_marker and not has_generic_marker:
                 continue
 
             # Differential vs baseline (index 0). For idx 0 itself, compare
@@ -72,14 +228,67 @@ class AuthBypassTester(BaseArsenalModule):
             if not ev.verified:
                 continue
 
+            # Method 3: Negative proof — response must be structurally different
+            is_genuine, neg_reasons = negative_proof_check(text, baseline_text, "AUTH_BYPASS")
+            if not is_genuine:
+                continue
+
+            # Method 14: Entropy analysis
+            ent_d = entropy_delta(baseline_text, text)
+
+            signals: list[str] = []
+            if has_session_marker:
+                signals.append("session_marker")
+            if csrf_info.get("no_token"):
+                signals.append("no_csrf_protection")
+            elif csrf_info.get("weak_token"):
+                signals.append("weak_csrf_token")
+            if ev.verified:
+                signals.append("differential_confirmed")
+            if abs(ent_d) > 0.5:
+                signals.append("entropy_change")
+
+            # Method 20: OOB canary callback — irrefutable proof that the
+            # server processed the request and made an outbound connection.
+            if _canary and _oob_tokens:
+                try:
+                    for oob_tok in _oob_tokens:
+                        if _canary.check_token(oob_tok):
+                            signals.append("oob_canary_callback")
+                            break
+                except Exception:
+                    pass
+
+            # Method 23: Weak/no CSRF = independent auth weakness signal
+            csrf_boost = 0.0
+            if csrf_info.get("no_token"):
+                csrf_boost = 0.15
+            elif csrf_info.get("weak_token"):
+                csrf_boost = 0.10
+
+            confidence = calculate_final_confidence(
+                base_confidence=0.70 if has_session_marker else 0.50,
+                has_negative_proof_pass=is_genuine,
+                has_side_channel="differential_confirmed" in signals,
+                has_entropy_signal="entropy_change" in signals,
+            )
+            confidence = min(confidence + csrf_boost, 0.95)
+
             if idx == 0 and ("admin" in packet.target.url or "api/secure" in packet.target.url):
                 vulnerabilities.append(
                     Vulnerability(
                         name="Broken Access Control (No Auth)",
                         severity="CRITICAL",
                         description="Secure endpoint returned authenticated content without credentials.",
-                        evidence=f"GET {packet.target.url} without headers succeeded. {ev.summary}",
+                        evidence=(
+                            f"GET {packet.target.url} without headers succeeded. {ev.summary}\n"
+                            f"CSRF: has_token={csrf_info.get('has_csrf')}, "
+                            f"no_token={csrf_info.get('no_token')}, "
+                            f"weak={csrf_info.get('weak_token')}\n"
+                            f"Signals: {', '.join(signals)}"
+                        ),
                         remediation="Enforce authentication middleware on all secure routes.",
+                        confidence=confidence,
                     )
                 )
             elif idx > 0:
@@ -88,8 +297,14 @@ class AuthBypassTester(BaseArsenalModule):
                         name="Auth Bypass (Header Injection)",
                         severity="HIGH",
                         description=f"Endpoint accessible with bypass headers: {list(target.headers.keys())}",
-                        evidence=f"Headers: {target.headers}. {ev.summary}",
+                        evidence=(
+                            f"Headers: {target.headers}. {ev.summary}\n"
+                            f"CSRF: has_token={csrf_info.get('has_csrf')}, "
+                            f"no_token={csrf_info.get('no_token')}\n"
+                            f"Signals: {', '.join(signals)}"
+                        ),
                         remediation="Validate auth tokens server-side, not via headers.",
+                        confidence=confidence,
                     )
                 )
                 break  # One confirmed bypass is enough

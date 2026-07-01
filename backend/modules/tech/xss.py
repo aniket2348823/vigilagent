@@ -25,6 +25,16 @@ import urllib.parse
 
 from backend.core.base import BaseArsenalModule
 from backend.core.protocol import JobPacket, TaskTarget, Vulnerability
+from backend.core.verification import (
+    negative_proof_check,
+    entropy_delta,
+    side_channel_analysis,
+    detect_xss_csp_confirmed,
+    XSS_CSP_PAYLOAD,
+    XSS_MUTATION_PAYLOAD,
+    calculate_final_confidence,
+    stack_inconsistent_with_vuln,
+)
 
 # Sentinel-marked payloads. The `vgvg` token is unique enough to avoid false
 # matches against unrelated content while staying small enough to fit DVWA's
@@ -145,6 +155,16 @@ class XSSProbe(BaseArsenalModule):
                     TaskTarget(url=attack, method="GET", headers=dict(headers), payload=packet.target.payload)
                 )
 
+        # Method 7: Add CSP/MutationObserver payloads for deterministic XSS proof
+        for csp_payload in (XSS_CSP_PAYLOAD, XSS_MUTATION_PAYLOAD):
+            for param in target_params:
+                mutated = {k: list(v) for k, v in params.items()}
+                mutated[param] = [csp_payload]
+                attack = f"{base}?{urllib.parse.urlencode(mutated, doseq=True)}"
+                targets.append(
+                    TaskTarget(url=attack, method="GET", headers=dict(headers), payload=packet.target.payload)
+                )
+
         return targets
 
     async def analyze_responses(
@@ -191,9 +211,23 @@ class XSSProbe(BaseArsenalModule):
             if ev.signals >= 1 or ev.verified:
                 signals.append("response_differential")
 
+            # Method 7: CSP/MutationObserver deterministic proof
+            csp_confirmed, csp_evidence = detect_xss_csp_confirmed(text)
+            if csp_confirmed:
+                signals.append("csp_mutation_proof")
+
+            # Method 3: Negative proof — never confirm on JSON responses
+            is_genuine, neg_reasons = negative_proof_check(text, baseline_text, "XSS")
+            if not is_genuine:
+                continue
+
             # Confirm only when at least 2 independent signals agree, and one
             # of them must be a real reflection signal (no diff-only XSS).
-            reflection_signal = "full_payload_reflected_unencoded" in signals or "executable_context" in signals
+            reflection_signal = (
+                "full_payload_reflected_unencoded" in signals
+                or "executable_context" in signals
+                or "csp_mutation_proof" in signals
+            )
             if not reflection_signal or len(set(signals)) < 2:
                 continue
 
@@ -201,6 +235,24 @@ class XSSProbe(BaseArsenalModule):
             if key in seen:
                 continue
             seen.add(key)
+
+            # Method 14: Entropy analysis
+            ent_d = entropy_delta(baseline_text, text)
+            if abs(ent_d) > 0.5:
+                signals.append("entropy_change")
+
+            # Method 9: Side-channel analysis
+            sc_ok, sc_desc = side_channel_analysis(200, len(baseline_text), 200, len(text), "XSS")
+            if sc_ok:
+                signals.append("side_channel")
+
+            confidence = calculate_final_confidence(
+                base_confidence=0.80 if "executable_context" in signals else 0.70,
+                has_negative_proof_pass=is_genuine,
+                has_semantic_marker="csp_mutation_proof" in signals,
+                has_side_channel="side_channel" in signals,
+                has_entropy_signal="entropy_change" in signals,
+            )
 
             kind = "DOM-based" if "/xss_d" in target.url else "Reflected"
             vulns.append(
@@ -215,6 +267,7 @@ class XSSProbe(BaseArsenalModule):
                         f"Target: {target.url}\n"
                         f"Payload: {payload}\n"
                         f"Context match: {ctx or 'n/a'}\n"
+                        f"CSP/Mutation proof: {csp_evidence}\n"
                         f"Differential: {ev.summary}"
                     ),
                     remediation=(
@@ -222,6 +275,7 @@ class XSSProbe(BaseArsenalModule):
                         "Add a strict Content-Security-Policy that disallows inline "
                         "scripts and unsafe-eval."
                     ),
+                    confidence=confidence,
                 )
             )
             # One confirmed XSS per target URL is enough; don't spam variants.

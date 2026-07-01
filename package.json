@@ -8,7 +8,9 @@
         "dev": "vite",
         "build": "vite build",
         "lint": "eslint src/ --ext js,jsx --report-unused-disable-directives --max-warnings 0",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "test": "vitest run",
+        "test:watch": "vitest"
     },
     "dependencies": {
         "framer-motion": "^12.29.0",

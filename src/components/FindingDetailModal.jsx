@@ -51,6 +51,22 @@ function FindingDetailModal({ open, onClose, finding, severityStyles = {} }) {
                             CVSS {Number(finding.cvss_score).toFixed(1)}
                         </span>
                     )}
+                    {finding.confidence != null && (
+                        <div className="flex items-center gap-1.5">
+                            <div className="w-16 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                                <div
+                                    className="h-full rounded-full transition-all duration-300"
+                                    style={{
+                                        width: `${Math.round(finding.confidence * 100)}%`,
+                                        backgroundColor: finding.confidence >= 0.8 ? '#22c55e' : finding.confidence >= 0.6 ? '#eab308' : '#ef4444',
+                                    }}
+                                />
+                            </div>
+                            <span className="text-xs font-mono text-gray-300">
+                                {Math.round(finding.confidence * 100)}% confidence
+                            </span>
+                        </div>
+                    )}
                     {finding.cwe && (
                         <span className="text-xs font-mono text-gray-400 bg-white/5 px-2 py-0.5 rounded">
                             {finding.cwe}

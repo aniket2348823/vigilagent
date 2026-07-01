@@ -331,8 +331,9 @@ class GuardLayer:
                 self._stats["rejected_weak_signal"] += 1
                 return False, "weak_signal"
 
-        # Always check confidence, even for confirmed findings
-        if float(finding.get("confidence", 0)) < self.MIN_CONFIDENCE:
+        # Confidence is now a required field on Vulnerability (default 0.5)
+        finding_confidence = float(finding.get("confidence", 0.5))
+        if finding_confidence < self.MIN_CONFIDENCE:
             self._stats["rejected_low_confidence"] += 1
             return False, "low_confidence"
 
@@ -349,11 +350,18 @@ class GuardLayer:
         return True, "passed"
 
     def _compute_hash(self, finding: dict[str, Any]) -> str:
+        # Dedup key includes endpoint, vuln type, AND a content fingerprint.
+        # Include payload/code_snippet when present for finer-grained dedup
+        # (e.g. two different SQLi payloads on the same endpoint are distinct).
         endpoint = str(finding.get("url", finding.get("endpoint", ""))).split("?")[0].lower()
         vuln_type = str(finding.get("vuln_type", finding.get("type", ""))).upper()
-        response = str(finding.get("response", finding.get("response_body", "")))[:200]
-        # FIX-015: Use SHA-256 instead of deprecated MD5 for deduplication
-        response_sig = hashlib.sha256(response.encode("utf-8", errors="ignore")).hexdigest()[:8]
+        # Use payload or code_snippet for content fingerprint (first 200 chars)
+        content = str(
+            finding.get("payload", "") or
+            finding.get("code_snippet", "") or
+            finding.get("response", finding.get("response_body", ""))
+        )[:200]
+        response_sig = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()[:8]
         return hashlib.sha256(f"{endpoint}|{vuln_type}|{response_sig}".encode()).hexdigest()
 
     def cluster_findings(self, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:

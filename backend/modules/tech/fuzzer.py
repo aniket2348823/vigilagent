@@ -131,6 +131,8 @@ class APIFuzzer(BaseArsenalModule):
                 and target.url not in seen
             ):
                 seen.add(target.url)
+                # Confidence: HTML body reflection + divergence = high
+                confidence = min(0.75 + ev.signals * 0.1, 0.95)
                 vulns.append(
                     Vulnerability(
                         name="Reflected XSS (Fuzzer Canary)",
@@ -138,6 +140,7 @@ class APIFuzzer(BaseArsenalModule):
                         description="Sentinel payload reflected unencoded with response divergence.",
                         evidence=f"Vector: {vector}; {ev.summary}",
                         remediation="Context-aware output encoding plus strict CSP.",
+                        confidence=confidence,
                     )
                 )
 
@@ -151,6 +154,8 @@ class APIFuzzer(BaseArsenalModule):
                 and target.url not in seen
             ):
                 seen.add(target.url)
+                # Confidence: canonical passwd line + traversal vector + divergence = very high
+                confidence = min(0.85 + ev.signals * 0.05, 0.98)
                 vulns.append(
                     Vulnerability(
                         name="Path Traversal (Fuzzer Canary)",
@@ -158,6 +163,7 @@ class APIFuzzer(BaseArsenalModule):
                         description="Traversal vector returned the canonical /etc/passwd line.",
                         evidence=f"Vector: {vector}; {ev.summary}",
                         remediation="Resolve user paths against an allow-list; reject ../ sequences.",
+                        confidence=confidence,
                     )
                 )
         return vulns

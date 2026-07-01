@@ -39,7 +39,7 @@ const Navigation = ({ navigate, activePage }) => {
 
                         {/* Desktop Links */}
                         <div className="hidden md:flex items-center space-x-1" role="menubar">
-                            {['dashboard', 'scans', 'library', 'settings'].map((page) => {
+                            {['dashboard', 'scans', 'vulnerabilities', 'library', 'settings'].map((page) => {
                                 const isActive = activePage === page;
                                 return (
                                     <div key={page} className="relative flex flex-col items-center">
@@ -113,7 +113,7 @@ const Navigation = ({ navigate, activePage }) => {
                             aria-label="Mobile navigation"
                         >
                             <div className="flex flex-col py-3 gap-1">
-                                {['dashboard', 'scans', 'library', 'settings'].map((page) => {
+                                {['dashboard', 'scans', 'vulnerabilities', 'library', 'settings'].map((page) => {
                                     const isActive = activePage === page;
                                     return (
                                         <button

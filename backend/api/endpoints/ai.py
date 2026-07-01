@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks
@@ -29,21 +28,6 @@ async def generate_mutations(payload: MutationRequest):
     Trigger AI Payload suggestions manually.
     """
     base_request = {"url": payload.url, "method": payload.method, "body": payload.body}
-    if os.getenv("VIGILAGENT_TEST_MODE", "false").lower() == "true":
-        seed = str(payload.body)[:80]
-        return {
-            "status": "success",
-            "variants": [
-                {"type": "sqli", "payload": "' OR '1'='1", "target": payload.url},
-                {"type": "sqli", "payload": "admin'--", "target": payload.url},
-                {"type": "auth", "payload": {"username": "testuser", "password": "testpass"}, "target": payload.url},
-                {"type": "idor", "payload": {"id": 0}, "target": payload.url},
-                {"type": "xss", "payload": "<script>alert(1)</script>", "target": payload.url},
-                {"type": "json", "payload": {"$ne": seed}, "target": payload.url},
-                {"type": "logic", "payload": {"role": "admin"}, "target": payload.url},
-                {"type": "rate_limit", "payload": {"burst": payload.velocity}, "target": payload.url},
-            ],
-        }
     brain = get_cortex_engine()
     variants = await brain.synthesize_payloads(base_request)
     return {"status": "success", "variants": variants}

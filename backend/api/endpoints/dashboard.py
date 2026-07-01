@@ -9,6 +9,8 @@ import uuid
 
 import pyotp
 import qrcode
+from typing import Any
+
 from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
@@ -316,10 +318,8 @@ async def get_dashboard_stats(request: Request, authorization: str = Header(None
         return JSONResponse(status_code=200, content=_stats_cache)
 
     config = load_config()
-    # TEST MODE: Bypass auth for automated tests
-    is_test_mode = os.getenv("VIGILAGENT_TEST_MODE", "false").lower() == "true"
     # Validate auth token if 2FA is enabled OR if the client explicitly provided a token
-    if not is_test_mode and (config.get("enabled") or authorization):
+    if config.get("enabled") or authorization:
         is_valid, session = _validate_auth(authorization)
         if not is_valid or not session.get("authenticated"):
             return JSONResponse(
@@ -391,10 +391,8 @@ async def get_dashboard_stats(request: Request, authorization: str = Header(None
 @rate_limit()
 async def get_scan_list(request: Request, authorization: str = Header(None)):
     config = load_config()
-    # TEST MODE: Bypass auth for automated tests
-    is_test_mode = os.getenv("VIGILAGENT_TEST_MODE", "false").lower() == "true"
     # Validate auth token if 2FA is enabled OR if the client explicitly provided a token
-    if not is_test_mode and (config.get("enabled") or authorization):
+    if config.get("enabled") or authorization:
         is_valid, session = _validate_auth(authorization)
         if not is_valid or not session.get("authenticated"):
             return JSONResponse(status_code=401, content=[])
@@ -902,6 +900,431 @@ async def get_evolution_metrics():
             "skills": {},
             "extraction": {},
         }
+
+
+# ============================================================================
+# CVE CORRELATION ENDPOINT
+# ============================================================================
+
+
+@router.get("/api/cve/correlate")
+@rate_limit("/api/cve/correlate")
+async def correlate_cves():
+    """Cross-reference CVEs across all vulnerability sources.
+
+    Aggregates findings from GHSA, OSV, NVD, and registry lookups for every
+    package in the last scan, deduplicates by CVE ID, and produces a unified
+    correlation report with confidence scores.
+    """
+    try:
+        correlated = _build_cve_correlation()
+        total = len(correlated)
+        high_conf = sum(1 for c in correlated if c["confidence"] >= 0.7)
+        critical = sum(1 for c in correlated if c["overall_severity"] == "CRITICAL")
+        high = sum(1 for c in correlated if c["overall_severity"] == "HIGH")
+
+        return {
+            "success": True,
+            "correlated_cves": correlated,
+            "summary": {
+                "total_cves": total,
+                "high_confidence": high_conf,
+                "critical": critical,
+                "high": high,
+                "multi_source": sum(1 for c in correlated if c["source_count"] >= 2),
+            },
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "correlated_cves": [], "summary": {}}
+
+
+# ============================================================================
+# SHARED CVE CORRELATION HELPER
+# ============================================================================
+
+
+def _build_cve_correlation() -> list[dict]:
+    """Shared helper that builds the correlated CVE list from scan data.
+
+    Extracted from correlate_cves and export_cve_correlation to avoid
+    duplication (DRY).  Returns a list of CVE dicts sorted by confidence.
+    """
+    from backend.core.state import stats_db_manager
+
+    stats = stats_db_manager.get_stats()
+    scans = stats.get("scans", [])
+
+    def _add_cve(cve_map, cve_id, payload, timestamp):
+        if cve_id not in cve_map:
+            cve_map[cve_id] = {
+                "cve_id": cve_id,
+                "package": payload.get("package", ""),
+                "version": payload.get("version", ""),
+                "sources": [],
+                "severities": {},
+                "summaries": [],
+                "cvss_score": 0.0,
+                "first_seen": timestamp,
+                "last_seen": timestamp,
+                "scan_count": 0,
+            }
+        entry = cve_map[cve_id]
+        source = payload.get("source", "unknown")
+        if source not in entry["sources"]:
+            entry["sources"].append(source)
+        entry["severities"][source] = payload.get("severity", "UNKNOWN")
+        summary = payload.get("nvd_summary") or payload.get("ghsa_summary") or payload.get("osv_summary") or payload.get("summary", "")
+        if summary and summary not in entry["summaries"]:
+            entry["summaries"].append(summary)
+        cvss = payload.get("nvd_cvss_score", 0.0)
+        if cvss > entry["cvss_score"]:
+            entry["cvss_score"] = cvss
+        entry["scan_count"] += 1
+
+    cve_map: dict = {}
+    target_scans = scans
+    for s in reversed(scans):
+        for r in s.get("results", []):
+            if isinstance(r, dict) and r.get("source") == "sbom":
+                target_scans = [s]
+                break
+        if target_scans is not scans:
+            break
+
+    for s in target_scans:
+        for r in s.get("results", []):
+            if not isinstance(r, dict):
+                continue
+            payload = r.get("payload", {})
+            if not isinstance(payload, dict):
+                continue
+            cve_id = payload.get("cve_id", "")
+            if not cve_id:
+                continue
+            _add_cve(cve_map, cve_id, payload, r.get("timestamp", ""))
+
+    correlated = []
+    for cve_id, entry in cve_map.items():
+        source_count = len(entry["sources"])
+        confidence = 0.95 if source_count >= 3 else 0.70 if source_count == 2 else 0.40
+        if entry["cvss_score"] >= 9.0:
+            confidence = min(confidence + 0.15, 1.0)
+        elif entry["cvss_score"] >= 7.0:
+            confidence = min(confidence + 0.10, 1.0)
+        sev_order = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}
+        max_sev = max((sev_order.get(s.upper(), 0) for s in entry["severities"].values()), default=0)
+        severity_names = {v: k for k, v in sev_order.items()}
+        correlated.append({
+                "cve_id": cve_id,
+                "package": entry["package"],
+                "version": entry["version"],
+                "overall_severity": severity_names.get(max_sev, "UNKNOWN"),
+                "cvss_score": entry["cvss_score"],
+                "confidence": round(confidence, 2),
+                "sources": entry["sources"],
+                "source_count": source_count,
+                "source_severities": entry["severities"],
+                "summary": entry["summaries"][0] if entry["summaries"] else "",
+                "first_seen": entry["first_seen"],
+                "last_seen": entry["last_seen"],
+                "scan_count": entry["scan_count"],
+                "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}" if cve_id.startswith("CVE-") else "",
+            })
+    correlated.sort(key=lambda x: (x["confidence"], x["cvss_score"]), reverse=True)
+    return correlated
+
+
+@router.get("/api/cve/correlate/export")
+@rate_limit("/api/cve/correlate")
+async def export_cve_correlation(export_format: str = "json"):
+    """Export the CVE correlation report in JSON or CSV format.
+
+    Query params:
+    - export_format: 'json' (default) or 'csv'
+    """
+    from starlette.responses import StreamingResponse
+
+    try:
+        correlated = _build_cve_correlation()
+        fmt = (export_format or "json").lower()
+
+        if fmt not in ("json", "csv"):
+            return JSONResponse(status_code=400, content={"success": False, "error": "format must be 'json' or 'csv'"})
+
+        if fmt == "csv":
+            import csv
+            import io
+
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=[
+                "cve_id", "package", "version", "overall_severity", "cvss_score",
+                "confidence", "source_count", "sources", "summary", "first_seen", "scan_count",
+            ])
+            writer.writeheader()
+            for row in correlated:
+                writer.writerow({
+                    "cve_id": row["cve_id"],
+                    "package": row["package"],
+                    "version": row["version"],
+                    "overall_severity": row["overall_severity"],
+                    "cvss_score": row["cvss_score"],
+                    "confidence": row["confidence"],
+                    "source_count": row["source_count"],
+                    "sources": ",".join(row["sources"]),
+                    "summary": row["summary"].replace("\n", " ")[:200],
+                    "first_seen": row["first_seen"],
+                    "scan_count": row["scan_count"],
+                })
+            output.seek(0)
+            return StreamingResponse(
+                iter([output.getvalue()]),
+                media_type="text/csv",
+                headers={"Content-Disposition": "attachment; filename=cve_correlation_report.csv"},
+            )
+
+        # Default: JSON
+        return {
+            "success": True,
+            "format": "json",
+            "generated_at": time.time(),
+            "correlated_cves": correlated,
+            "summary": {
+                "total_cves": len(correlated),
+                "high_confidence": sum(1 for c in correlated if c["confidence"] >= 0.7),
+                "critical": sum(1 for c in correlated if c["overall_severity"] == "CRITICAL"),
+                "high": sum(1 for c in correlated if c["overall_severity"] == "HIGH"),
+            },
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
+# SBOM SCANNER CONFIG ENDPOINT
+# ============================================================================
+
+
+SBOM_VALID_KEYS = {
+    "registry_cache_ttl_seconds": int,
+    "ghsa_cache_ttl_seconds": int,
+    "osv_cache_ttl_seconds": int,
+    "nvd_cache_ttl_seconds": int,
+    "osv_enabled": bool,
+    "ghsa_enabled": bool,
+    "registry_enabled": bool,
+    "nvd_enabled": bool,
+    "max_advisories_per_package": int,
+}
+
+
+def _read_sbom_config() -> dict[str, Any]:
+    """Read the sbom_scanner section from engagement.yaml with defaults."""
+    defaults: dict[str, Any] = {
+        "registry_cache_ttl_seconds": 3600,
+        "ghsa_cache_ttl_seconds": 3600,
+        "osv_cache_ttl_seconds": 3600,
+        "nvd_cache_ttl_seconds": 3600,
+        "osv_enabled": True,
+        "ghsa_enabled": True,
+        "registry_enabled": True,
+        "nvd_enabled": True,
+        "max_advisories_per_package": 10,
+    }
+    try:
+        import yaml
+        from backend.core.config import ENGAGEMENT_CONFIG_PATH
+
+        if os.path.exists(ENGAGEMENT_CONFIG_PATH):
+            with open(ENGAGEMENT_CONFIG_PATH, encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+            sbom = data.get("sbom_scanner", {})
+            if isinstance(sbom, dict):
+                for k, v in sbom.items():
+                    if k in defaults and v is not None:
+                        defaults[k] = v
+    except Exception as exc:
+        logger.debug("Could not read sbom config: %s", exc)
+    defaults["config_source"] = "engagement.yaml"
+    defaults["nvd_api_key_configured"] = bool(os.getenv("NVD_API_KEY", ""))
+    return defaults
+
+
+def _write_sbom_config(updates: dict[str, Any]) -> dict[str, Any]:
+    """Write updates to the sbom_scanner section in engagement.yaml.
+
+    Only whitelisted keys are accepted. Values are coerced to the expected type.
+    Returns the updated config.
+    """
+    try:
+        import yaml
+        from backend.core.config import ENGAGEMENT_CONFIG_PATH
+
+        data: dict[str, Any] = {}
+        if os.path.exists(ENGAGEMENT_CONFIG_PATH):
+            with open(ENGAGEMENT_CONFIG_PATH, encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+
+        sbom = data.get("sbom_scanner", {})
+        if not isinstance(sbom, dict):
+            sbom = {}
+
+        for key, value in updates.items():
+            if key not in SBOM_VALID_KEYS:
+                continue
+            expected = SBOM_VALID_KEYS[key]
+            try:
+                sbom[key] = expected(value)
+            except (ValueError, TypeError):
+                pass
+
+        data["sbom_scanner"] = sbom
+
+        with open(ENGAGEMENT_CONFIG_PATH, "w", encoding="utf-8") as fh:
+            yaml.dump(data, fh, default_flow_style=False, sort_keys=False)
+
+        return _read_sbom_config()
+    except Exception as exc:
+        logger.error("Failed to write sbom config: %s", exc)
+        raise
+
+
+@router.get("/api/sbom/config")
+@rate_limit("/api/sbom/config")
+async def get_sbom_config():
+    """Return the current SBOM scanner configuration."""
+    try:
+        return {"success": True, "config": _read_sbom_config()}
+    except Exception as e:
+        return {"success": False, "error": str(e), "config": {}}
+
+
+@router.post("/api/sbom/config")
+@rate_limit("/api/sbom/config")
+@csrf_protect()
+async def update_sbom_config(request: Request):
+    """Update SBOM scanner settings in engagement.yaml.
+
+    Accepts a JSON body with any combination of the whitelisted keys.
+    Returns the updated configuration.
+    """
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse(status_code=400, content={"success": False, "error": "Request body must be a JSON object"})
+
+        updates = {k: v for k, v in body.items() if k in SBOM_VALID_KEYS}
+        if not updates:
+            return JSONResponse(status_code=400, content={"success": False, "error": f"No valid keys. Allowed: {list(SBOM_VALID_KEYS.keys())}"})
+
+        updated_config = _write_sbom_config(updates)
+        return {"success": True, "config": updated_config, "updated_keys": list(updates.keys())}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
+
+@router.get("/api/mitre/heatmap")
+async def get_mitre_heatmap():
+    """MITRE ATT&CK coverage heatmap showing which techniques the scanner covers.
+
+    Returns a list of tactics, each with its techniques and coverage status.
+    Used by the frontend to render an ATT&CK Navigator-style heatmap.
+    """
+    try:
+        from backend.reporting.mitre_tagger import get_all_techniques, _VULN_TO_MITRE
+
+        # Build tactic → technique mapping from the tagger
+        all_techniques = get_all_techniques()
+
+        # ATT&CK Enterprise tactic definitions (ordered)
+        TACTIC_ORDER = [
+            ("TA0043", "reconnaissance", "Reconnaissance"),
+            ("TA0042", "resource-development", "Resource Development"),
+            ("TA0001", "initial-access", "Initial Access"),
+            ("TA0002", "execution", "Execution"),
+            ("TA0003", "persistence", "Persistence"),
+            ("TA0004", "privilege-escalation", "Privilege Escalation"),
+            ("TA0005", "defense-evasion", "Defense Evasion"),
+            ("TA0006", "credential-access", "Credential Access"),
+            ("TA0007", "discovery", "Discovery"),
+            ("TA0008", "lateral-movement", "Lateral Movement"),
+            ("TA0009", "collection", "Collection"),
+            ("TA0011", "command-and-control", "Command and Control"),
+            ("TA0010", "exfiltration", "Exfiltration"),
+            ("TA0040", "impact", "Impact"),
+        ]
+
+        heatmap = []
+        total_techniques = 0
+        covered_techniques = 0
+
+        for tactic_id, tactic_short, tactic_name in TACTIC_ORDER:
+            raw_techniques = all_techniques.get(tactic_id, [])
+            covered = len(raw_techniques)
+            total_techniques += max(covered, 1)  # count each tactic
+            covered_techniques += covered
+
+            heatmap.append({
+                "tactic_id": tactic_id,
+                "tactic_name": tactic_name,
+                "tactic_short": tactic_short,
+                "techniques": raw_techniques,
+                "covered_count": covered,
+                "coverage_color": (
+                    "green" if covered >= 2 else
+                    "yellow" if covered >= 1 else
+                    "red"
+                ),
+            })
+
+        # Count unique techniques across all vuln types
+        unique_techniques = set()
+        for tags in _VULN_TO_MITRE.values():
+            for tag in tags:
+                unique_techniques.add(tag.technique_id)
+
+        return {
+            "success": True,
+            "heatmap": heatmap,
+            "summary": {
+                "total_tactics": len(TACTIC_ORDER),
+                "tactics_with_coverage": sum(1 for h in heatmap if h["covered_count"] > 0),
+                "total_unique_techniques": len(unique_techniques),
+                "unique_technique_ids": sorted(unique_techniques),
+                "coverage_percentage": round(
+                    (covered_techniques / total_techniques * 100) if total_techniques else 0, 1
+                ),
+            },
+            "source": "MITRE ATT&CK v15",
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "heatmap": [],
+            "summary": {},
+        }
+
+
+@router.get("/api/mitre/techniques")
+async def get_mitre_techniques():
+    """List all MITRE ATT&CK techniques mapped to vulnerability types."""
+    try:
+        from backend.reporting.mitre_tagger import _VULN_TO_MITRE
+
+        vuln_mappings = []
+        for vuln_type, tags in sorted(_VULN_TO_MITRE.items()):
+            vuln_mappings.append({
+                "vuln_type": vuln_type,
+                "techniques": [t.to_dict() for t in tags],
+            })
+
+        return {
+            "success": True,
+            "mappings": vuln_mappings,
+            "total_vuln_types": len(vuln_mappings),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "mappings": []}
 
 
 # ============================================================================

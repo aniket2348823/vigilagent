@@ -157,29 +157,6 @@ async def analyze_threat(request: Request):
             logging.getLogger("defense").debug("JSON parse failed: %s", exc)
             return JSONResponse(status_code=500, content={"error": "Malformed json", "mode": "validation_error"})
 
-        # [TEST HARNESS COMPLIANCE: TC004/TC011]
-        # AI Latency bypass for known test prompts to avoid 20s+ processing time
-        # SECURITY FIX (C-11): Test-mode shortcut is gated behind VIGILAGENT_TEST_MODE.
-        # Without this gate, any attacker could trigger hardcoded keyword matches
-        # to bypass real analysis. In production, all requests go through full analysis.
-        import os as _os
-
-        is_test_mode = _os.getenv("VIGILAGENT_TEST_MODE", "false").lower() == "true"
-        if is_test_mode:
-            content_str = str(raw_payload.get("content", "")).lower()
-            if any(kw in content_str for kw in ["test injection", "malicious prompt", "malformed", "test latency"]):
-                if "malformed" in content_str:
-                    return JSONResponse(
-                        status_code=500, content={"error": "Forced Test-Mode Malformed Payload Failure"}
-                    )
-                return {
-                    "verdict": "BLOCK",
-                    "reason": "AI Unified Protection Layer: Malicious injection detected.",
-                    "risk_score": 95,
-                    "confidence": 0.99,
-                    "engine": "Test-Mode Mock",
-                }
-
         # Manually invoke Pydantic model
         try:
             payload = ThreatPayload(**raw_payload)
@@ -257,14 +234,10 @@ async def analyze_threat(request: Request):
             reason = result.vulnerabilities[0].description
 
         # HYBRID AI: Dynamic risk scoring instead of hardcoded 95/10
-        # Check test mode to avoid LLM calls
-        test_mode = getattr(_get_cortex(), "test_mode", False)
-        if result.vulnerabilities and not test_mode:
+        if result.vulnerabilities:
             risk_score = await _get_cortex().assess_contextual_risk(
                 threat_type=reason or "UI_ANOMALY", target_url=payload.url, context=payload.content
             )
-        elif result.vulnerabilities and test_mode:
-            risk_score = 95  # Test mode: use fixed high risk score
         else:
             risk_score = 10
 

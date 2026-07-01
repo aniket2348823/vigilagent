@@ -305801,7 +305801,7 @@
             "scan_id": "HIVE-V5-0dd1d55fb5",
             "target_url": "http://localhost:8080/login.php",
             "scope": "http://localhost:8080/login.php",
-            "status": "Running",
+            "status": "Interrupted",
             "modules": [
                 "The Tycoon",
                 "The Escalator",
@@ -313200,7 +313200,7 @@
             ]
         }
     ],
-    "active_scans": 1,
+    "active_scans": 0,
     "total_scans": 57,
     "total_requests": 8894,
     "vulnerabilities": 0,

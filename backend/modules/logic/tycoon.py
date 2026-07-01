@@ -162,6 +162,8 @@ class TheTycoon(BaseArsenalModule):
             ev = logic_confirm(text, positive_markers=["success", "order confirmed", "accepted", "paid"])
             if not ev.verified:
                 continue
+            # Confidence: logic_confirm verified + signal count
+            confidence = min(0.6 + ev.signals * 0.15, 0.90)
             if target.payload and "quantity" in target.payload:
                 qty = target.payload.get("quantity")
                 vulns.append(
@@ -171,6 +173,7 @@ class TheTycoon(BaseArsenalModule):
                         description=f"Server accepted quantity {qty}, potentially refunding or overflowing.",
                         evidence=f"{target.payload}. {ev.summary}",
                         remediation="Perform strict validation on quantity and ensure it is > 0.",
+                        confidence=confidence,
                     )
                 )
             elif target.payload and "price" in target.payload:
@@ -181,6 +184,7 @@ class TheTycoon(BaseArsenalModule):
                         description="Server accepted sub-atomic currency values.",
                         evidence=f"{target.payload}. {ev.summary}",
                         remediation="Validate decimal precision matches currency constraints.",
+                        confidence=confidence,
                     )
                 )
         return vulns

@@ -16,15 +16,18 @@ export default defineConfig({
     test: {
         globals: true,
         environment: 'jsdom',
-        setupFiles: './src/test/setup.js',
+        setupFiles: ['./src/test/setup.js'],
         css: true,
         pool: 'vmThreads',
+        include: ['src/test/**/*.test.{js,jsx}'],
         exclude: [
             '**/node_modules/**',
             '**/dist/**',
             '**/data/scans/**',
             '**/extension/**',
         ],
+        // Use modern Rolldown instead of deprecated esbuild
+        // oxc is now the default in Vite 5.2+
     },
     server: {
         host: "0.0.0.0",

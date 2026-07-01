@@ -186,6 +186,8 @@ class TheSkipper(BaseArsenalModule):
             if diff.signals < 1 and not diff.verified:
                 continue
 
+            # Confidence: logic_confirm + differential = strong
+            confidence = min(0.65 + ev.signals * 0.1 + diff.signals * 0.05, 0.90)
             if idx == 1:
                 vulns.append(
                     Vulnerability(
@@ -195,6 +197,7 @@ class TheSkipper(BaseArsenalModule):
                         "completing the prior steps.",
                         evidence=f"URL: {target.url}. Skipper baseline rejected. {ev.summary}; {diff.summary}",
                         remediation="Enforce server-side state machine checks at every workflow step.",
+                        confidence=confidence,
                     )
                 )
             elif idx == 2:
@@ -208,6 +211,7 @@ class TheSkipper(BaseArsenalModule):
                             f"{ev.summary}; {diff.summary}"
                         ),
                         remediation="Never trust Referer for authorization; use signed/anti-CSRF tokens.",
+                        confidence=confidence,
                     )
                 )
         return vulns

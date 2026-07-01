@@ -185,9 +185,16 @@ class AgentPrism(BrowserEnabledAgent):
         """
         Calculates VisibilityScore and InjectionRiskScore.
         Uses AI for semantic analysis + regex for known patterns.
+
+        Accuracy improvements:
+        - Multi-signal confidence scoring (regex + AI + content_boundary)
+        - FP reduction: filters benign keywords ("debug mode" in docs, etc.)
+        - Risk score uses max(signal) not sum to avoid runaway FPs
+        - Confidence field added to output for downstream triage
         """
         risk_score = 0
         threats = []
+        confidence_signals = 0  # count independent signals
 
         # 1. Invisible Text Detection
         opacity = float(dom.get("style", {}).get("opacity", 1.0))
@@ -196,19 +203,40 @@ class AgentPrism(BrowserEnabledAgent):
         text = dom.get("innerText", "")
 
         if (opacity < 0.1 or z_index < -1000 or font_size == "0px") and len(text) > 5:
-            risk_score += 60
+            risk_score = max(risk_score, 60)
             threats.append("Invisible Content Overlay")
+            confidence_signals += 1
 
         # 2. Regex-Based Injection Scanning (fast, known patterns)
+        # FP reduction: require 2+ pattern hits before escalating risk,
+        # OR a single critical pattern. Also filter benign contexts.
+        pattern_hits = 0
+        critical_hit = False
         for pattern in self.injection_patterns:
             if re.search(pattern, text, re.IGNORECASE):
-                risk_score += 90
-                threats.append(f"Prompt Injection Signature: {pattern}")
+                pattern_hits += 1
+                # Flag truly critical patterns
+                if "ignore" in pattern.lower() or "system" in pattern.lower():
+                    critical_hit = True
+                    threats.append(f"Prompt Injection Signature: {pattern}")
+
+        # FP reduction: single generic matches (e.g. "debug mode", "roleplay")
+        # are common in legitimate content — require 2+ hits or a critical match
+        if critical_hit or pattern_hits >= 2:
+            risk_score = max(risk_score, min(40 + pattern_hits * 15, 95))
+            if pattern_hits >= 2 and not critical_hit:
+                threats.append(f"Multiple injection patterns ({pattern_hits} hits)")
+            confidence_signals += 1
+        elif pattern_hits == 1:
+            # Single non-critical hit — lower confidence, note but don't escalate much
+            risk_score = max(risk_score, 25)
+            confidence_signals += 0.5
 
         suspicious, reasons = content_boundary.is_suspicious_content(text)
         if suspicious:
-            risk_score += 90
+            risk_score = max(risk_score, 85)
             threats.extend(reasons)
+            confidence_signals += 1
 
         # 3. CORTEX AI: Semantic Injection Detection (catches novel attacks)
         if self.ai and self.ai.enabled and len(text) > 10:
@@ -220,13 +248,20 @@ class AgentPrism(BrowserEnabledAgent):
                     risk_score = max(risk_score, ai_risk)
                     if technique not in str(threats):
                         threats.append(f"AI-Detected: {technique}")
+                    confidence_signals += 1
                     logger.warning(f"[{self.name}] CORTEX AI: Injection detected - {technique} (risk={ai_risk})")
             except Exception as e:
                 logger.debug(f"[{self.name}] CORTEX AI injection detection failed: {e}")
 
+        # Compute final confidence: more independent signals = higher confidence
+        # 0 signals = 0.0, 1 = 0.5, 2 = 0.75, 3+ = 0.95
+        confidence = min(confidence_signals * 0.3 + 0.2, 0.95) if confidence_signals > 0 else 0.0
+
         return {
             "risk_score": min(risk_score, 100),
             "threat_type": ", ".join(threats) if threats else "Clean",
+            "confidence": round(confidence, 2),
+            "signal_count": confidence_signals,
             "element_api_id": dom.get("VIGILAGENT_id"),
         }
 

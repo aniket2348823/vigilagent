@@ -7,14 +7,14 @@
 # ----------------------------------------------------------------------------
 
 engagement:
-  name: "unconfigured-engagement"
+  name: "dvwa-local-lab"
   client: ""
   # authorization: "none" => passive/recon only. "explicit" => active testing
   # permitted within the window. This MUST match engagement.authorization in
   # scope.yaml; ScopePolicy is the enforcing authority.
-  authorization: none
-  authorized_by: ""          # name/role of the person who authorized testing
-  authorization_ref: ""      # ticket / contract / rules-of-engagement reference
+  authorization: explicit
+  authorized_by: "local-admin"
+  authorization_ref: "local-dev-lab"
   starts_at: ""              # ISO-8601, e.g. 2026-05-29T00:00:00Z
   ends_at: ""                # ISO-8601
 
@@ -29,6 +29,21 @@ defaults:
 contacts:
   approver: ""
   emergency: ""
+
+# SBOM scanner tuning — cache TTLs (seconds) and lookup toggles.
+# Set cache_ttl_seconds to 0 to disable caching (re-fetch every time).
+# Set osv_enabled / ghsa_enabled to false to skip that lookup source.
+sbom_scanner:
+  registry_cache_ttl_seconds: 3600   # npm / PyPI registry lookup cache
+  ghsa_cache_ttl_seconds: 3600       # GitHub Advisory Database cache
+  osv_cache_ttl_seconds: 3600        # OSV (osv.dev) cache
+  osv_enabled: true                  # query Open Source Vulnerabilities
+  ghsa_enabled: true                 # query GitHub Advisory Database
+  registry_enabled: true             # query npm + PyPI registries
+  nvd_enabled: true                  # query NIST NVD (rate-limited: 5 req/30s unauth)
+  nvd_cache_ttl_seconds: 3600        # NVD CVE lookup cache
+  # Maximum advisories per package to report (prevents noise from popular pkgs)
+  max_advisories_per_package: 10
 
 notes: |
   This is a template. Copy and fill per engagement. No active testing runs

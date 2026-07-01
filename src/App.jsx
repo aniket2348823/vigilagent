@@ -4,6 +4,7 @@ import Scans from './components/Scans';
 import NewScan from './components/NewScan';
 import Settings from './components/Settings';
 import Library from './components/Library';
+import Vulnerabilities from './components/Vulnerabilities';
 import Login from './components/Login';
 import SmoothScroll from './components/SmoothScroll';
 import GlobalBackground from './components/GlobalBackground';
@@ -130,6 +131,7 @@ export default function App() {
                         )}
                         {currentPage === 'scans' && <Scans key="scans" navigate={navigate} />}
                         {currentPage === 'newscan' && <NewScan key="newscan" navigate={navigate} />}
+                        {currentPage === 'vulnerabilities' && <Vulnerabilities key="vulnerabilities" navigate={navigate} />}
                         {currentPage === 'settings' && <Settings key="settings" navigate={navigate} />}
                         {currentPage === 'library' && <Library key="library" navigate={navigate} />}
                     </AnimatePresence>

@@ -54,6 +54,7 @@ from backend.core.scope import ScopePolicy
 from backend.core.state import stats_db_manager
 from backend.core.task_manager import TaskManager
 from backend.modules.tech.http_client import http_client
+from backend.core.verification import canary as _canary_instance
 
 # CRITICAL FIX: Move CVSS engine import to module level to avoid per-event
 # import overhead (was inside event_listener closure, adding ~50ms latency
@@ -147,147 +148,6 @@ class HiveOrchestrator:
         # 0. Scan registration is deferred until ScanLifecycleManager is
         #    constructed (after scan_events, broadcast_throttle, phase_gate, bus
         #    are all defined).  See "# --- LIFECYCLE WIRING ---" below.
-        # ====================================================================
-        # [TEST MODE FAST-PATH] TC005/TC010/TC011 COMPLIANCE
-        # When VIGILAGENT_TEST_MODE is active, skip ALL agent creation,
-        # real HTTP recon, payload injection, and heavyweight report generation.
-        # This prevents the event loop from being starved by hundreds of
-        # outbound HTTP connections during concurrent automated test scans.
-        # ====================================================================
-        is_test_mode = getattr(ai_cortex, "test_mode", False)
-        # SECURITY FIX (C-2): Test mode requires BOTH the cortex flag AND
-        # an environment variable. This prevents leaked test mode from
-        # bypassing all security in production.
-        _env_test_mode = os.getenv("VIGILAGENT_TEST_MODE", "false").lower() == "true"
-        is_test_mode = is_test_mode and _env_test_mode
-        if is_test_mode:
-            logger.warning(
-                f"[Orchestrator] TEST MODE ACTIVE for scan {scan_id}. Security bypasses enabled — NEVER use in production."
-            )
-
-            # Update status to Running
-            for s in stats_db_manager.get_stats()["scans"]:
-                if s["id"] == scan_id:
-                    s["status"] = "Running"
-                    break
-            stats_db_manager._save()
-
-            # Determine scan duration
-            duration_val = target_config.get("duration")
-            scan_duration = int(duration_val) if duration_val is not None else 10
-            # Ensure minimum duration for WebSocket listeners to connect and receive events
-            scan_duration = max(scan_duration, 10)
-
-            # Lightweight monitoring loop — broadcasts frequently for WS listeners
-            try:
-                from backend.core.metrics import metrics as _m
-
-                _m.scans_started_total.inc()
-                _m.scans_active.inc()
-            except Exception:
-                pass
-            loop_start = time.time()
-            while time.time() - loop_start < scan_duration:
-                await manager.broadcast_immediate(
-                    {
-                        "type": "SCAN_UPDATE",
-                        "payload": {"id": scan_id, "status": "Running", "target_url": target_config["url"]},
-                    }
-                )
-                _test_agents = [
-                    "planner",
-                    "alpha",
-                    "beta",
-                    "sigma",
-                    "gamma",
-                    "omega",
-                    "kappa",
-                    "zeta",
-                    "prism",
-                    "chi",
-                    "delta",
-                    "lambda",
-                    "network",
-                ]
-                _test_idx = int((time.time() - loop_start) / 0.3) % len(_test_agents)
-                _cur_agent = _test_agents[_test_idx]
-                await manager.broadcast_immediate(
-                    {
-                        "type": "LIVE_ATTACK_FEED",
-                        "scan_id": scan_id,
-                        "payload": {
-                            "timestamp": datetime.now().strftime("%H:%M:%S"),
-                            "agent": _cur_agent,
-                            "threat_type": "MONITORING",
-                            "url": target_config["url"],
-                            "result": f"Scan in progress (Test Mode) - {_cur_agent.upper()} active...",
-                            "severity": "INFO",
-                            "risk_score": 0,
-                        },
-                    }
-                )
-                await asyncio.sleep(0.3)
-
-            # Finalize: mark as Completed with report_ready immediately
-            await manager.broadcast({"type": "SCAN_UPDATE", "payload": {"id": scan_id, "status": "Finalizing"}})
-
-            # Create a minimal mock PDF report
-            try:
-                report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "reports")
-                os.makedirs(report_dir, exist_ok=True)
-                report_path = os.path.join(report_dir, f"Scan_Report_{scan_id}.pdf")
-
-                from fpdf import FPDF
-
-                mock_pdf = FPDF()
-                mock_pdf.add_page()
-                mock_pdf.set_font("Arial", "B", 16)
-                mock_pdf.cell(0, 10, "Vigilagent - Test Mode Report", ln=True)
-                mock_pdf.set_font("Arial", "", 12)
-                mock_pdf.cell(0, 10, f"Scan ID: {scan_id}", ln=True)
-                mock_pdf.cell(0, 10, f"Target: {target_config['url']}", ln=True)
-                mock_pdf.cell(0, 10, "Status: Completed (Test Mode)", ln=True)
-                mock_pdf.output(report_path)
-                logger.info(f"[Orchestrator] TEST MODE: Mock report saved to {report_path}")
-            except Exception as e:
-                logger.warning(f"[Orchestrator] TEST MODE: Mock report generation failed (non-critical): {e}")
-
-            stats_db_manager.sync_complete_scan(scan_id, status="Completed", report_ready=True)
-
-            # Emit terminating events for WS pipeline flush
-            await manager.broadcast_immediate(
-                {
-                    "type": "LIVE_ATTACK_FEED",
-                    "scan_id": scan_id,
-                    "payload": {
-                        "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        "agent": "alpha",
-                        "threat_type": "TERMINATION",
-                        "url": target_config["url"],
-                        "result": "Scan Lifecycle Completed (Test Mode)",
-                        "severity": "INFO",
-                        "risk_score": 0,
-                    },
-                }
-            )
-            await manager.broadcast_immediate({"type": "REPORT_READY", "payload": {"id": scan_id}})
-            await manager.broadcast_immediate(
-                {"type": "SCAN_UPDATE", "payload": {"id": scan_id, "status": "Completed"}}
-            )
-            try:
-                from backend.core.metrics import metrics as _m
-
-                _m.scans_completed_total.inc()
-                _m.scans_active.dec()
-            except Exception:
-                pass
-
-            logger.info(
-                f"[Orchestrator] TEST MODE: Scan {scan_id} completed in {time.time() - loop_start:.1f}s (fast-path)."
-            )
-            return  # Exit early — no agents, no real HTTP I/O
-        # ==== END TEST MODE FAST-PATH ====
-
         # 1. Create Nervous System (Distributed Switch)
         redis_url = getattr(settings, "REDIS_URL", None)
         if redis_url:
@@ -432,6 +292,10 @@ class HiveOrchestrator:
 
                         # Generate CVSS 4.0 score, evidence, and remediation for this finding
                         # Uses module-level imports (_cvss_score, etc.) for efficiency.
+                        # MITRE ATT&CK tagging (always runs, no external deps)
+                        from backend.reporting.mitre_tagger import enrich_finding as _mitre_enrich
+                        _mitre_enrich(real_payload)
+
                         _import_ok = _CVSS_AVAILABLE
 
                         # Default CVSS values — overridden below if enrichment succeeds
@@ -1074,6 +938,117 @@ class HiveOrchestrator:
             }
         )
 
+        # ═══════════════════════════════════════════════════════════════════════
+        # METHOD 18+21: PRE-SCAN TECH FINGERPRINTING
+        # Fingerprint the target's technology stack and WAF before dispatching
+        # modules. This eliminates wrong-stack FPs and enables WAF bypass.
+        # ═══════════════════════════════════════════════════════════════════════
+        pre_scan_result = None
+        try:
+            from backend.core.tech_fingerprint import run_pre_scan
+
+            async def _pre_scan_request(url, method="GET", headers=None):
+                try:
+                    record = await http_client.request(
+                        method, url, headers=headers or {}, scan_id=scan_id, timeout=10,
+                    )
+                    return record.status, dict(record.response_headers), record.response_body
+                except Exception:
+                    return 0, {}, ""
+
+            pre_scan_result = await run_pre_scan(_pre_scan_request, target_config["url"])
+            fp = pre_scan_result.fingerprint
+            logger.info(
+                "[%s] Pre-scan fingerprint: lang=%s db=%s server=%s waf=%s",
+                scan_id, fp.language, fp.database, fp.server, pre_scan_result.waf_detected,
+            )
+            # Broadcast fingerprint to dashboard
+            await manager.broadcast({
+                "type": "LIVE_ATTACK_FEED",
+                "scan_id": scan_id,
+                "payload": {
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "agent": "planner",
+                    "threat_type": "FINGERPRINT",
+                    "url": target_config["url"],
+                    "result": (
+                        f"🔍 Tech stack: {fp.language}/{fp.framework} | DB: {fp.database} | "
+                        f"Server: {fp.server} | WAF: {pre_scan_result.waf_detected}"
+                    ),
+                    "severity": "INFO",
+                    "risk_score": 0,
+                },
+            })
+            # Log module enablement
+            if pre_scan_result.enabled_modules:
+                logger.info(
+                    "[%s] Enabled modules: %s | Disabled: %s",
+                    scan_id, pre_scan_result.enabled_modules, pre_scan_result.disabled_modules,
+                )
+            for rec in pre_scan_result.recommendations:
+                logger.info("[%s] Recommendation: %s", scan_id, rec)
+        except Exception as _fp_err:
+            logger.debug("[%s] Pre-scan fingerprint failed (non-fatal): %s", scan_id, _fp_err)
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # METHOD 8: CANARY SERVER LIFECYCLE
+        # Start a real HTTP canary server for OOB verification across all probe
+        # modules.  Each module calls set_canary() with this instance before
+        # generating payloads and clear_canary() on shutdown.
+        # ═══════════════════════════════════════════════════════════════════════
+        try:
+            await _canary_instance.start()
+            logger.info("[%s] Canary server started: %s", scan_id, _canary_instance.base_url)
+            await manager.broadcast({
+                "type": "LIVE_ATTACK_FEED",
+                "scan_id": scan_id,
+                "payload": {
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "agent": "planner",
+                    "threat_type": "CANARY",
+                    "url": target_config["url"],
+                    "result": f"🐦 Canary server online — {_canary_instance.base_url}",
+                    "severity": "INFO",
+                    "risk_score": 0,
+                },
+            })
+        except Exception as _canary_err:
+            logger.debug("[%s] Canary server failed to start (non-fatal): %s", scan_id, _canary_err)
+
+        # Wire the canary into probe modules that support OOB verification
+        _canary_modules = []
+        try:
+            from backend.modules.tech import sqli as _sqli_mod
+            _sqli_mod.set_canary(_canary_instance)
+            _canary_modules.append(_sqli_mod)
+        except Exception:
+            pass
+        try:
+            from backend.modules.tech import command_injection as _cmdi_mod
+            _cmdi_mod.set_canary(_canary_instance)
+            _canary_modules.append(_cmdi_mod)
+        except Exception:
+            pass
+        try:
+            from backend.modules.tech import lfi as _lfi_mod
+            _lfi_mod.set_canary(_canary_instance)
+            _canary_modules.append(_lfi_mod)
+        except Exception:
+            pass
+        try:
+            from backend.modules.logic import chronomancer as _chrono_mod
+            _chrono_mod.set_canary(_canary_instance)
+            _canary_modules.append(_chrono_mod)
+        except Exception:
+            pass
+        try:
+            from backend.modules.tech import auth_bypass as _ab_mod
+            _ab_mod.set_canary(_canary_instance)
+            _canary_modules.append(_ab_mod)
+        except Exception:
+            pass
+        logger.info("[%s] Canary wired into %d probe modules", scan_id, len(_canary_modules))
+
         # [V6 REAL-TIME FIX] Dispatch selected modules concurrently!
         module_mapper = {
             "The Tycoon": "logic_tycoon",
@@ -1203,8 +1178,7 @@ class HiveOrchestrator:
             # Replace long sleep with frequent status broadcasts to ensure late-connecting
             # test clients receive the expected SCAN_UPDATE and LIVE_ATTACK_FEED events.
             loop_start = time.time()
-            is_test_mode = getattr(ai_cortex, "test_mode", False)
-            broadcast_interval = 0.5 if is_test_mode else 2.0
+            broadcast_interval = 2.0
 
             _monitor_agents = [
                 "planner",
@@ -1231,7 +1205,7 @@ class HiveOrchestrator:
             while time.time() - loop_start < scan_duration:
                 _mon_idx = int((time.time() - loop_start) / broadcast_interval) % len(_monitor_agents)
                 _cur_mon = _monitor_agents[_mon_idx]
-                # [TC010 FIX] Use broadcast_immediate to ensure events hit the listener
+                # Use broadcast_immediate to ensure events hit the listener
                 await manager.broadcast_immediate(
                     {
                         "type": "SCAN_UPDATE",
@@ -1367,6 +1341,18 @@ class HiveOrchestrator:
                 await asyncio.gather(*HiveOrchestrator._orphaned_tasks, return_exceptions=True)
                 HiveOrchestrator._orphaned_tasks.clear()
 
+            # --- METHOD 8: STOP CANARY SERVER & CLEAR MODULE STATE ---
+            try:
+                await _canary_instance.stop()
+            except Exception:
+                pass
+            for _mod in _canary_modules:
+                try:
+                    _mod.clear_canary()
+                except Exception:
+                    pass
+            logger.info("[%s] Canary server stopped, module state cleared", scan_id)
+
             # --- SCAN ISOLATION: UNSUBSCRIBE LISTENERS ---
             for etype in EventType:
                 bus.unsubscribe(etype, event_listener)
@@ -1458,9 +1444,8 @@ class HiveOrchestrator:
                         # Cooldown scales with request volume: 2s base + 1s per 5000 requests (Cap 10s)
                         total_reqs = telemetry.get("total_requests", 0)
 
-                        # [TC005/010 FIX] Skip slow delays in Test Mode to ensure pass
-                        is_test_mode = getattr(ai_cortex, "test_mode", False)
-                        adaptive_delay = 0.1 if is_test_mode else min(2.0 + (total_reqs / 5000.0), 10.0)
+                        # [ATOMIC SYNC: V6] Mark READY and COMPLETED in one atomic operation
+                        adaptive_delay = min(2.0 + (total_reqs / 5000.0), 10.0)
 
                         # [ATOMIC SYNC: V6] Mark READY and COMPLETED in one atomic operation
                         # We do this BEFORE the delay to ensure UI activation is instant
@@ -1530,8 +1515,7 @@ class HiveOrchestrator:
                             logger.warning(f"[{scan_id}] Per-scan learning loop failed: {le}")
                         # ═══════════════════════════════════════════════════════════════════════
 
-                        # [TEST HARNESS COMPLIANCE: TC010]
-                        # Emit a terminating LIVE_ATTACK_FEED event to flush the pipeline for local E2E verification
+                        # Emit a terminating LIVE_ATTACK_FEED event to flush the pipeline
                         await manager.broadcast(
                             {
                                 "type": "LIVE_ATTACK_FEED",

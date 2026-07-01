@@ -152,19 +152,10 @@ class CortexEngine:
         import os
 
         self.test_mode = os.getenv("VIGILAGENT_TEST_MODE", "false").lower() == "true"
-        if not self.test_mode:
-            try:
-                import json as _json
-
-                if os.path.exists("user_config.json"):
-                    with open("user_config.json") as f:
-                        cfg = _json.load(f)
-                        if not cfg.get("enabled", True):
-                            self.test_mode = True
-            except Exception as e:
-                logger.debug(f"CORTEX: user_config read failed: {e}")
         if self.test_mode:
             logger.info("CORTEX: [!!!] TEST MODE ACTIVE - Bypassing heavy LLM calls [!!!]")
+        else:
+            logger.info("CORTEX: Real mode — LLM calls will be executed")
 
         # --- Persistent Session ---
         self._session = None

@@ -229,6 +229,7 @@ class JWTTokenCracker(BaseArsenalModule):
                             "referrers, browser history, and bookmarks.",
                             evidence=f"Token in URL: {target.url}",
                             remediation="Move JWT to the Authorization header or HttpOnly cookie.",
+                            confidence=0.90,  # Structural observation = high confidence
                         )
                     )
 
@@ -243,6 +244,7 @@ class JWTTokenCracker(BaseArsenalModule):
                             "for an authenticated session.",
                             evidence=f"JWT header: {parsed.get('header')}",
                             remediation="Reject unsigned JWTs. Pin accepted algorithms server-side.",
+                            confidence=0.98,  # Structural proof = definitive
                         )
                     )
 
@@ -270,6 +272,7 @@ class JWTTokenCracker(BaseArsenalModule):
                             description="JWT signature validated against a common weak HMAC secret.",
                             evidence=f"Recovered weak secret candidate: {weak}",
                             remediation="Rotate JWT signing keys to high-entropy secrets or asymmetric signing.",
+                            confidence=0.95,  # Cracked secret = definitive proof
                         )
                     )
 
@@ -292,6 +295,8 @@ class JWTTokenCracker(BaseArsenalModule):
                 if len(set(weaknesses)) >= 2 and risk >= 60:
                     summary = ", ".join(sorted(set(weaknesses)))
                     recs = (jwt_analysis or {}).get("recommendations") or []
+                    # AI analysis confidence: risk score + weakness count
+                    confidence = min(0.5 + (risk / 200) + len(set(weaknesses)) * 0.05, 0.85)
                     vulns.append(
                         Vulnerability(
                             name=f"JWT Weakness: {summary}",
@@ -299,6 +304,7 @@ class JWTTokenCracker(BaseArsenalModule):
                             description=f"AI-confirmed JWT weaknesses (risk={risk}): {summary}.",
                             evidence=f"Weaknesses: {weaknesses}; risk_score={risk}",
                             remediation=recs[0] if recs else "Implement RS256 JWT validation.",
+                            confidence=confidence,
                         )
                     )
 

@@ -488,10 +488,21 @@ const Scans = ({ navigate }) => {
                                                                         <div className="grid gap-2">
                                                                             {(scan.findings || []).map((f, fi) => (
                                                                                 <div key={fi} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] cursor-pointer transition-colors" onClick={() => setSelectedFinding(f)}>
+                                                                                    {f.confidence != null && (
+                                                                                        <div className="flex items-center gap-1 shrink-0">
+                                                                                            <div className="w-8 h-1 rounded-full bg-white/10 overflow-hidden">
+                                                                                                <div className="h-full rounded-full transition-all" style={{ width: `${Math.round((f.confidence || 0) * 100)}%`, backgroundColor: (f.confidence || 0) >= 0.8 ? '#22c55e' : (f.confidence || 0) >= 0.6 ? '#eab308' : '#ef4444' }} />
+                                                                                            </div>
+                                                                                            <span className="text-[9px] text-gray-500 font-mono">{Math.round((f.confidence || 0) * 100)}%</span>
+                                                                                        </div>
+                                                                                    )}
                                                                                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${getSeverityClass(f.cvss_severity || f.severity)}`}>
                                                                                         {(f.cvss_severity || f.severity || 'INFO').toUpperCase()}
                                                                                     </span>
                                                                                     <span className="text-xs text-white font-medium">{f.type || f.name || 'Finding'}</span>
+                                                                                    {f.confidence != null && (
+                                                                                        <span className="text-[9px] text-gray-500 font-mono">{Math.round((f.confidence || 0) * 100)}% conf</span>
+                                                                                    )}
                                                                                     <span className="text-[10px] text-gray-500 font-mono truncate flex-1" title={f.url || ''}>{f.url || ''}</span>
                                                                                     {f.cvss_score != null && (
                                                                                         <div className="flex items-center gap-2 shrink-0">

@@ -47,8 +47,22 @@ class TheEscalator(BaseArsenalModule):
     async def analyze_responses(
         self, interactions: list[tuple[TaskTarget, str]], packet: JobPacket
     ) -> list[Vulnerability]:
-        """Confirm mass assignment with >= 2 independent signals (Architecture §9.3)."""
-        from backend.modules.evidence import logic_confirm
+        """Confirm mass assignment with >= 2 independent signals (Architecture §9.3).
+
+        Architecture §17/§25: WRONG-CLASS SUPPRESSION — if any response body
+        clearly belongs to a different vuln class (SQL error, /etc/passwd,
+        executable XSS, CMDI output), suppress the finding. Also requires
+        per-finding confidence scoring for downstream triage.
+        """
+        from backend.modules.evidence import classify_response_evidence, logic_confirm
+
+        # WRONG-CLASS SUPPRESSION: drop everything if any response clearly
+        # belongs to a different vuln class.
+        for _t, text in interactions:
+            if isinstance(text, str):
+                classes = classify_response_evidence(text)
+                if classes - {"MASS_ASSIGNMENT"}:
+                    return []
 
         vulns = []
         for target, text in interactions:
@@ -65,6 +79,8 @@ class TheEscalator(BaseArsenalModule):
             if ev.verified:
                 meth = target.method
                 severity = "CRITICAL" if meth == "PATCH" else "HIGH"
+                # Confidence: based on number of independent signals
+                confidence = min(ev.signals / 3.0, 1.0) if ev.signals > 0 else 0.5
                 vulns.append(
                     Vulnerability(
                         name=f"Mass Assignment ({meth})",
@@ -72,6 +88,7 @@ class TheEscalator(BaseArsenalModule):
                         description=f"Accepted {target.payload} via {meth}",
                         evidence=f"Payload {target.payload}. {ev.summary}",
                         remediation="Use explicit DTOs and block arbitrary model bindings.",
+                        confidence=confidence,
                     )
                 )
         return vulns
