@@ -204,7 +204,10 @@ const NewScan = ({ navigate }) => {
         try {
             const result = await createScan({
                 target_url: targetUrl,
-                mode: "STANDARD",
+                // AGGRESSIVE = full recon power: every applicable arsenal tool
+                // runs (all 39 when available) and every selected attack module
+                // fires against the recon-discovered endpoints.
+                mode: "AGGRESSIVE",
                 modules: selectedModules,
             });
 

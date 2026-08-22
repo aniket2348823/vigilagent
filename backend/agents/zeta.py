@@ -55,6 +55,16 @@ class ZetaAgent(BrowserEnabledAgent):
         self.base_concurrency = command_lane.max_concurrent
         self.throttled = False  # current governor throttle state
         self.waf_pressure = 0  # rolling 403/429/5xx burst pressure (0..10)
+        # Edge-triggered CommandLane saturation latch: once the lane saturates
+        # (active_count >= max_concurrent) we broadcast THROTTLE ONCE and set
+        # the latch; when it drains we broadcast RESUME once and clear it.
+        # Without the latch every governance cycle re-broadcasts THROTTLE while
+        # the lane is legitimately busy, agents flip _throttled=True and NO
+        # RESUME ever fires (Zeta's own self.throttled is only set by the
+        # should_throttle() branch), so the swarm stalls mid-scan — observed on
+        # a live DVWA run where jobs stopped completing for 10+ minutes while
+        # THROTTLE spam continued.
+        self._lane_pressured = False
         self._skill_rec_cache: dict[str, Any] = {}  # HIGH-69: bounded via SkillRecallMixin or manual eviction
 
     async def setup(self):
@@ -133,7 +143,11 @@ class ZetaAgent(BrowserEnabledAgent):
             await self.governance_cycle()
             await self.refill_budget()
             await self.drain_queue()
-            await asyncio.sleep(1.0)
+            # V8 LOAD FIX: 1s -> 3s. Governance broadcasts are edge-triggered
+            # (THROTTLE/RESUME fire once per state transition, not per cycle),
+            # so the slower cadence only trims idle wakeups + CONTROL_SIGNAL
+            # noise across the 13-agent swarm — response latency is unchanged.
+            await asyncio.sleep(3.0)
 
     async def governance_cycle(self):
         # 1. PREDICTIVE AUTO-SCALING
@@ -162,7 +176,10 @@ class ZetaAgent(BrowserEnabledAgent):
             self.error_budget_current -= 10  # Severe penalty for triggering defensive mechanisms
 
         telemetry = command_lane.telemetry
-        if telemetry["active_count"] >= telemetry["max_concurrent"] or telemetry["total_timed_out"] > 0:
+        lane_busy = telemetry["active_count"] >= telemetry["max_concurrent"] or telemetry["total_timed_out"] > 0
+        if lane_busy and not self._lane_pressured:
+            # Edge: saturate -> THROTTLE ONCE (not every cycle).
+            self._lane_pressured = True
             await self.broadcast_signal(
                 "THROTTLE",
                 {
@@ -170,6 +187,12 @@ class ZetaAgent(BrowserEnabledAgent):
                     "reason": f"CommandLane pressure active={telemetry['active_count']} timed_out={telemetry['total_timed_out']}",
                 },
             )
+        elif not lane_busy and self._lane_pressured:
+            # Edge: drain -> RESUME once so throttled agents unpause. This is
+            # the counterpart that previously never fired, leaving the swarm
+            # permanently throttled after the first saturation spike.
+            self._lane_pressured = False
+            await self.broadcast_signal("RESUME", {"reason": "CommandLane drained"})
 
         # 5. RUNTIME GOVERNOR DECISION (Architecture §5.2/§29.4)
         # Decide whether to slow/pause or resume based on aggregate instability,

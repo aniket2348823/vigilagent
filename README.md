@@ -287,7 +287,7 @@ Built with **React 18 + Vite**, the dashboard provides:
 - Dark mode with glassmorphism aesthetics
 - Responsive layout across devices
 - Real-time severity badges and status indicators
-- Toast notifications via `useReconLiveFeed` WebSocket hook
+- Toast notifications via the shared `useWebSocket` bridge + `useToast`
 
 ---
 
@@ -573,7 +573,7 @@ vigilagent/
 ├── src/                           # React 18 + Vite frontend
 │   ├── components/                # UI components (Dashboard, NewScan, Scans, ...)
 │   ├── lib/                       # API client (apiUrl + websocketUrl)
-│   ├── hooks/                     # Custom hooks (useReconLiveFeed, ...)
+│   ├── hooks/                     # Custom hooks (useWebSocket, useToast)
 │   ├── App.jsx                    # Root component with routing
 │   └── index.css                  # Global styles (dark mode, glassmorphism)
 ├── config/                        # Runtime configuration

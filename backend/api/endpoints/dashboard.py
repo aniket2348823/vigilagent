@@ -304,17 +304,26 @@ async def _get_self_awareness_summary():
 _stats_cache = {}
 _stats_last_updated = 0.0
 
+# The self-awareness block is the most expensive part of /stats (per-agent
+# queue/DB queries) and the dashboard UI doesn't render it live — recompute it
+# at most once a minute instead of on every stats-cache expiry.
+_sa_cache = None
+_sa_last_updated = 0.0
+_SA_TTL_SECONDS = 60.0
+
 
 @router.get("/stats")
 @rate_limit("/api/dashboard/stats")
 async def get_dashboard_stats(request: Request, authorization: str = Header(None)):
     """V7: Cached statistics for TC011 High-Concurrency compliance."""
-    global _stats_last_updated, _stats_cache
+    global _stats_last_updated, _stats_cache, _sa_cache, _sa_last_updated
     import time
 
     from starlette.responses import JSONResponse
 
-    if time.time() - _stats_last_updated < 1.0 and _stats_cache:
+    # 3s TTL: the frontend polls every 15s and the WebSocket carries live
+    # metrics, so this recompute budget is ample while staying "fresh enough".
+    if time.time() - _stats_last_updated < 3.0 and _stats_cache:
         return JSONResponse(status_code=200, content=_stats_cache)
 
     config = load_config()
@@ -365,8 +374,11 @@ async def get_dashboard_stats(request: Request, authorization: str = Header(None
                 }
             )
 
-    # Add self-awareness metrics
-    self_awareness_data = await _get_self_awareness_summary()
+    # Add self-awareness metrics (cached — expensive per-agent computation)
+    if time.time() - _sa_last_updated >= _SA_TTL_SECONDS or _sa_cache is None:
+        _sa_cache = await _get_self_awareness_summary()
+        _sa_last_updated = time.time()
+    self_awareness_data = _sa_cache
     # Browser health block (Task 7.7) — tolerant of monitor extension absence.
     browser_health_block = _get_browser_health_block()
 

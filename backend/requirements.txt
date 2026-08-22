@@ -36,6 +36,10 @@ rich==13.9.0
 playwright==1.49.0
 openclaw>=0.1.0
 
+# Reporting / PDF pipeline (scan_pdf, cvss_engine)
+fpdf2==2.8.7
+cvss==3.6
+
 # Testing
 pytest==8.3.0
 pytest-asyncio==0.25.0

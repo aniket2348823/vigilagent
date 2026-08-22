@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time as _time
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -127,15 +129,28 @@ async def runtime_health() -> dict:
     from backend.core.browser_orchestrator import get_browser_orchestrator
     from backend.core.state import stats_db_manager
 
-    # Browser health (best-effort).
-    try:
-        browser_health = await get_browser_orchestrator().health_check()
-    except Exception as exc:
-        browser_health = {
+    # Browser health (best-effort). The frontend polls this every ~10s, but
+    # health_check() probes each engine live (OpenClaw spins a Playwright
+    # context). Cache the probe briefly so polling never pays that cost.
+    _bcache_key = "runtime_browser_health"
+    _now = _time.monotonic()
+    if _now - getattr(runtime_health, "_bhealth_ts", 0.0) > 10.0:
+        try:
+            _bhealth = await get_browser_orchestrator().health_check()
+            runtime_health._bhealth = _bhealth
+            runtime_health._bhealth_ts = _now
+        except Exception as exc:
+            _bhealth = {
+                "openclaw": "unavailable",
+                "pinchtab": "unavailable",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    else:
+        _bhealth = getattr(runtime_health, "_bhealth", None) or {
             "openclaw": "unavailable",
             "pinchtab": "unavailable",
-            "error": f"{type(exc).__name__}: {exc}",
         }
+    browser_health = _bhealth
 
     # Scan counters from the StateManager. ``get_stats()`` returns the
     # live dict; we copy out only what the sidebar needs to keep the

@@ -6,11 +6,44 @@ from datetime import UTC, datetime
 from typing import Any
 
 import redis.asyncio as aioredis
-from supabase import Client, create_client
 
 from backend.core.config import settings
 
+# Type-only import — deferred so the ~3s supabase chain is only paid when a
+# Supabase backend is actually configured. The annotation on ``self.supabase``
+# is never evaluated at runtime (function-local annotations aren't), so this
+# stays correct for type checkers while keeping boot fast.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from supabase import Client  # noqa: F401
+
 logger = logging.getLogger("ELITE-DB")
+
+# Tables the backend reads/writes through the Supabase client. The boot probe
+# checks EVERY one of them so a partial migration is never hidden behind a
+# single-table probe (the original silent-no-op root cause).
+_REQUIRED_SUPABASE_TABLES = (
+    "distributed_tasks",
+    "recon_runs",
+    "agent_proficiency",
+    "toolcalls",
+    "semantic_memory",
+    "agent_decisions",
+    "vulnerabilities",
+    "task_assignments",
+    "scan_episodes",
+    "recon_tool_outputs",
+    "recon_relationships",
+    "recon_oob_interactions",
+    "recon_entities",
+    "recon_endpoint_scores",
+    "recon_artifacts",
+    "http_responses",
+    "http_requests",
+    "exploit_results",
+    "approvals",
+)
 
 
 class EliteDBManager:
@@ -34,6 +67,9 @@ class EliteDBManager:
         self._supabase_failures = 0
         self._supabase_circuit_open = False
         self._supabase_circuit_open_until: float = 0.0
+        # Schema readiness: None = unknown, True = tables present,
+        # False = tables missing (probed at init; see _probe_supabase_schema).
+        self._supabase_schema_ready: bool | None = None
 
     async def initialize(self):
         """Lazy initialization of cloud/cache connections.
@@ -54,8 +90,14 @@ class EliteDBManager:
             # 1. Supabase Initialization
             if self.supabase_url and self.supabase_key:
                 try:
+                    from supabase import create_client  # deferred: heavy import
+
                     self.supabase = create_client(self.supabase_url, self.supabase_key)
                     self._supabase_record_success()
+                    # Probe the schema so a project missing the required tables
+                    # surfaces as ONE actionable warning at boot instead of
+                    # per-write 404 spam that keeps tripping the circuit breaker.
+                    await asyncio.to_thread(self._probe_supabase_schema)
                     logger.info("ELITE-DB: Supabase Connection Active ✓")
                 except Exception as sup_e:
                     self._supabase_record_failure()
@@ -80,6 +122,45 @@ class EliteDBManager:
             # methods which is safer than a silent infinite retry loop.
             logger.error("ELITE-DB Initialization Failed: %s", e, exc_info=True)
             self._initialized = True
+
+    def _probe_supabase_schema(self) -> None:
+        """Detect whether the Supabase project has the required tables.
+
+        PostgREST returns HTTP 404 (PGRST205) when a table is missing. We probe
+        one lightweight read at boot so a missing schema surfaces as a single
+        actionable warning instead of hundreds of per-write 404s that flip the
+        circuit breaker open repeatedly.
+        """
+        if not self.supabase:
+            self._supabase_schema_ready = False
+            return
+        # Probe every required table, not just semantic_memory, so a partial
+        # migration (some tables created, others still missing) surfaces as a
+        # single complete warning instead of hiding behind a passing probe.
+        missing: list[str] = []
+        for table in _REQUIRED_SUPABASE_TABLES:
+            try:
+                self.supabase.table(table).select("id").limit(1).execute()
+            except Exception as exc:
+                msg = str(exc)
+                if "PGRST205" in msg or "Could not find the table" in msg:
+                    missing.append(table)
+                else:
+                    # RLS/permission/network errors mean the project exists;
+                    # leave state unknown so writes still attempt and the
+                    # circuit breaker handles genuine outages.
+                    self._supabase_schema_ready = None
+        if missing:
+            self._supabase_schema_ready = False
+            logger.warning(
+                "ELITE-DB: Supabase project is missing required tables: %s. "
+                "Apply `supabase/migrations/001_initial_schema.sql` in the Supabase SQL Editor "
+                "or run `python -m backend.db_migrate`, then restart the backend. Cloud "
+                "persistence is DISABLED until then (local storage keeps working).",
+                ", ".join(missing),
+            )
+        elif self._supabase_schema_ready is None:
+            self._supabase_schema_ready = True
 
     async def _run_sync(self, fn, *args, _timeout: float = 30.0, **kwargs):
         """Run a blocking call (e.g. supabase-py's HTTPS .execute()) on a worker
@@ -112,7 +193,18 @@ class EliteDBManager:
             # Log at DEBUG so operators can still see timeout patterns.
             logger.debug("_run_sync timed out after %.1fs (not counting toward circuit breaker)", _timeout)
             raise
-        except Exception:
+        except Exception as exc:
+            # If a table is missing (PGRST205 / 404), remember it so we stop
+            # hammering the endpoint and log the remediation once.
+            _exc_msg = str(exc)
+            if ("PGRST205" in _exc_msg or "Could not find the table" in _exc_msg) and self._supabase_schema_ready is not False:
+                self._supabase_schema_ready = False
+                logger.warning(
+                    "ELITE-DB: Supabase tables missing (%s). Apply "
+                    "`supabase/migrations/001_initial_schema.sql` in the Supabase SQL Editor "
+                    "or run `python -m backend.db_migrate`. Cloud persistence is DISABLED until then.",
+                    _exc_msg[:120],
+                )
             self._supabase_record_failure()
             raise
 
@@ -362,7 +454,11 @@ class EliteDBManager:
         After _CB_FAILURE_THRESHOLD consecutive failures, the circuit opens
         for _CB_COOLDOWN_SECONDS so we stop hammering an unreachable endpoint.
         On cooldown expiry, allows one probe request (half-open state).
+        Also returns False when the schema probe determined the required
+        tables are missing — no point issuing writes that always 404.
         """
+        if self._supabase_schema_ready is False:
+            return False
         if self._supabase_circuit_open:
             if _time.time() < self._supabase_circuit_open_until:
                 return False
@@ -421,7 +517,7 @@ class EliteDBManager:
             )
             return result.data[0]["id"] if result.data else None
         except Exception as e:
-            if not self._supabase_circuit_open:
+            if not self._supabase_circuit_open and self._supabase_schema_ready is not False:
                 logger.warning("Failed to store semantic memory: %s", e)
             return None
 

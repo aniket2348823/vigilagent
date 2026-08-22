@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time as _time
 
 from backend.core.browser_agent import BrowserEnabledAgent
@@ -44,6 +45,10 @@ class KappaAgent(BrowserEnabledAgent):
         # leave orphaned coroutines (the embedding/learning calls can take
         # seconds against Gemini and we never want them blocking the bus).
         self._archive_tasks: set[asyncio.Task] = set()
+        # Serialize read-modify-write of the memory JSON. Concurrent writers
+        # (background archive task + kappa_recall job handler) previously
+        # corrupted exploit_vectors.json with concatenated JSON dumps.
+        self._memory_lock = threading.Lock()
         self._ensure_memory()
 
     def _ensure_memory(self):
@@ -54,6 +59,64 @@ class KappaAgent(BrowserEnabledAgent):
 
     async def setup(self):
         self.bus.subscribe(EventType.VULN_CONFIRMED, self.archive_victory)
+        # FULL-SWARM: Kappa previously only reacted to VULN_CONFIRMED. Subscribe
+        # to JOB_ASSIGNED so the orchestrator's kappa_recall jobs give the
+        # librarian proactive work on every scan (recall + publish tactics).
+        self.bus.subscribe(EventType.JOB_ASSIGNED, self.handle_job)
+
+    async def handle_job(self, event: HiveEvent):
+        """Handle kappa_recall jobs: surface prior tactics for the target.
+
+        Recalls relevant exploit vectors/skills from memory and publishes a
+        RECON_PACKET so the rest of the swarm (Beta/Omega/Sigma) can reuse
+        verified payloads instead of starting from scratch.
+        """
+        try:
+            from backend.core.protocol import AgentID, JobPacket
+
+            packet = JobPacket(**event.payload)
+        except Exception as exc:
+            logger.debug("[%s] Job packet parse failed: %s", self.name, exc)
+            return
+        if packet.config.agent_id != AgentID.KAPPA:
+            return
+        if packet.config.module_id != "kappa_recall":
+            return
+
+        params = packet.config.params or {}
+        query = params.get("query") or f"Exploit strategy for {packet.target.url}"
+        tactics = await self.recall_tactics(query, top_k=3)
+        skills = await self.recall_skills(target_url=packet.target.url, top_k=3)
+
+        try:
+            await self.bus.publish(
+                HiveEvent(
+                    type=EventType.RECON_PACKET,
+                    source=self.name,
+                    scan_id=event.scan_id,
+                    payload={
+                        "url": packet.target.url,
+                        "agent": self.name,
+                        "kind": "tactics_recall",
+                        "tactics": tactics[:3],
+                        "skills": skills[:3],
+                    },
+                )
+            )
+            await self.bus.publish(
+                HiveEvent(
+                    type=EventType.JOB_COMPLETED,
+                    source=self.name,
+                    scan_id=event.scan_id,
+                    payload={
+                        "job_id": packet.id,
+                        "status": "SUCCESS",
+                        "data": {"recalled_tactics": len(tactics), "skills": len(skills)},
+                    },
+                )
+            )
+        except Exception as exc:
+            logger.debug("[%s] kappa_recall publish failed: %s", self.name, exc)
 
     async def _get_embedding(self, text: str) -> list[float]:
         """Generate vector embedding using Gemini text-embedding-004."""
@@ -196,12 +259,41 @@ class KappaAgent(BrowserEnabledAgent):
 
     def _save_record(self, record):
         try:
-            with open(self.memory_file, "r+") as f:
-                data = json.load(f)
-                data.append(record)
-                f.seek(0)
-                f.truncate()  # Prevent data corruption when new JSON is shorter
-                json.dump(data, f, indent=2)
+            with self._memory_lock:
+                with open(self.memory_file, "r+", encoding="utf-8") as f:
+                    try:
+                        data = json.load(f)
+                    except json.JSONDecodeError:
+                        # Corruption recovery: salvage every complete record from
+                        # the truncated tail (a crash mid-dump leaves a partial
+                        # last record), then append fresh. Without this, one bad
+                        # write bricks all future writes for the process lifetime.
+                        f.seek(0)
+                        txt = f.read()
+                        dec = json.JSONDecoder()
+                        data = []
+                        pos = txt.find("[")
+                        if pos >= 0:
+                            pos += 1
+                            while pos < len(txt):
+                                while pos < len(txt) and txt[pos] in " \t\r\n,":
+                                    pos += 1
+                                if pos >= len(txt) or txt[pos] == "]":
+                                    break
+                                try:
+                                    obj, end = dec.raw_decode(txt, pos)
+                                    data.append(obj)
+                                    pos = end
+                                except json.JSONDecodeError:
+                                    break
+                        logger.warning(
+                            f"[{self.name}] Memory file corrupt; salvaged {len(data)} records"
+                        )
+                    data.append(record)
+                    f.seek(0)
+                    f.truncate()  # Prevent data corruption when new JSON is shorter
+                    json.dump(data, f, indent=2)
+                    f.flush()
         except Exception as e:
             logger.error(f"[{self.name}] Memory Write Error: {e}")
 

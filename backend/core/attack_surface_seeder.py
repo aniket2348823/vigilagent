@@ -165,6 +165,30 @@ async def _authenticate_dvwa(
     return (cookie_header, username) if authed else (None, None)
 
 
+async def authenticate_attack_session(target_url: str, scan_id: str = "GLOBAL") -> str | None:
+    """Auth-first helper: detect a login-gated target and authenticate, returning
+    the session Cookie header (or None).
+
+    Used by Alpha's orchestrator so the authenticated session is available to
+    the DISCOVERY and VALIDATION phases — a real operator authenticates first,
+    then enumerates. Without this, directory fuzzers and nuclei hit the
+    302-to-login wall on login-gated apps (DVWA) and come back empty.
+
+    Mirrors the detection/auth logic of :func:`seed_attack_surface` without
+    building the full target list.
+    """
+    base_url = _base(target_url)
+    try:
+        if await _looks_like_dvwa(base_url, scan_id):
+            cookie, _principal = await _authenticate_dvwa(base_url, scan_id)
+            if cookie:
+                logger.info("[seeder] auth-first: authenticated to %s (cookie ready)", base_url)
+                return cookie
+    except Exception as exc:
+        logger.warning("[seeder] auth-first authentication failed: %s", exc)
+    return None
+
+
 async def seed_attack_surface(target_url: str, scan_id: str, recon_endpoints: list[str] | None = None) -> SeededSurface:
     """Build concrete, authenticated attack targets for the swarm.
 

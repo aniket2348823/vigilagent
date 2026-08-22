@@ -6,7 +6,6 @@ from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from backend.core.orchestrator import HiveOrchestrator
 from backend.core.rate_limiter import rate_limit
 from backend.core.state import stats_db_manager
 from backend.core.url_validator import validate_url
@@ -107,6 +106,8 @@ async def fire_attack(request: Request, payload: AttackPayload, background_tasks
     # The Orchestrator manages the entire lifecycle (Agents, EventBus, Reporting)
     async def run_scan_and_release():
         try:
+            from backend.core.orchestrator import HiveOrchestrator  # deferred: heavy import
+
             await HiveOrchestrator.bootstrap_hive(target_config, scan_id)
         finally:
             async with _active_scan_targets_lock:
@@ -167,7 +168,9 @@ async def replay_attack(request: Request, vuln_id: str, background_tasks: Backgr
     }
     await stats_db_manager.register_scan(replay_record)
 
-    # Launch replay in background
+    # Launch replay in background (HiveOrchestrator imported lazily — heavy chain)
+    from backend.core.orchestrator import HiveOrchestrator
+
     background_tasks.add_task(HiveOrchestrator.bootstrap_hive, replay_config, replay_scan_id)
 
     return {

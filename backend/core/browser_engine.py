@@ -999,17 +999,24 @@ class ScrapplingPlaywrightEngine:
                 "error": f"{type(exc).__name__}: {exc}",
             }
 
-    async def extract_endpoints_deep(self, url: str) -> list[dict[str, Any]]:
-        """Deep endpoint extraction using Scrapling Selector DOM parsing and network interception."""
-        result = await self.navigate(url)
-        if not result.get("success"):
-            return []
-        page = result["page"]
+    async def extract_endpoints_deep(self, url: str, page=None) -> list[dict[str, Any]]:
+        """Deep endpoint extraction using Scrapling Selector DOM parsing and network interception.
 
-        try:
-            await page.wait_for_timeout(800)
-        except Exception:
-            logger.debug("[extract_endpoints_deep] error", exc_info=True)
+        ``page`` is an optional already-loaded page. When provided the method
+        reuses it instead of issuing another ``navigate()`` — the recon pass
+        (ScraplingRecon) navigates ONCE per target and shares the loaded page
+        across framework detection, endpoint extraction, network log read and
+        JS-route discovery. ``None`` keeps the old behavior (navigate here).
+        """
+        if page is None:
+            result = await self.navigate(url)
+            if not result.get("success"):
+                return []
+            page = result["page"]
+            try:
+                await page.wait_for_timeout(800)
+            except Exception:
+                logger.debug("[extract_endpoints_deep] error", exc_info=True)
 
         endpoints: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -1160,12 +1167,17 @@ class ScrapplingPlaywrightEngine:
             "payload": payload,
         }
 
-    async def detect_framework(self, url: str) -> str | None:
-        """Detect JavaScript framework on the page."""
-        result = await self.navigate(url)
-        if not result.get("success"):
-            return None
-        page = result["page"]
+    async def detect_framework(self, url: str, page=None) -> str | None:
+        """Detect JavaScript framework on the page.
+
+        ``page``: optional already-loaded page to reuse (avoids a second
+        navigation when the caller already navigated to ``url``).
+        """
+        if page is None:
+            result = await self.navigate(url)
+            if not result.get("success"):
+                return None
+            page = result["page"]
         try:
             return await page.evaluate("""() => {
                 if (window.React || document.querySelector('[data-reactroot]')) return 'React';
@@ -1179,13 +1191,21 @@ class ScrapplingPlaywrightEngine:
             logger.debug("[ScrapplingPlaywrightEngine] framework detection failed: %s", exc)
             return None
 
-    async def intercept_network(self, url: str) -> list[dict[str, Any]]:
-        """Navigate and return the captured network log for the page."""
-        result = await self.navigate(url)
-        if not result.get("success"):
-            return []
+    async def intercept_network(self, url: str, page=None) -> list[dict[str, Any]]:
+        """Navigate and return the captured network log for the page.
+
+        ``page``: optional already-loaded page to reuse (avoids a second
+        navigation when the caller already navigated to ``url``). The network
+        log is populated during the original navigation, so a reused page
+        still sees the full request list.
+        """
+        if page is None:
+            result = await self.navigate(url)
+            if not result.get("success"):
+                return []
+            page = result["page"]
         try:
-            await result["page"].wait_for_load_state("networkidle", timeout=5000)
+            await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
             logger.debug("[intercept_network] error", exc_info=True)
         return list(self._network_log)
@@ -1368,11 +1388,16 @@ class ScrapplingFuzzer:
                 from playwright.async_api import async_playwright
 
                 self.playwright = await async_playwright().start()
+                # FIX: Playwright forbids passing `--user-data-dir` in
+                # `chromium.launch()` args — it raises
+                #   "Pass user_data_dir parameter to 'launch_persistent_context'..."
+                # and the PinchTab fallback never came online. The worker
+                # profile dir is only used for cleanup bookkeeping now; the
+                # browser manages its own temp profile.
                 self.browser = await self.playwright.chromium.launch(
                     executable_path=_CHROMIUM_PATH,
                     headless=True,
                     args=[
-                        f"--user-data-dir={self.profile_path}",
                         f"--remote-debugging-port={self.port}",
                         "--no-sandbox",
                         "--disable-dev-shm-usage",
@@ -1882,29 +1907,40 @@ class ScraplingRecon:
         self.agent_name = agent_name
 
     async def recon(self, url: str) -> list[dict[str, Any]]:
-        """Run browser recon for ``url``; return normalized entities."""
+        """Run browser recon for ``url``; return normalized entities.
+
+        PERF: navigates ONCE per target and reuses the loaded page across
+        framework detection, endpoint extraction, network log and JS routes.
+        Previously each primitive issued its own ``navigate()`` (~5 full
+        networkidle page loads per target). Only WebSocket discovery still
+        re-navigates — its capture init script must be installed BEFORE the
+        page loads, which is impossible on an already-loaded page.
+        """
         entities: list[dict[str, Any]] = []
         if self.browser is None:
             return entities
 
+        page = None
+        framework = None
         is_spa = False
         nav_ok = False
         try:
             result = await self.browser.navigate(url, stealth=False, wait_for="networkidle")
             nav_ok = bool(result.get("success"))
+            page = result.get("page")
         except Exception as exc:
             logger.info("[BrowserRecon] navigate(%s) failed: %s: %s", url, type(exc).__name__, str(exc)[:200])
 
         if nav_ok:
             try:
-                framework = await self.browser.detect_framework(url)
+                framework = await self.browser.detect_framework(url, page=page)
                 is_spa = str(framework or "").lower() in _SPA_FRAMEWORKS
             except Exception:
                 is_spa = False
 
-        endpoints = await self._extract_endpoints(url)
-        network = await self._intercept_network(url)
-        js_routes = await self._extract_js_routes(url)
+        endpoints = await self._extract_endpoints(url, page=page)
+        network = await self._intercept_network(url, page=page)
+        js_routes = await self._extract_js_routes(url, framework)
         websockets = await self._find_websockets(url)
 
         merged = self._merge(endpoints, network, js_routes, websockets)
@@ -1942,9 +1978,9 @@ class ScraplingRecon:
 
     # ── Browser primitives (delegated to the shared orchestrator) ─────────────
 
-    async def _extract_endpoints(self, url: str) -> list[dict[str, Any]]:
+    async def _extract_endpoints(self, url: str, page=None) -> list[dict[str, Any]]:
         try:
-            eps = await self.browser.extract_endpoints(url, deep=True)
+            eps = await self.browser.extract_endpoints(url, deep=True, page=page)
             return [
                 {"url": e.get("url"), "method": e.get("method", "GET"), "source": e.get("source", "browser")}
                 for e in (eps or [])
@@ -1954,9 +1990,9 @@ class ScraplingRecon:
             logger.debug("[BrowserRecon] _extract_endpoints failed: %s", exc)
             return []
 
-    async def _intercept_network(self, url: str) -> list[dict[str, Any]]:
+    async def _intercept_network(self, url: str, page=None) -> list[dict[str, Any]]:
         try:
-            evts = await self.browser.intercept_network(url)
+            evts = await self.browser.intercept_network(url, page=page)
             out: list[dict[str, Any]] = []
             for e in evts or []:
                 if not isinstance(e, dict):
@@ -1984,9 +2020,10 @@ class ScraplingRecon:
         except Exception:
             return []
 
-    async def _extract_js_routes(self, url: str) -> list[dict[str, Any]]:
+    async def _extract_js_routes(self, url: str, framework: str | None = None) -> list[dict[str, Any]]:
         try:
-            framework = await self.browser.detect_framework(url)
+            # Reuse the framework detected during recon() — no second
+            # navigate() just to rediscover it.
             page = getattr(getattr(self.browser, "openclaw", None), "current_page", None)
             if page is None:
                 return []
@@ -2720,8 +2757,12 @@ class Scrappling:
             f"No browser engine could navigate to {url}: {last_error or 'OpenClaw and PinchTab both offline'}"
         )
 
-    async def extract_endpoints(self, url: str, deep: bool = False, scan_id: str | None = None):
-        """Extract API endpoints from page."""
+    async def extract_endpoints(self, url: str, deep: bool = False, scan_id: str | None = None, page=None):
+        """Extract API endpoints from page.
+
+        ``page``: optional already-loaded page to reuse (the recon pass
+        navigates once per target and shares the page across primitives).
+        """
         await self._ensure_initialized()
         await self._lazy_init_openclaw()
         await self._lazy_init_pinchtab()
@@ -2729,7 +2770,7 @@ class Scrappling:
         if deep and self.openclaw:
             try:
                 logger.info("[Scrappling] Deep endpoint extraction on %s", url)
-                eps = await self.openclaw.extract_endpoints_deep(url)
+                eps = await self.openclaw.extract_endpoints_deep(url, page=page)
                 if eps and isinstance(eps[0], str):
                     eps = [{"url": u, "method": "GET", "source": "openclaw"} for u in eps]
                 return eps or []
@@ -2787,23 +2828,31 @@ class Scrappling:
         else:
             return {"tested": False, "error": "No engines available"}
 
-    async def detect_framework(self, url: str):
-        """Detect JavaScript framework."""
+    async def detect_framework(self, url: str, page=None):
+        """Detect JavaScript framework.
+
+        ``page``: optional already-loaded page to reuse (avoids a second
+        navigation when the caller already navigated to ``url``).
+        """
         await self._ensure_initialized()
         await self._lazy_init_openclaw()
         if self.openclaw:
             try:
-                return await self.openclaw.detect_framework(url)
+                return await self.openclaw.detect_framework(url, page=page)
             except Exception as exc:
                 logger.warning("[Scrappling] Framework detection failed: %s", exc)
         return None
 
-    async def intercept_network(self, url: str):
-        """Intercept network requests."""
+    async def intercept_network(self, url: str, page=None):
+        """Intercept network requests.
+
+        ``page``: optional already-loaded page to reuse (avoids a second
+        navigation when the caller already navigated to ``url``).
+        """
         await self._ensure_initialized()
         await self._lazy_init_openclaw()
         if self.openclaw:
-            return await self.openclaw.intercept_network(url)
+            return await self.openclaw.intercept_network(url, page=page)
         return []
 
     async def find_websockets(self, url: str):

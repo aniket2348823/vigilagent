@@ -19,17 +19,17 @@ class TestEndpointTracker:
 
     def test_discover(self):
         et = EndpointTracker(scan_id="test")
-        et.discover("http://example.com/api")
+        et.add_discovered("http://example.com/api")
         assert "http://example.com/api" in et.discovered or len(et.discovered) >= 1
 
     def test_mark_tested(self):
         et = EndpointTracker(scan_id="test")
-        et.discover("http://example.com/api")
+        et.add_discovered("http://example.com/api")
         et.mark_tested("http://example.com/api")
         assert len(et.tested) >= 1
 
     def test_mark_vulnerable(self):
         et = EndpointTracker(scan_id="test")
-        et.discover("http://example.com/api")
+        et.add_discovered("http://example.com/api")
         et.mark_vulnerable("http://example.com/api", "SQL Injection")
         assert len(et.vulnerable) >= 1

@@ -38,6 +38,19 @@ const AGENT_MAP = [
     { match: 'lambda',       name: 'LAMBDA (SAST)',     color: 'text-lime-400' },
 ];
 
+// Precompiled matcher for resolveAgent(). The Live Monitor calls it once per
+// rendered row (up to 500) on every feed update, so a single regex exec beats
+// a per-call linear scan of AGENT_MAP. Longest match first keeps specific ids
+// (network_commander) winning over their short prefixes (network).
+const _AGENT_RE = new RegExp(
+    AGENT_MAP
+        .slice()
+        .sort((a, b) => b.match.length - a.match.length)
+        .map((e) => e.match.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|')
+);
+const _AGENT_LOOKUP = new Map(AGENT_MAP.map((e) => [e.match.toLowerCase(), { name: e.name, color: e.color }]));
+
 /**
  * Resolve an agent identifier string to a display name + tailwind color class.
  * @param {string} agentId - e.g. "agent_beta", "alpha_recon", "Orchestrator"
@@ -45,14 +58,10 @@ const AGENT_MAP = [
  */
 export function resolveAgent(agentId) {
     if (!agentId) return { name: 'UNKNOWN', color: 'text-gray-400' };
-    const lower = agentId.toLowerCase();
-    for (const entry of AGENT_MAP) {
-        // Case-insensitive match so "Agent_Beta", "agent_beta", "BETA" all resolve
-        if (lower.includes(entry.match.toLowerCase())) {
-            return { name: entry.name, color: entry.color };
-        }
-    }
-    return { name: 'UNKNOWN', color: 'text-gray-400' };
+    const m = String(agentId).toLowerCase().match(_AGENT_RE);
+    if (!m) return { name: 'UNKNOWN', color: 'text-gray-400' };
+    // Case-insensitive match so "Agent_Beta", "agent_beta", "BETA" all resolve
+    return _AGENT_LOOKUP.get(m[0]) || { name: 'UNKNOWN', color: 'text-gray-400' };
 }
 
 /**

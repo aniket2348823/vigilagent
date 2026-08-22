@@ -5,7 +5,6 @@ from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 
 from backend.ai.cortex import get_cortex_engine
-from backend.core.orchestrator import HiveOrchestrator
 
 # Initialize Router
 router = APIRouter()
@@ -40,7 +39,10 @@ async def engage_autonomous(payload: MutationRequest, background_tasks: Backgrou
     """
     scan_id = "HIVE-" + payload.url.replace("https://", "").replace("http://", "")[:10]
 
-    # Pass full payload to the Hive Orchestrator
+    # Pass full payload to the Hive Orchestrator (imported lazily — the
+    # orchestrator chain loads ~6s of agent modules; only pay it on demand).
+    from backend.core.orchestrator import HiveOrchestrator
+
     background_tasks.add_task(HiveOrchestrator.bootstrap_hive, payload.model_dump(), scan_id)
 
     return {"status": "launched", "message": "Hive Mind Swarm Activated", "scan_id": scan_id}
@@ -54,18 +56,20 @@ async def get_ai_status():
     brain = get_cortex_engine()
     # Defensive access to telemetry
     telemetry = brain._telemetry if hasattr(brain, "_telemetry") else {}
-    openrouter = getattr(brain, "_openrouter", None)
+    nvidia = getattr(brain, "_nvidia", None)
+    nvidia_strategic = getattr(brain, "_nvidia_strategic", None)
 
     return {
         "core_status": {
             "gi5": "online" if getattr(brain, "_gi5_available", False) else "error",
-            "openrouter": "active" if getattr(openrouter, "is_available", False) else "disabled",
+            "nvidia_tactical": "active" if getattr(nvidia, "is_available", False) else "disabled",
+            "nvidia_strategic": "active" if getattr(nvidia_strategic, "is_available", False) else "disabled",
         },
         "llm_calls": telemetry.get("llm_calls", 0),
         "circuit_breaker_trips": telemetry.get("circuit_breaker_trips", 0),
         "circuit_breaker_tripped": telemetry.get("circuit_breaker_trips", 0) > 0,
         "agent_capabilities": ["singularity", "recon", "attack", "defense"],
-        "fallback": "OpenRouter" if getattr(openrouter, "is_available", False) else "GI5_only",
+        "fallback": "Gemini" if getattr(brain, "_gemini", None) and getattr(brain._gemini, "is_available", False) else "GI5_only",
     }
 
 

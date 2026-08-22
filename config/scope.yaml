@@ -46,6 +46,6 @@ scope:
     - routes
 
 limits:
-  max_rps: 25
-  max_concurrency: 8
+  max_rps: 100
+  max_concurrency: 16
   max_runtime_minutes: 120

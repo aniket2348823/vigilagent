@@ -63,9 +63,12 @@ nul
 stats.json
 stats.json.tmp
 keyring.json
+**/keyring.json
 user_config.json
+**/user_config.json
 skills-lock.json
 .session
+**/.session
 
 # ── Brain (AI-generated runtime data — large, scan-specific) ────
 brain/episodes/
@@ -78,15 +81,22 @@ brain/memory.json
 brain/learned_patterns.json
 brain/learning_metrics.json
 brain/notifications.json
+brain/*.bak
 
 # ── Scan Data (generated per-scan, can be huge) ──────────────────
 data/scans/
 data/backups/
 data/graph.json
+data/*.json
+!data/config/prd.json
+data/*.txt
+data/*.log
 scan_states/
 
 # ── Reports (generated PDFs and test outputs) ────────────────────
+reports/
 reports/*.pdf
+reports/**/*.pdf
 reports/benchmark-tests/
 reports/torture-tests/
 reports/runtime/

@@ -10,6 +10,7 @@ import logging
 import os
 from contextlib import asynccontextmanager, suppress
 
+from backend.core.config import _inject_redis_password
 from backend.core.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
@@ -28,12 +29,19 @@ class RedisConfig:
     """Configuration for Redis client"""
 
     def __init__(self):
-        self.url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        self.max_connections = int(os.getenv("REDIS_MAX_CONNECTIONS", "50"))
-        self.socket_timeout = int(os.getenv("REDIS_SOCKET_TIMEOUT", "5"))
-        self.socket_connect_timeout = int(os.getenv("REDIS_CONNECT_TIMEOUT", "5"))
+        self.url = _inject_redis_password(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        # Pool sizing tuned for the full 13-agent swarm: every agent holds a
+        # shared client that also backs pubsub (bus listener, Chi brpop, Prism
+        # result interception) plus per-scan locks. The old default (50 conns /
+        # 5s socket timeout) exhausted the pool under parallel recon + attack
+        # load, which surfaced as ``Timeout reading from 127.0.0.1:6380`` in
+        # agent loops. The longer socket timeout also stops blocked reads
+        # (brpop/pubsub) from being killed by contention.
+        self.max_connections = int(os.getenv("REDIS_MAX_CONNECTIONS", "150"))
+        self.socket_timeout = int(os.getenv("REDIS_SOCKET_TIMEOUT", "15"))
+        self.socket_connect_timeout = int(os.getenv("REDIS_CONNECT_TIMEOUT", "10"))
         self.decode_responses = True
-        self.health_check_interval = int(os.getenv("REDIS_HEALTH_CHECK_INTERVAL", "30"))
+        self.health_check_interval = int(os.getenv("REDIS_HEALTH_CHECK_INTERVAL", "20"))
 
 
 class RedisClient:
@@ -376,7 +384,7 @@ def get_sync_redis():
     try:
         import redis as _redis_mod
 
-        url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+        url = _inject_redis_password(os.environ.get("REDIS_URL", "redis://localhost:6379"))
         conn = _redis_mod.Redis.from_url(url, decode_responses=True)
         conn.ping()
         _sync_redis_instance = conn

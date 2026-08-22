@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("vigilagent.scan_state_db")
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _DEFAULT_DB_PATH = Path("scan_states") / "scan_state.db"
 
 _SCHEMA = """
@@ -240,6 +240,20 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     remaining_tasks TEXT,
     created_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS run_errors (
+    error_id TEXT PRIMARY KEY,
+    scan_id TEXT,
+    phase TEXT,
+    error_type TEXT,
+    message TEXT,
+    traceback TEXT,
+    created_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_scan_id ON events (scan_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_tool_runs_scan_id ON tool_runs (scan_id);
+CREATE INDEX IF NOT EXISTS idx_run_errors_scan_id ON run_errors (scan_id);
 """
 
 _FTS_SCHEMA = """
@@ -321,6 +335,23 @@ class ScanStateDB:
             ("remaining_tasks", "ALTER TABLE checkpoints ADD COLUMN remaining_tasks TEXT;"),
         ):
             if col not in existing:
+                with suppress(sqlite3.OperationalError):
+                    self._conn.execute(ddl)
+        # v2 -> v3: durable per-scan run_errors (orchestrator exceptions that
+        # previously only went to stdout) + query indexes. The table itself is
+        # already created by _init_schema on fresh installs; the IF NOT EXISTS
+        # here upgrades existing v2 databases in place.
+        if from_version < 3:
+            with suppress(sqlite3.OperationalError):
+                self._conn.execute(
+                    "CREATE TABLE IF NOT EXISTS run_errors (error_id TEXT PRIMARY KEY, scan_id TEXT, "
+                    "phase TEXT, error_type TEXT, message TEXT, traceback TEXT, created_at TEXT);"
+                )
+            for ddl in (
+                "CREATE INDEX IF NOT EXISTS idx_events_scan_id ON events (scan_id, event_id);",
+                "CREATE INDEX IF NOT EXISTS idx_tool_runs_scan_id ON tool_runs (scan_id);",
+                "CREATE INDEX IF NOT EXISTS idx_run_errors_scan_id ON run_errors (scan_id);",
+            ):
                 with suppress(sqlite3.OperationalError):
                     self._conn.execute(ddl)
         self._conn.execute("UPDATE schema_version SET version=?;", (_SCHEMA_VERSION,))
@@ -510,6 +541,36 @@ class ScanStateDB:
             )
             self._index(scan_id, "tool_run", tool_run_id, f"{tool} {output_summary}")
 
+    # ── Run errors (persisted orchestrator failures, §5.6 v3) ────────────────
+
+    def record_run_error(
+        self,
+        scan_id: str,
+        *,
+        phase: str = "",
+        error_type: str = "",
+        message: str = "",
+        traceback: str = "",
+    ) -> None:
+        """Persist a scan/recon failure so it survives the terminal window."""
+        with self._write() as c:
+            c.execute(
+                "INSERT INTO run_errors (error_id, scan_id, phase, error_type, message, traceback, created_at) "
+                "VALUES (?,?,?,?,?,?,?);",
+                (uuid.uuid4().hex, scan_id, phase, (error_type or "")[:200], (message or "")[:4000], (traceback or "")[:20000], _now()),
+            )
+
+    def get_run_errors(self, scan_id: str, *, limit: int = 50) -> list[dict]:
+        """Read persisted run errors for a scan (newest-first)."""
+        with self._lock:
+            try:
+                rows = self._conn.execute(
+                    "SELECT * FROM run_errors WHERE scan_id=? ORDER BY rowid DESC LIMIT ?;", (scan_id, limit)
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [dict(r) for r in rows]
+
     # ── Messages / events (FTS-indexed) ───────────────────────────────────────
 
     def add_message(self, scan_id: str, role: str, content: str, agent: str = "") -> None:
@@ -546,6 +607,44 @@ class ScanStateDB:
                 rows,
             )
         return len(rows)
+
+    def get_events(self, scan_id: str, *, limit: int | None = None, offset: int = 0) -> list[dict]:
+        """Read the durable event log for a scan (newest-first).
+
+        Each row's ``payload`` column holds the FULL original event dict (the
+        StateManager flushes complete HiveEvent dicts), so this returns events
+        with every field preserved — used to hydrate the live buffer after a
+        restart so the events API keeps showing ALL events.
+        """
+        sql = "SELECT payload, created_at FROM events WHERE scan_id=? ORDER BY event_id DESC"
+        params: list[Any] = [scan_id]
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+        with self._lock:
+            try:
+                rows = self._conn.execute(sql, params).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        out: list[dict] = []
+        for r in rows:
+            try:
+                ev = _loads(r["payload"])
+            except Exception:
+                ev = {}
+            if ev and "type" in ev:
+                ev.setdefault("timestamp", r["created_at"])
+                out.append(ev)
+        out.reverse()  # oldest-first, matching live ordering
+        return out
+
+    def clear_events(self, scan_id: str | None = None) -> None:
+        """Delete all (or one scan's) durable events — used by wipe_scans."""
+        with self._write() as c:
+            if scan_id:
+                c.execute("DELETE FROM events WHERE scan_id=?;", (scan_id,))
+            else:
+                c.execute("DELETE FROM events;")
 
     def add_messages_bulk(self, messages: Iterable[dict]) -> int:
         """Insert many messages in one transaction. FTS indexing is best-effort."""

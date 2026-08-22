@@ -27,7 +27,9 @@ import logging
 from typing import Any
 
 from backend.ai.cortex import get_cortex_engine
-from backend.reporting.scan_pdf import VigilagentReportBuilder
+# VigilagentReportBuilder is imported lazily inside the report generators —
+# pulling it eagerly loads fpdf (~6s of import time) on every boot even when
+# no report is ever generated this session.
 
 logger = logging.getLogger("REPORTING")
 
@@ -47,12 +49,15 @@ class ReportGenerator:
         target_url: str,
         telemetry: dict[str, Any] | None = None,
         manager: Any = None,
+        findings: list[dict[str, Any]] | None = None,
     ) -> str | None:
         try:
             cortex = get_cortex_engine()
         except Exception as exc:  # pragma: no cover - never fatal
             logger.warning("ReportGenerator: cortex unavailable (%s) - LLM disabled", exc)
             cortex = None
+
+        from backend.reporting.scan_pdf import VigilagentReportBuilder  # deferred: fpdf is heavy
 
         builder = VigilagentReportBuilder(
             scan_id=scan_id,
@@ -61,6 +66,7 @@ class ReportGenerator:
             telemetry=telemetry or {},
             cortex=cortex,
             manager=manager,
+            findings=findings,
         )
         try:
             out_path = await builder.build()

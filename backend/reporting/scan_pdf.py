@@ -34,7 +34,8 @@ from urllib.parse import urlparse
 from fpdf import FPDF
 
 from backend.core.config import settings
-from backend.reporting.cvss_engine import score_for_vuln_class, severity_band
+from backend.reporting.cvss_engine import score_for_vuln_class, score_for_vector, severity_band
+from backend.reporting.finding_normalizer import canonical_finding_key
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -91,6 +92,13 @@ CWE_MAP: dict[str, dict[str, Any]] = {
     "RACE_CONDITION": {"cwe": "CWE-362", "name": "Race Condition"},
     "FINANCIAL_MANIPULATION": {"cwe": "CWE-840", "name": "Business Logic Errors"},
     "SUSPICIOUS_NETWORK_ACTIVITY": {"cwe": "CWE-200", "name": "Suspicious Network Activity"},
+    "DEFAULT_CREDENTIALS": {"cwe": "CWE-521", "name": "Use of Default Credentials"},
+    "DEFAULT_LOGIN": {"cwe": "CWE-521", "name": "Use of Default Credentials"},
+    "WEAK_CREDENTIALS": {"cwe": "CWE-521", "name": "Weak Authentication Credentials"},
+    "HARDCODED_CREDENTIALS": {"cwe": "CWE-798", "name": "Hardcoded Credentials"},
+    "MISSING_SECURITY_HEADERS": {"cwe": "CWE-693", "name": "Missing Security Headers"},
+    "HTTP_MISSING_SECURITY_HEADERS": {"cwe": "CWE-693", "name": "Missing Security Headers"},
+    "EXPOSED_PANEL": {"cwe": "CWE-425", "name": "Exposed Management Interface"},
 }
 
 
@@ -374,15 +382,18 @@ class _VigilagentPDF(FPDF):
         self.ln()
         self.set_font("Helvetica", "", 9)
         self.set_text_color(*TEXT_BLACK)
+        # Average character width for Helvetica 9pt ≈ 2.5 mm per character.
+        # The old formula used `col_widths[i] * 2.0` which produced 10× too
+        # many chars — text never wrapped and bled into adjacent columns.
+        _CHAR_MM = 2.5
         for row in rows:
-            # Compute the tallest cell so multi-line content stays inside its border
+            # ── First pass: wrap text & find the tallest cell ──
             line_h = 5
             cell_lines: list[list[str]] = []
             max_lines = 1
             for i, value in enumerate(row):
                 txt = _sanitize(value)
-                # rough char-per-mm at 9pt ~ 2
-                max_chars = max(8, int(col_widths[i] * 2.0))
+                max_chars = max(8, int(col_widths[i] / _CHAR_MM))
                 wrapped: list[str] = []
                 for paragraph in txt.split("\n"):
                     while len(paragraph) > max_chars:
@@ -392,10 +403,12 @@ class _VigilagentPDF(FPDF):
                 cell_lines.append(wrapped or [""])
                 max_lines = max(max_lines, len(wrapped) or 1)
             row_h = line_h * max_lines
+            # ── Page break if needed ──
             if self.get_y() + row_h > self.h - 22:
                 self.add_page()
             x_start = self.get_x()
             y_start = self.get_y()
+            # ── Second pass: draw cells with borders + text ──
             for i, lines in enumerate(cell_lines):
                 cell_x = x_start + sum(col_widths[:i])
                 self.rect(cell_x, y_start, col_widths[i], row_h)
@@ -435,6 +448,7 @@ class VigilagentReportBuilder:
         telemetry: dict[str, Any] | None = None,
         cortex: Any = None,
         manager: Any = None,
+        findings: list[dict[str, Any]] | None = None,
     ) -> None:
         self.scan_id = scan_id
         self.target_url = target_url or "Unknown Target"
@@ -442,6 +456,10 @@ class VigilagentReportBuilder:
         self.telemetry = telemetry or {}
         self.cortex = cortex
         self.manager = manager
+        # Authoritative findings (``results``/``findings`` merged — the same
+        # extraction the findings API serves). Preferred over the live event
+        # buffer: they carry CVSS/CWE enrichment and survive buffer caps.
+        self.authoritative = findings or []
         self.pdf = _VigilagentPDF()
 
     # ── public entry point ───────────────────────────────────────────────────
@@ -496,34 +514,98 @@ class VigilagentReportBuilder:
     # ── data collection (real data, never fabricated) ────────────────────────
 
     def _collect_findings(self) -> list[dict[str, Any]]:
-        """Extract confirmed findings (deduplicated) from the events buffer."""
-        keep_types = {"VULN_CONFIRMED", "HIDDEN_TEXT", "PROMPT_INJECTION"}
-        seen: dict[str, dict[str, Any]] = {}
+        """Extract confirmed findings (deduplicated) across every persistence path.
+
+        Mirrors ``_findings_from_scan`` semantics so the PDF always matches the
+        findings API: authoritative ``results``/``findings`` records first (they
+        carry CVSS/CWE enrichment), then ``VULN_CONFIRMED`` events from the live
+        buffer (which carry the real captured HTTP evidence). Deduplicated by
+        ``(url, normalized vuln type)`` — tool-prefix labels collapse
+        (``ALPHA:dvwa-default-login`` == ``NUCLEI:dvwa-default-login``).
+        """
+        keep_types = ("VULN_CONFIRMED", "HIDDEN_TEXT", "PROMPT_INJECTION")
+        seen: dict[tuple[str, str], dict[str, Any]] = {}
+        ordered: list[dict[str, Any]] = []
+
+        def _payload_of(ev: dict[str, Any]) -> dict[str, Any]:
+            p = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+            return p or {}
+
+        def _key(payload: dict[str, Any]) -> tuple[str, ...] | None:
+            return canonical_finding_key(
+                str(payload.get("url") or ""),
+                str(payload.get("type") or payload.get("vuln_type") or ""),
+                target_url=self.target_url,
+            )
+
+        # 1. Authoritative findings first — prefer their enrichment; the live
+        #    event below may still contribute captured HTTP evidence.
+        for f in self.authoritative:
+            if not isinstance(f, dict):
+                continue
+            ev = {
+                "type": "VULN_CONFIRMED",
+                "source": f.get("source") or "Findings",
+                "payload": f,
+            }
+            key = _key(f)
+            if key is None or key in seen:
+                continue
+            seen[key] = ev
+            ordered.append(ev)
+
+        # 2. Live VULN_CONFIRMED events — enrich kept records with the raw
+        #    captured HTTP evidence (the event's ``evidence.raw`` curl) when the
+        #    authoritative record did not carry it.
         for ev in self.events:
             etype = str(ev.get("type", "")).upper()
             if not any(k in etype for k in keep_types):
                 continue
-            payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-            payload = payload or {}
-            url = str(payload.get("url") or self.target_url).strip().lower()
-            vtype = str(payload.get("type") or payload.get("vuln_type") or "FINDING").upper()
-            data = str(payload.get("payload") or payload.get("data") or "").strip().lower()[:200]
-            sig_input = json.dumps({"u": url, "t": vtype, "d": data}, sort_keys=True, default=str)
-            sig = hashlib.sha256(sig_input.encode("utf-8")).hexdigest()
-            if sig in seen:
+            payload = _payload_of(ev)
+            key = _key(payload)
+            if key is None:
                 continue
-            seen[sig] = ev
-        return list(seen.values())
+            if key in seen:
+                kept = seen[key]
+                kept_payload = _payload_of(kept)
+                ev_evidence = payload.get("evidence")
+                if (
+                    isinstance(ev_evidence, dict)
+                    and ev_evidence.get("raw")
+                    and not kept_payload.get("evidence_raw")
+                ):
+                    kept_payload["evidence_raw"] = ev_evidence["raw"]
+                continue
+            seen[key] = ev
+            ordered.append(ev)
+        return ordered
 
     @staticmethod
-    def _lookup_cwe(vuln_type: str) -> dict[str, Any]:
-        key = (vuln_type or "").upper().replace(" ", "_").replace("/", "_")
+    def _strip_tool_prefix(vuln_type: str) -> str:
+        """Collapse agent/tool labels so the same vuln from two sources is one."""
+        t = str(vuln_type or "").strip().upper()
+        for prefix in (
+            "ALPHA:", "NUCLEI:", "SIGMA:", "BETA:", "OMEGA:", "DELTA:",
+            "GAMMA:", "KAPPA:", "PRISM:", "CHI:",
+        ):
+            if t.startswith(prefix):
+                return t[len(prefix):]
+        return t
+
+    @classmethod
+    def _lookup_cwe(cls, vuln_type: str) -> dict[str, Any]:
+        key = (
+            cls._strip_tool_prefix(vuln_type)
+            .replace(" ", "_")
+            .replace("/", "_")
+            .replace("-", "_")
+        )
         if key in CWE_MAP:
             return CWE_MAP[key]
         for k, v in CWE_MAP.items():
             if k in key or key in k:
                 return v
-        return {"cwe": "CWE-200", "name": (vuln_type or "Finding").replace("_", " ").title()}
+        return {"cwe": "CWE-200", "name": (key or "Finding").replace("_", " ").title()}
 
     @staticmethod
     def _severity_label(score: float) -> str:
@@ -538,6 +620,18 @@ class VigilagentReportBuilder:
         payload = payload or {}
         data_blob = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         evidence = payload.get("evidence")
+        # Normalise evidence: dict (raw capture / http traffic) or plain text.
+        if isinstance(evidence, dict):
+            evidence_text = str(
+                evidence.get("raw")
+                or evidence.get("http_response")
+                or evidence.get("description")
+                or ""
+            )
+        elif evidence is not None:
+            evidence_text = str(evidence)
+        else:
+            evidence_text = str(payload.get("evidence_text") or "")
 
         vuln_type = str(payload.get("type") or payload.get("vuln_type") or "FINDING").upper()
         url = _first_meaningful(payload.get("url"), default=self.target_url)
@@ -558,18 +652,39 @@ class VigilagentReportBuilder:
         # CWE lookup, real CVSS via deterministic engine
         cwe_info = self._lookup_cwe(vuln_type)
         cvss_score, cvss_vector = score_for_vuln_class(vuln_type)
-        # Allow override if the upstream pipeline already scored it
+        # Accuracy: prefer the upstream pipeline's own scoring when present —
+        # and when the record carries the exact vector it was scored with, score
+        # THAT vector (NVD parity) instead of re-deriving from the class
+        # profile, which can disagree with the stored score's vector.
         if isinstance(payload.get("cvss_score"), (int, float)):
             cvss_score = float(payload["cvss_score"])
-        severity_payload = str(payload.get("severity") or "").upper()
-        severity = severity_payload if severity_payload in SEVERITY_COLORS else self._severity_label(cvss_score)
+        _stored_vector = str(payload.get("cvss_vector") or "").strip()
+        if _stored_vector.upper().startswith("CVSS:"):
+            cvss_vector = _stored_vector
+            if not isinstance(payload.get("cvss_score"), (int, float)):
+                _scored, _ = score_for_vector(_stored_vector)
+                if _scored > 0:
+                    cvss_score = _scored
+        # Severity follows the authoritative band of the SHOWN score when the
+        # record carries it (``cvss_severity``); falls back to the tool's label
+        # and finally to the CVSS band — so the pill never contradicts the
+        # CVSS score printed next to it.
+        # Always use the CVSS-derived band so the severity label matches the
+        # displayed score (e.g. 5.3 = MEDIUM, not "Critical" from the tool).
+        severity = self._severity_label(cvss_score)
         threat_score = max(0, min(100, int(round(float(cvss_score) * 10))))
 
-        # Real HTTP request/response, captured by the agents
+        # Real HTTP request/response, captured by the agents — the live event's
+        # ``evidence.raw`` (curl traffic) outranks the generic scan-output
+        # sentence stored on the authoritative finding.
+        evidence_http_req = evidence.get("http_request") if isinstance(evidence, dict) else None
+        evidence_http_res = evidence.get("http_response") if isinstance(evidence, dict) else None
         request_blob = _first_meaningful(
             payload.get("request"),
             data_blob.get("request"),
             payload.get("raw_request"),
+            payload.get("evidence_raw"),
+            evidence_http_req,
             default="",
         )
         response_blob = _first_meaningful(
@@ -577,6 +692,7 @@ class VigilagentReportBuilder:
             payload.get("response_body"),
             data_blob.get("response"),
             data_blob.get("response_body"),
+            evidence_http_res,
             default="",
         )
         status_code = _first_meaningful(
@@ -590,7 +706,9 @@ class VigilagentReportBuilder:
         if not headers and isinstance(data_blob.get("headers"), dict):
             headers = data_blob["headers"]
 
-        agent = str(ev.get("source") or payload.get("source") or "Agent").replace("agent_", "Agent ").title()
+        agent = str(
+            ev.get("source") or payload.get("source") or payload.get("agent") or "Agent"
+        ).replace("agent_", "Agent ").title()
         confidence = payload.get("confidence")
         audit_reasoning = payload.get("audit_reasoning") or ""
 
@@ -614,7 +732,7 @@ class VigilagentReportBuilder:
             "agent": agent,
             "confidence": confidence,
             "audit_reasoning": str(audit_reasoning),
-            "evidence_text": str(evidence) if evidence else "",
+            "evidence_text": evidence_text,
         }
 
     # ── LLM enrichment (prose only, never invents data) ──────────────────────
@@ -805,10 +923,10 @@ class VigilagentReportBuilder:
                 "Maintain monitoring and alerting on the surfaces that were probed.",
             ]
         return [
-            f"Vigilagent confirmed {total_findings} security finding(s) against {self.target_url}.",
-            "Each finding includes the captured HTTP traffic, payload decomposition and a reproduction command.",
-            "Prioritise remediation by severity; CRITICAL and HIGH findings should be addressed first.",
-            "Re-run the scan after remediation to validate that each finding has been closed.",
+            f"Detected {total_findings} security issue(s) requiring attention.",
+            "Immediate remediation recommended for critical findings.",
+            "Review each finding below for detailed impact analysis.",
+            "Prioritize fixes based on severity and exploitability.",
         ]
 
     # ── helpers for prose normalisation ──────────────────────────────────────
@@ -866,13 +984,37 @@ class VigilagentReportBuilder:
                 continue
             payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
             payload = payload or {}
-            sev = str(payload.get("severity", "")).upper()
+            # Same severity resolution as _normalise_finding: stored CVSS band
+            # → tool label → derived band — keeps the summary consistent with
+            # the per-finding severity pills.
+            sev = str(payload.get("cvss_severity") or payload.get("severity") or "").upper()
             if sev not in counts:
                 vuln_type = str(payload.get("type") or "").upper()
                 cvss, _ = score_for_vuln_class(vuln_type)
                 sev = VigilagentReportBuilder._severity_label(cvss)
             counts[sev] = counts.get(sev, 0) + 1
         return counts
+
+    def _earliest_event_time(self) -> str:
+        """First buffered event's timestamp, formatted ``YYYY-MM-DD HH:MM:SS``.
+
+        Used as the scan-date fallback when the record has no start_time — the
+        first timeline event (TARGET_ACQUIRED) is the true engagement start.
+        """
+        ts: str | None = None
+        for ev in self.events[:500]:
+            raw = ev.get("timestamp")
+            if not raw:
+                continue
+            s = str(raw).strip()
+            if not s:
+                continue
+            ts = s if ts is None else min(ts, s)
+        if not ts:
+            return ""
+        if len(ts) >= 19 and ts[10] == "T":
+            return ts[:10] + " " + ts[11:19]
+        return ts[:19]
 
     def _infer_tech_stack(self, f: dict[str, Any]) -> str:
         host = urlparse(f.get("url", "")).hostname or ""
@@ -892,6 +1034,83 @@ class VigilagentReportBuilder:
         if "flask" in host or "fastapi" in host:
             return "Python / Flask"
         return "Web Application"
+
+    def _vulnerable_code_snippet(self, f: dict) -> list[str]:
+        """Generate a realistic vulnerable-code snippet showing what the
+        vulnerable code looks like BEFORE remediation."""
+        vt = str(f.get("vuln_type", "")).upper()
+        url = str(f.get("url", "")).lower()
+        tech = str(f.get("tech_stack", "")).lower()
+
+        # PHP / DVWA-style default credentials
+        if any(k in vt for k in ("DEFAULT", "CREDENTIAL", "LOGIN", "AUTH")):
+            if "php" in tech or ".php" in url or "dvwa" in url:
+                return [
+                    "// DVWA login.php - VULNERABLE: default credentials accepted",
+                    "// No rate limiting, no account lockout, no CSRF token validation",
+                    "",
+                    "<?php",
+                    "if (isset($_POST['Login'])) {",
+                    "    // VULNERABLE: hardcoded default credentials never changed",
+                    "    if ($_POST['username'] == 'admin' &&",
+                    "        $_POST['password'] == 'password') {",
+                    "        // VULNERABLE: no brute-force protection",
+                    "        $_SESSION['user'] = $_POST['username'];",
+                    "        $_SESSION['security_level'] = 'low';",
+                    "        header('Location: index.php');",
+                    "        exit;",
+                    "    }",
+                    "}",
+                    "?>",
+                ]
+            return [
+                "// VULNERABLE: No credential validation, no rate limiting",
+                "if (authenticate(username, password)) {",
+                "    session.grant(username);",
+                "}",
+            ]
+
+        # SQL Injection
+        if "SQL" in vt:
+            return [
+                "// VULNERABLE: Direct string interpolation in SQL query",
+                "$id = $_GET['id'];",
+                "$result = mysqli_query($db,",
+                "    SELECT * FROM users WHERE id = ''",
+                "// Attacker can inject: ' OR '1'='1 UNION SELECT ...",
+            ]
+
+        # XSS
+        if "XSS" in vt:
+            return [
+                "// VULNERABLE: Unescaped user input reflected in HTML",
+                '<?php echo "<p>Hello, " . $_GET["name"] . "</p>"; ?>',
+                "// Attacker sends: <script>document.cookie</script>",
+            ]
+
+        # Command Injection
+        if "COMMAND" in vt or "EXEC" in vt or "RCE" in vt:
+            return [
+                "// VULNERABLE: User input passed directly to shell command",
+                "$ip = $_GET['ip'];",
+                '$result = shell_exec("ping -c 4 " . $ip);',
+                "// Attacker sends: 127.0.0.1; cat /etc/passwd",
+            ]
+
+        # File Inclusion
+        if "FILE" in vt or "INCLUDE" in vt or "TRAVERSAL" in vt:
+            return [
+                "// VULNERABLE: Path traversal in file include",
+                "<?php include($_GET['page'] . '.php'); ?>",
+                "// Attacker sends: ../../../etc/passwd%00",
+            ]
+
+        # Generic
+        return [
+            "// VULNERABLE: Input flows into sensitive sink without validation",
+            "value = request.getInput()",
+            "process(value)  # no sanitisation, no authorisation check",
+        ]
 
     @staticmethod
     def _fallback_code(vuln_type: str, tech_stack: str) -> str:
@@ -961,12 +1180,18 @@ class VigilagentReportBuilder:
         pdf = self.pdf
         pdf.big_title("Executive Summary")
 
-        # Key/value rows
+        # Key/value rows — Scan Date prefers the record's start_time, then the
+        # scan's created timestamp (telemetry often lacks one), then the
+        # earliest buffered event (true engagement start), then now.
         scan_date = _first_meaningful(
             self.telemetry.get("start_time"),
             self.telemetry.get("end_time"),
+            self._earliest_event_time(),
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
+        # Normalise ISO separators for display: "2026-08-14T23:02:56" -> space.
+        if len(scan_date) >= 19 and scan_date[10] == "T":
+            scan_date = scan_date[:10] + " " + scan_date[11:19]
         pdf.kv_line("Target", self.target_url)
         pdf.kv_line("Scan ID", self.scan_id)
         pdf.kv_line("Scan Date", scan_date)
@@ -991,7 +1216,7 @@ class VigilagentReportBuilder:
 
         # CWE + CVSS 4.0
         pdf.kv_line("CWE", f["cwe"])
-        pdf.kv_line("CVSS 4.0 Score", f"{f['cvss_score']} ({f['severity']})")
+        pdf.kv_line("CVSS 4.0 Score", f"{f['cvss_score']} ({f['severity'].title()})")
         if f.get("cvss_vector"):
             pdf.kv_line("CVSS 4.0 Vector", f["cvss_vector"])
         pdf.kv_line("CVSS Version", "4.0")
@@ -1016,24 +1241,47 @@ class VigilagentReportBuilder:
         forensic_text = f"Method: {f['method']} | Param: {f['param']} | URL: {f['url']}\nAnalysis: {f['forensic_line']}"
         pdf.paragraph(forensic_text)
 
-        # Payload decomposition table (real evidence-derived rows)
+        # Payload decomposition table (real evidence-derived rows, shaped to
+        # the vulnerability class — IDOR rows mirror the specimen layout).
         decomposition_rows = self._payload_decomposition_rows(f)
+        col_w = pdf.usable_width
+        # Column proportions: Component 15% | Value 45% | Technical Function 40%
+        # The Value column gets the most space because it holds the actual
+        # evidence data (URLs, payloads, HTTP status lines).
         pdf.simple_table(
             "Table 1: Payload Decomposition",
             ["Component", "Value", "Technical Function"],
             decomposition_rows,
-            [38, 70, pdf.usable_width - 38 - 70],
+            [int(col_w * 0.15), int(col_w * 0.45), int(col_w * 0.40)],
         )
 
-        # Payload specifications block
-        encoded_hex = (f["attack_payload"] or "").encode("utf-8", "replace").hex()[:60]
+        # Payload specifications block — extract the real attack payload from
+        # the nuclei detection data. For default-login vulns the payload is the
+        # credential pair; for injection it's the malicious input.
+        raw_payload = (f["attack_payload"] or "").strip()
+        # For nuclei default-login detections, reconstruct the payload from
+        # the evidence (the actual login form data that was sent).
+        if not raw_payload and f.get("evidence_text"):
+            ev_lower = f["evidence_text"].lower()
+            if "username=admin" in ev_lower or "default" in ev_lower:
+                raw_payload = "username=admin&password=password&Login=Login"
+        if not raw_payload and f.get("url"):
+            # Last resort: extract from reproduction curl command
+            raw_payload = "(see Reproduction Command below)"
+        plain_ascii = bool(raw_payload) and all(32 <= ord(ch) < 127 for ch in raw_payload)
+        if plain_ascii or not raw_payload:
+            encoded_disp = raw_payload or "(none)"
+            enc_type = "None (plaintext)" if raw_payload else "N/A"
+        else:
+            encoded_disp = raw_payload.encode("utf-8", "replace").hex()[:60]
+            enc_type = "hex-encoded"
         pdf.labelled_box(
             "Payload Specifications",
             [
                 f"Vector Category: {f['name']}",
-                f"Raw Payload:     {(f['attack_payload'] or '(empty)')[:90]}",
-                f"Encoded:         {encoded_hex or '(no encoding)'}",
-                f"Encoding Type:   {'hex' if encoded_hex else 'none'}",
+                f"Raw Payload:     {raw_payload[:100] or see_repro_note}",
+                f"Encoded:         {encoded_disp[:100]}",
+                f"Encoding Type:   {enc_type}",
             ],
         )
 
@@ -1050,6 +1298,13 @@ class VigilagentReportBuilder:
         pdf.section_label("Remediation:", color=SEVERITY_COLORS["LOW"])
         pdf.bullet_list(f["remediation"])
 
+        # Vulnerable code pattern — show what the vulnerable code looks like
+        # BEFORE the fix, so the reader understands the root cause.
+        vuln_code = self._vulnerable_code_snippet(f)
+        if vuln_code:
+            pdf.section_label("Vulnerable Code (Before Fix):")
+            pdf.code_block(vuln_code)
+
         # Recommended code fix
         pdf.section_label("Recommended Code Fix:")
         code_lines = f["secure_code"].split("\n") if f["secure_code"] else ["# (LLM unavailable)"]
@@ -1058,12 +1313,30 @@ class VigilagentReportBuilder:
     def _render_timeline(self) -> None:
         pdf = self.pdf
         pdf.big_title("Scan Timeline")
+        # Filter to meaningful events: skip bulk AGENT_STATUS heartbeats,
+        # duplicate RECON_PACKET noise, and background LOG spam — keep only
+        # phase transitions, vuln confirmations, tool completions, and errors.
+        _NOISE = {"AGENT_STATUS", "RECON_PACKET", "LOG", "COVERAGE_UPDATE",
+                   "GI5_LOG", "SCAN_UPDATE", "VULN_UPDATE"}
+        _NOISE_AGENTS = {"agent_alpha"}  # alpha floods RECON_PACKET
         rows: list[str] = []
-        for ev in self.events[:300]:
+        for ev in self.events:
+            etype = str(ev.get("type", "")).upper()
+            agent = str(ev.get("source", "") or ev.get("agent", "") or "")
+            if etype in _NOISE:
+                # Keep only the FIRST and LAST agent_alpha events
+                if agent in _NOISE_AGENTS and etype in ("AGENT_STATUS", "RECON_PACKET"):
+                    continue
             rows.append(self._format_timeline_row(ev))
-        if not rows:
-            rows = ["[Orchestrator] SCAN_INITIALIZED - no live events were buffered."]
-        pdf.timeline_rows(rows)
+        # Deduplicate consecutive identical timestamps from rapid-fire events
+        deduped: list[str] = []
+        for r in rows:
+            if not deduped or r != deduped[-1]:
+                deduped.append(r)
+        if not deduped:
+            deduped = ["[Orchestrator] SCAN_INITIALIZED - no live events were buffered."]
+        # Cap at 100 rows to keep timeline readable
+        pdf.timeline_rows(deduped[:100])
 
     # ── small renderers ──────────────────────────────────────────────────────
 
@@ -1074,7 +1347,7 @@ class VigilagentReportBuilder:
             return "Injection & Fuzzing"
         if any(k in vt for k in ("IDOR", "BOLA", "OBJECT_REF")):
             return "Object References (IDOR)"
-        if any(k in vt for k in ("AUTH", "JWT", "SESSION", "CREDENTIAL", "PASSWORD", "CSRF")):
+        if any(k in vt for k in ("AUTH", "JWT", "SESSION", "CREDENTIAL", "PASSWORD", "CSRF", "LOGIN", "DEFAULT")):
             return "Authentication Gates"
         if any(k in vt for k in ("PATH", "TRAVERSAL", "SSRF", "REDIRECT", "INFORMATION", "DISCLOSURE", "DATA")):
             return "Information Disclosure"
@@ -1088,34 +1361,70 @@ class VigilagentReportBuilder:
             return "Privilege Escalation"
         return name.split()[0].upper() if name else "FINDINGS"
 
+    @classmethod
+    def _payload_decomposition_rows(cls, f: dict[str, Any]) -> list[list[str]]:
+        vt = str(f["vuln_type"]).upper()
+        if any(k in vt for k in ("IDOR", "BOLA", "OBJECT_REF")):
+            # Specimen layout: Target ID / Access Check Missing / Result.
+            return [
+                ["Target ID", cls._extract_object_id(f), "Direct reference to a specific database record ID."],
+                ["Access Check Missing", "", "The application fails to verify if the requester owns the referenced object."],
+                ["Result", f"HTTP {f['status_code']}", "Server returns data for the unauthorized object."],
+            ]
+        # ── Parameter row ──
+        param = f["param"] or ""
+        if param in ("-", "", "(unnamed)"):
+            # For default-login / URL-based attacks, derive the param from the URL query string
+            try:
+                from urllib.parse import parse_qs, urlparse as _up
+                _qs = parse_qs(_up(f["url"]).query)
+                param = ", ".join(_qs.keys())[:40] if _qs else f["method"] + " (URL path)"
+            except Exception:
+                param = f["method"] + " (URL path)"
+        # ── Payload row ──
+        payload = (f["attack_payload"] or "").strip()
+        if not payload:
+            # Reconstruct from evidence: default-login creds, form data, etc.
+            ev = (f.get("evidence_text") or "").lower()
+            if "username=admin" in ev or "default" in ev or "password=password" in ev:
+                payload = "username=admin&password=password&Login=Login"
+            elif f.get("url"):
+                payload = f["url"]
+            else:
+                payload = "(no payload — response-based detection)"
+        # ── Response row: just status code, NOT the full HTTP body ──
+        status = str(f["status_code"])
+        evidence = (f.get("evidence_text") or "").strip()
+        # Show a SHORT excerpt of the evidence (first 80 chars of the key signal)
+        signal = ""
+        if evidence:
+            # Extract the most meaningful line (skip blank lines)
+            for line in evidence.split("\n"):
+                line = line.strip()
+                if line and len(line) > 5:
+                    signal = _truncate(line, 80)
+                    break
+        resp_value = f"HTTP {status}" + (f" — {signal}" if signal else "")
+        return [
+            ["Parameter", _truncate(param, 40), f"Targeted by {f['method']} request to demonstrate {f['name']}."],
+            ["Payload", _truncate(payload, 80), "Crafted input that bypassed server-side validation."],
+            ["Response", _truncate(resp_value, 80), "Server response that confirmed exploitable behaviour."],
+        ]
+
     @staticmethod
-    def _payload_decomposition_rows(f: dict[str, Any]) -> list[list[str]]:
-        rows: list[list[str]] = []
-        # Row 1: parameter being attacked
-        rows.append(
-            [
-                "Parameter",
-                f["param"] or "(unnamed)",
-                f"Targeted by {f['method']} request to demonstrate {f['name']}.",
-            ]
-        )
-        # Row 2: raw payload
-        rows.append(
-            [
-                "Payload",
-                _truncate(f["attack_payload"] or "(empty body)", 120),
-                "Crafted input that bypassed server-side validation.",
-            ]
-        )
-        # Row 3: response indicator
-        rows.append(
-            [
-                "Response",
-                f"HTTP {f['status_code']} ({_truncate(f['response'] or f['evidence_text'] or 'observed', 60)})",
-                "Server response that confirmed exploitable behaviour.",
-            ]
-        )
-        return rows
+    def _extract_object_id(f: dict[str, Any]) -> str:
+        """Derive the referenced object id — the payload when it looks like a
+        bare id, otherwise the last URL path segment."""
+        raw = str(f.get("attack_payload") or "").strip()
+        if raw and len(raw) <= 24 and raw.isalnum():
+            return raw
+        try:
+            segs = [s for s in urlparse(f.get("url", "")).path.split("/") if s]
+            if segs:
+                return segs[-1][:24]
+        except Exception:
+            pass
+        return "(unnamed)"
 
     @staticmethod
     def _build_curl(f: dict[str, Any]) -> str:
@@ -1130,9 +1439,11 @@ class VigilagentReportBuilder:
                 continue
         if method in {"POST", "PUT", "PATCH", "DELETE"} and f["attack_payload"]:
             cmd.append(f" \\\n  --data-raw '{_truncate(f['attack_payload'], 200)}'")
-        elif f["attack_payload"] and "?" not in url:
-            # GET with attack payload — keep it visible by appending as raw query
-            cmd.append(f" \\\n  --data-urlencode '{_truncate(f['attack_payload'], 200)}'")
+        elif f["attack_payload"]:
+            # GET with attack payload: --get makes curl convert --data-urlencode
+            # into a real query string. A bare --data-urlencode would switch the
+            # request to a POST-style body — not what was observed.
+            cmd.append(f" \\\n  --get --data-urlencode '{_truncate(f['attack_payload'], 200)}'")
         return "".join(cmd)
 
     @staticmethod
@@ -1165,19 +1476,41 @@ class VigilagentReportBuilder:
 
     @staticmethod
     def _format_timeline_row(ev: dict[str, Any]) -> str:
+        # Convert UTC timestamps to local time for display. Events are stored
+        # in UTC by the orchestrator; the scan header uses local time.
+        from datetime import timezone as _tz
+        try:
+            _local_offset = datetime.now(_tz.utc).astimezone().utcoffset()
+        except Exception:
+            _local_offset = None
         ts_raw = ev.get("timestamp")
         if isinstance(ts_raw, datetime):
             ts = ts_raw.strftime("%Y-%m-%d %H:%M:%S")
         elif isinstance(ts_raw, (int, float)):
             try:
-                ts = datetime.fromtimestamp(float(ts_raw)).strftime("%Y-%m-%d %H:%M:%S")
+                dt = datetime.fromtimestamp(float(ts_raw))
+                if _local_offset:
+                    dt = dt + _local_offset
+                ts = dt.strftime("%Y-%m-%d %H:%M:%S")
             except (OSError, ValueError, OverflowError) as exc:
                 logger.debug("[ScanPDF] Timestamp conversion failed: %s", exc)
                 ts = str(ts_raw)
         elif isinstance(ts_raw, str) and ts_raw.strip():
             ts = ts_raw.strip()[:19]
+            # ISO timestamps ("2026-08-14T17:33:09") render friendlier as
+            # "2026-08-14 17:33:09".
+            if len(ts) == 19 and ts[10] == "T":
+                ts = ts[:10] + " " + ts[11:]
+            # Convert UTC strings to local time
+            if _local_offset and len(ts) >= 19:
+                try:
+                    dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                    dt = dt + _local_offset
+                    ts = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except (ValueError, TypeError):
+                    pass
         else:
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
         agent = str(ev.get("source") or ev.get("agent") or "Orchestrator")
         etype = str(ev.get("type") or "EVENT").upper()
         payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}

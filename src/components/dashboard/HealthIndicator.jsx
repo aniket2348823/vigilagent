@@ -9,6 +9,7 @@ export default React.memo(function HealthIndicator({ scanActive, feedLength, rps
     const [wsStatus, setWsStatus] = useState('connecting');
     const [lastEventAge, setLastEventAge] = useState(null);
     const lastEventTimeRef = useRef(null);
+    const lastAgeRef = useRef(null); // Last rendered age — skip identical ticks
 
     // Track last event time from threat_feed length changes
     useEffect(() => {
@@ -23,12 +24,17 @@ export default React.memo(function HealthIndicator({ scanActive, feedLength, rps
         const interval = setInterval(() => {
             if (lastEventTimeRef.current) {
                 const age = Math.floor((Date.now() - lastEventTimeRef.current) / 1000);
-                setLastEventAge(age);
-                // If no events for 30s+ during active scan, show warning
-                if (age > 30 && scanActive) {
-                    setWsStatus('stale');
-                } else if (age > 60) {
-                    setWsStatus('idle');
+                // setState with an unchanged value still re-renders the component;
+                // skip identical ticks so an idle dashboard doesn't churn every second.
+                if (age !== lastAgeRef.current) {
+                    lastAgeRef.current = age;
+                    setLastEventAge(age);
+                    // If no events for 30s+ during active scan, show warning
+                    if (age > 30 && scanActive) {
+                        setWsStatus('stale');
+                    } else if (age > 60) {
+                        setWsStatus('idle');
+                    }
                 }
             }
         }, 1000);

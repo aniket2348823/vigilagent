@@ -61,4 +61,8 @@ def _sarif_level(severity: str) -> str:
         return "error"
     if sev == "medium":
         return "warning"
-    return "note"
+    if sev in {"low", "info", "informational"}:
+        return "note"
+    # Unknown severity: default to "warning" (SARIF-conservative) rather than
+    # "note" — an unclassified finding is more likely significant than trivial.
+    return "warning"

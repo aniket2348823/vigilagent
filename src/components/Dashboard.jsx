@@ -12,6 +12,12 @@ import HealthIndicator from './dashboard/HealthIndicator';
 import ThreatTable from './dashboard/ThreatTable';
 import RpsGauge from './dashboard/RpsGauge';
 
+// Precompiled agent-id matcher (module scope — compiled once). ALL_AGENTS ids
+// have no substring overlaps, so matching one regex against the lowercased
+// agent string is equivalent to the old per-item ALL_AGENTS.find() scan but
+// runs in O(1) per item instead of O(13).
+const AGENT_ID_RE = new RegExp(`(${ALL_AGENTS.map(a => a.id).join('|')})`);
+
 
 const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
     // [V7] Local sync refs to track the active scan ID and cooldown status for the flushBuffer closure
@@ -57,11 +63,9 @@ const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
         if (events.length === 0) return;
         statsBuffer.current = [];
 
-        // Batch size IS the delta — each event increments requestCountRef by 1
-        const graphDelta = events.length;
-
         setPersistentState(prev => {
             let nextState = { ...prev };
+            let batchDelta = 0; // live events in this batch (post-isolation-prism)
             events.forEach(data => {
                 // SCAN LIFECYCLE: Start populating on scan start, clear on complete
                 if (data.type === 'SCAN_UPDATE') {
@@ -308,31 +312,64 @@ const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
                     // Sync graph with request count (Request Activity)
                     if (scanActiveRef.current) {
                         requestCountRef.current += 1;
-                        // Push pre-computed delta to graph_data for Request Activity chart
-                        if (graphDelta > 0) {
-                            nextState.graph_data = [...(nextState.graph_data || []), graphDelta].slice(-60);
-                        }
+                        batchDelta += 1;
                     }
                 }
             });
+
+            // Append ONE point per batch. The old code pushed graphDelta inside
+            // the per-event loop — an N-event batch wrote N identical points,
+            // inflating the chart and cycling its 60-slot window N× too fast.
+            // Local to the updater so double-invocation can't double-count.
+            if (batchDelta > 0) {
+                nextState.graph_data = [...(nextState.graph_data || []), batchDelta].slice(-60);
+            }
             return nextState;
         });
     };
 
     useEffect(() => {
+        // Bounded fetch: a slow/hung backend must not leave the dashboard in a
+        // perpetual loading state — each stats poll is aborted after 10s (the
+        // poll cadence is 15s, so the timeout never overlaps the next tick).
+        let pollController = null;
         const fetchStats = async () => {
+            pollController?.abort();
+            pollController = new AbortController();
+            const timer = setTimeout(() => pollController.abort(), 10000);
             try {
-                const res = await fetch(apiUrl('/api/dashboard/stats'));
+                const res = await fetch(apiUrl('/api/dashboard/stats'), { signal: pollController.signal });
                 const data = await res.json();
 
-                setPersistentState(prev => ({
-                    ...prev,
-                    ...data,
+                setPersistentState(prev => {
                     // Preserve live threat_feed and graph_data if they are already populated from websocket
-                    threat_feed: prev.threat_feed.length > 0 ? prev.threat_feed : (data.threat_feed || []),
-                    graph_data: prev.graph_data.length > 0 ? prev.graph_data : (data.graph_data || []),
-                    v6_metrics: data.v6_metrics || { injections_blocked: 0, deceptive_ui_blocked: 0, risk_score: 0 }
-                }));
+                    const nextFeed = prev.threat_feed.length > 0 ? prev.threat_feed : (data.threat_feed || []);
+                    const nextGraph = prev.graph_data.length > 0 ? prev.graph_data : (data.graph_data || []);
+                    const nextV6 = data.v6_metrics || { injections_blocked: 0, deceptive_ui_blocked: 0, risk_score: 0 };
+                    const dataMetrics = data.metrics || {};
+
+                    // Bail out when nothing user-visible changed. Returning the
+                    // SAME object reference lets React skip the whole re-render
+                    // pass (Dashboard → counters → ThreatTable) that the old
+                    // unconditional {...prev, ...data} triggered every poll tick.
+                    if (
+                        JSON.stringify(dataMetrics) === JSON.stringify(prev.metrics || {}) &&
+                        JSON.stringify(nextV6) === JSON.stringify(prev.v6_metrics || {}) &&
+                        nextFeed === prev.threat_feed &&
+                        nextGraph === prev.graph_data &&
+                        (data.rps ?? undefined) === (prev.rps ?? undefined)
+                    ) {
+                        return prev;
+                    }
+
+                    return {
+                        ...prev,
+                        ...data,
+                        threat_feed: nextFeed,
+                        graph_data: nextGraph,
+                        v6_metrics: nextV6
+                    };
+                });
 
                 // Detect if there's an active scan to set local flags
                 if (data.metrics?.active_scans > 0) {
@@ -341,11 +378,16 @@ const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
                 }
             } catch (e) {
                 // console.error("Failed to fetch dashboard stats", e);
+            } finally {
+                clearTimeout(timer);
             }
         };
 
         fetchStats();
-        const interval = setInterval(fetchStats, 5000);
+        // Live metrics/events arrive over the WebSocket; this REST poll is only
+        // a slow idle refresh, so 15s keeps the backend's stats+self-awareness
+        // recompute (1s TTL cache) from being triggered 3x more often than needed.
+        const interval = setInterval(fetchStats, 15000);
 
         // Subscribe to shared WS instead of opening a new connection
         const unsub = subscribe((data) => {
@@ -370,6 +412,7 @@ const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
 
         return () => {
             clearInterval(interval);
+            pollController?.abort();
             unsub();
             if (bufferTimer.current) {
                 cancelAnimationFrame(bufferTimer.current);
@@ -448,38 +491,34 @@ const Dashboard = ({ navigate, persistentState, setPersistentState }) => {
         }
     }, [selectedRowIndex]);
 
-    // ── Memoized agent event counts (avoids re-filtering per agent on every render) ──
-    const agentEventCounts = useMemo(() => {
-        const feed = persistentState?.threat_feed || [];
-        const counts = {};
-        ALL_AGENTS.forEach(a => { counts[a.id] = 0; });
-        feed.forEach(t => {
-            if (!t.agent) return;
-            const lower = t.agent.toLowerCase();
-            const matchedId = ALL_AGENTS.find(a => lower.includes(a.id))?.id;
-            if (matchedId) counts[matchedId]++;
-        });
-        return counts;
-    }, [persistentState?.threat_feed]);
-
-    // ── Per-agent sparkline data (last 20 time buckets) ──
-    const agentSparklines = useMemo(() => {
+    // ── Memoized agent event counts + sparklines — ONE pass over the feed. ──
+    // Both stats were separate useMemos doing a per-item ALL_AGENTS.find()
+    // linear scan (2 passes × ≤500 rows on every feed change). The agent ids
+    // have no substring overlaps, so a single precompiled regex match is
+    // semantically identical to the find() — and runs once per item, not
+    // 13 × per item.
+    const { agentEventCounts, agentSparklines } = useMemo(() => {
         const feed = persistentState?.threat_feed || [];
         const BUCKETS = 20;
         const bucketWidth = 30000; // 30s per bucket → 10 min total
+        const counts = {};
         const sparkData = {};
-        ALL_AGENTS.forEach(a => { sparkData[a.id] = new Array(BUCKETS).fill(0); });
+        ALL_AGENTS.forEach(a => {
+            counts[a.id] = 0;
+            sparkData[a.id] = new Array(BUCKETS).fill(0);
+        });
         feed.forEach(t => {
-            if (!t.agent || !t.timestamp) return;
-            const lower = t.agent.toLowerCase();
-            const matchedId = ALL_AGENTS.find(a => lower.includes(a.id))?.id;
+            if (!t.agent) return;
+            const matchedId = t.agent.toLowerCase().match(AGENT_ID_RE)?.[1];
             if (!matchedId) return;
+            counts[matchedId]++;
+            if (!t.timestamp) return;
             const age = timestampAgeMs(t.timestamp);
             if (age === null) return;
             const bucket = BUCKETS - 1 - Math.floor(age / bucketWidth);
             if (bucket >= 0 && bucket < BUCKETS) sparkData[matchedId][bucket]++;
         });
-        return sparkData;
+        return { agentEventCounts: counts, agentSparklines: sparkData };
     }, [persistentState?.threat_feed]);
 
     // ── Export dashboard data ──

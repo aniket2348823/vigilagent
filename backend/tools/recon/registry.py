@@ -54,8 +54,9 @@ RECON_TOOLS = {
     "spiderfoot": {"phase": "passive_intelligence", "binary": "python", "modes": ["AGGRESSIVE"]},
     # ── Phase 2: DNS & Infrastructure ──────────────────────────────────────
     "dnsx": {"phase": "dns_infrastructure", "binary": "dnsx", "modes": ["STANDARD", "AGGRESSIVE"]},
-    "shuffledns": {"phase": "dns_infrastructure", "binary": "shuffledns", "modes": ["AGGRESSIVE"]},
     "puredns": {"phase": "dns_infrastructure", "binary": "puredns", "modes": ["AGGRESSIVE"]},
+    "massdns": {"phase": "dns_infrastructure", "binary": "massdns", "modes": ["AGGRESSIVE"]},
+    "dnsgen": {"phase": "dns_infrastructure", "binary": "dnsgen", "modes": ["AGGRESSIVE"]},
     "cdncheck": {"phase": "dns_infrastructure", "binary": "cdncheck", "modes": ["STANDARD", "AGGRESSIVE"]},
     "naabu": {"phase": "dns_infrastructure", "binary": "naabu", "modes": ["STANDARD", "AGGRESSIVE"]},
     "masscan": {"phase": "dns_infrastructure", "binary": "masscan", "modes": ["AGGRESSIVE"]},
@@ -64,10 +65,8 @@ RECON_TOOLS = {
     "testssl": {"phase": "dns_infrastructure", "binary": "testssl.sh", "modes": ["AGGRESSIVE"]},
     # ── Phase 3: HTTP & Browser Intelligence ───────────────────────────────
     # NOTE: httpx, whatweb, wafw00f moved to SIGMA_TOOLS (Sigma-exclusive).
-    "httprobe": {"phase": "http_browser_intelligence", "binary": "httprobe", "modes": ["STANDARD", "AGGRESSIVE"]},
     "katana": {"phase": "http_browser_intelligence", "binary": "katana", "modes": ["STANDARD", "AGGRESSIVE"]},
     "gospider": {"phase": "http_browser_intelligence", "binary": "gospider", "modes": ["STANDARD", "AGGRESSIVE"]},
-    "hakrawler": {"phase": "http_browser_intelligence", "binary": "hakrawler", "modes": ["STANDARD", "AGGRESSIVE"]},
     "linkfinder": {"phase": "http_browser_intelligence", "binary": "python", "modes": ["STANDARD", "AGGRESSIVE"]},
     "secretfinder": {"phase": "http_browser_intelligence", "binary": "python", "modes": ["STANDARD", "AGGRESSIVE"]},
     "arjun": {"phase": "http_browser_intelligence", "binary": "arjun", "modes": ["STANDARD", "AGGRESSIVE"]},
@@ -75,14 +74,15 @@ RECON_TOOLS = {
     # ── Phase 4: Directory & Route Discovery ───────────────────────────────
     "feroxbuster": {"phase": "directory_route_discovery", "binary": "feroxbuster", "modes": ["STANDARD", "AGGRESSIVE"]},
     "ffuf": {"phase": "directory_route_discovery", "binary": "ffuf", "modes": ["STANDARD", "AGGRESSIVE"]},
-    "dirsearch": {"phase": "directory_route_discovery", "binary": "python", "modes": ["STANDARD", "AGGRESSIVE"]},
     "gobuster": {"phase": "directory_route_discovery", "binary": "gobuster", "modes": ["STANDARD", "AGGRESSIVE"]},
     # ── Phase 5: API Reconnaissance ────────────────────────────────────────
     "kiterunner": {"phase": "api_reconnaissance", "binary": "kr", "modes": ["STANDARD", "AGGRESSIVE"]},
     "inql": {"phase": "api_reconnaissance", "binary": "python", "modes": ["AGGRESSIVE"]},
     # ── Phase 6: Visual Documentation ──────────────────────────────────────
+    # NOTE: gowitness v3 ships in the recon image with chromium available, so
+    # real screenshots work. aquatone was removed (screenshots broken + gowitness
+    # superset).
     "gowitness": {"phase": "visual_documentation", "binary": "gowitness", "modes": ["STANDARD", "AGGRESSIVE"]},
-    "aquatone": {"phase": "visual_documentation", "binary": "aquatone", "modes": ["STANDARD", "AGGRESSIVE"]},
     # ── Phase 7: Template Validation ───────────────────────────────────────
     # NOTE: nuclei, dalfox moved to SIGMA_TOOLS (Sigma-exclusive).
     "interactsh": {"phase": "template_validation", "binary": "interactsh-client", "modes": ["AGGRESSIVE"]},
@@ -98,6 +98,9 @@ SIGMA_TOOLS = {
     # ── Vulnerability Validation (Sigma §5.2, §29.4) ──────────────────────
     "nuclei": {"phase": "sigma_validation", "binary": "nuclei", "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
     "dalfox": {"phase": "sigma_validation", "binary": "dalfox", "modes": ["AGGRESSIVE"], "owner": "sigma"},
+    "sqlmap": {"phase": "sigma_validation", "binary": "sqlmap", "modes": ["AGGRESSIVE"], "owner": "sigma"},
+    "nikto": {"phase": "sigma_validation", "binary": "nikto", "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
+    "wpscan": {"phase": "sigma_validation", "binary": "wpscan", "modes": ["AGGRESSIVE"], "owner": "sigma"},
     # ── Fingerprinting & WAF Detection (Sigma §5.2) ───────────────────────
     "httpx": {"phase": "sigma_fingerprint", "binary": "httpx", "modes": ["STANDARD", "AGGRESSIVE"], "owner": "sigma"},
     "whatweb": {
@@ -114,8 +117,19 @@ SIGMA_TOOLS = {
     },
 }
 
-# Combined registry for availability lookups (all 39 tools).
-ALL_TOOLS = {**RECON_TOOLS, **SIGMA_TOOLS}
+# Pass-alias entries: specialized nuclei/ffuf passes share the parent binary
+# but carry distinct tool names so the planner can emit multiple passes of the
+# same binary with separate outputs. check_tool_availability() resolves these
+# to the parent binary for install-state checks.
+_PASS_ALIASES = {
+    "nuclei_default_login": {"phase": "template_validation", "binary": "nuclei", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "nuclei_cve": {"phase": "template_validation", "binary": "nuclei", "modes": ["STANDARD", "AGGRESSIVE"]},
+    "nuclei_takeover": {"phase": "template_validation", "binary": "nuclei", "modes": ["AGGRESSIVE"]},
+    "ffuf_vhost": {"phase": "directory_route_discovery", "binary": "ffuf", "modes": ["AGGRESSIVE"]},
+}
+
+# Combined registry for availability lookups (35 tools + 4 pass aliases).
+ALL_TOOLS = {**RECON_TOOLS, **SIGMA_TOOLS, **_PASS_ALIASES}
 
 
 def check_tool_availability(name: str) -> dict:
@@ -141,10 +155,12 @@ def check_tool_availability(name: str) -> dict:
     # 0. Docker recon image (Architecture §7 rule 3): when Docker + the bundled
     # recon image are ready, every arsenal tool is available with no host
     # install. This is the preferred backend for Linux-native tools on Windows.
+    # Pass aliases (nuclei_default_login, ffuf_vhost, ...) resolve via their
+    # parent binary (nuclei/ffuf), which IS in the image.
     try:
         from backend.tools.recon.docker_runtime import DOCKER_ALL_TOOLS, docker_recon_ready
 
-        if name in DOCKER_ALL_TOOLS and docker_recon_ready():
+        if (name in DOCKER_ALL_TOOLS or binary in DOCKER_ALL_TOOLS) and docker_recon_ready():
             return {"installed": True, "path": "docker://vigilagent-recon", "source": "docker"}
     except Exception as e:
         logger.debug("Docker recon check skipped: %s", e)
@@ -208,12 +224,6 @@ def check_tool_availability(name: str) -> dict:
                 tool_root / "SecretFinder" / "SecretFinder.py",
                 project_bin / "SecretFinder" / "SecretFinder.py",
                 _user_tools / "SecretFinder" / "SecretFinder.py",
-            ],
-            "dirsearch": [
-                tool_root / "dirsearch" / "dirsearch.py",
-                project_bin / "dirsearch" / "dirsearch.py",
-                _user_tools / "dirsearch" / "dirsearch.py",
-                Path("/usr/local/bin/dirsearch"),
             ],
             "inql": [
                 tool_root / "inql" / "inql.py",

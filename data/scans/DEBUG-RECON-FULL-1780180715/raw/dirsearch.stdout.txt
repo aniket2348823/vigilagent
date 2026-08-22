@@ -1,3 +1,0 @@
-[22:40:58] 404 -  297B  - http://host.docker.internal:8080/index.php/%2e%2e//google.com
-
-Runtime exceeded the maximum set by the user

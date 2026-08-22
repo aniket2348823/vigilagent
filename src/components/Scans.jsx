@@ -41,6 +41,8 @@ const Scans = ({ navigate }) => {
     const [selectedFinding, setSelectedFinding] = useState(null); // Finding detail modal
     const messageBuffer = useRef([]);
     const lastFlush = useRef(Date.now());
+    // Last status seen per scan_id — refetch gate for SCAN_UPDATE heartbeats.
+    const statusSeenRef = useRef({});
     const { subscribe } = useWebSocket();
     const scansRef = useRef(scans);
     const progressMapRef = useRef(progressMap);
@@ -82,13 +84,18 @@ const Scans = ({ navigate }) => {
             messageBuffer.current = [];
 
             let shouldFetch = false;
+            let progressDirty = false;
             const currentProgress = progressMapRef.current;
             const newProgress = { ...currentProgress };
 
             messages.forEach(data => {
                 // 1. Progress Updates (SCAN_UPDATE with progress field)
-                if (data.type === 'SCAN_UPDATE' && data.payload?.progress) {
-                    newProgress[data.payload.id] = data.payload.progress;
+                if (data.type === 'SCAN_UPDATE' && data.payload?.progress && data.payload?.id) {
+                    const sid = data.payload.id;
+                    if (newProgress[sid] !== currentProgress[sid]) {
+                        newProgress[sid] = data.payload.progress;
+                        progressDirty = true;
+                    }
                 }
 
                 // 2. Phase Status Updates (real-time phase tracking)
@@ -113,18 +120,29 @@ const Scans = ({ navigate }) => {
                     });
                 }
 
-                // 3. Scan Status Update (Trigger Fetch)
-                if (['SCAN_UPDATE', 'GI5_COMPLETE', 'REPORT_READY', 'ZOMBIE_SWEEP_RESULT'].includes(data.type)) {
-                    shouldFetch = true;
-                    // Clean up phaseMap for scans that reached a terminal state
-                    if (data.type === 'SCAN_UPDATE' && data.payload?.id &&
-                        ['Completed', 'Failed', 'Interrupted', 'Cancelled'].includes(data.payload.status)) {
-                        setPhaseMap(prev => {
-                            const next = { ...prev };
-                            delete next[data.payload.id];
-                            return next;
-                        });
+                // 3. Scan Status Update (Trigger Fetch) — only on REAL status
+                //    transitions. SCAN_UPDATE heartbeats fire on every progress
+                //    tick during a scan; refetching the whole /api/scans payload
+                //    each time hammered the backend for a list whose rows only
+                //    change on start/finish. Progress + phase UI is WS-live.
+                if (data.type === 'SCAN_UPDATE' && data.payload?.id) {
+                    const sid = data.payload.id;
+                    const prevStatus = statusSeenRef.current[sid];
+                    const newStatus = data.payload.status;
+                    if (prevStatus !== newStatus) {
+                        statusSeenRef.current[sid] = newStatus;
+                        shouldFetch = true;
+                        // Clean up phaseMap for scans that reached a terminal state
+                        if (['Completed', 'Failed', 'Interrupted', 'Cancelled'].includes(newStatus)) {
+                            setPhaseMap(prev => {
+                                const next = { ...prev };
+                                delete next[sid];
+                                return next;
+                            });
+                        }
                     }
+                } else if (['GI5_COMPLETE', 'REPORT_READY', 'ZOMBIE_SWEEP_RESULT'].includes(data.type)) {
+                    shouldFetch = true;
                 }
 
                 // 4. Auto-download generated PDF report (shared utility)
@@ -133,8 +151,7 @@ const Scans = ({ navigate }) => {
                 }
             });
 
-            if (Object.keys(newProgress).length > Object.keys(currentProgress).length ||
-                JSON.stringify(newProgress) !== JSON.stringify(currentProgress)) {
+            if (progressDirty) {
                 setProgressMap(prev => ({ ...prev, ...newProgress }));
             }
 

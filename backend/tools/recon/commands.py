@@ -148,29 +148,35 @@ class ReconCommandPlanner:
                 )
             )
         if scope.scan_mode == ScanMode.AGGRESSIVE:
-            sf_script = self.tool_root / "spiderfoot" / "sf.py"
-            if sf_script.exists():
-                cmds.append(
-                    ReconCommand(
+            # SpiderFoot ships as a `spiderfoot` console-script in the recon
+            # image (the `python <tool_root>/spiderfoot/sf.py` form used a HOST
+            # path that does not exist inside the container). Use the binary
+            # directly so it runs identically in Docker and locally. The scan is
+            # bounded to a small passive module set + strict type filter so the
+            # OSINT aggregation finishes inside the watchdog instead of stalling
+            # the whole phase on internet lookups.
+            cmds.append(
+                ReconCommand(
+                    "spiderfoot",
+                    "passive_intelligence",
+                    (
                         "spiderfoot",
-                        "passive_intelligence",
-                        (
-                            "python",
-                            str(sf_script),
-                            "-s",
-                            d,
-                            "-q",
-                            "-o",
-                            "json",
-                            "-F",
-                            "DOMAIN_NAME,EMAILADDR,IP_ADDRESS,INTERNET_NAME",
-                        ),
-                        raw_dir / "spiderfoot.json",
-                        timeout_seconds=self.timeout * 2,
-                        parser_hint="json",
-                        metadata={"note": "OSINT aggregation; passive only."},
-                    )
+                        "-s",
+                        d,
+                        "-q",
+                        "-m",
+                        "sfp_dnsresolve,sfp_whois,sfp_dnsbrute,sfp_crt,sfp_robots,sfp_ahrefs",
+                        "-o",
+                        "json",
+                        "-F",
+                        "DOMAIN_NAME,EMAILADDR,IP_ADDRESS,INTERNET_NAME",
+                    ),
+                    raw_dir / "spiderfoot.json",
+                    timeout_seconds=min(self.timeout * 2, 240),
+                    parser_hint="json",
+                    metadata={"note": "Bounded passive OSINT aggregation."},
                 )
+            )
         return cmds
 
     # ── Phase 2: DNS & Infrastructure ──────────────────────────────
@@ -196,34 +202,29 @@ class ReconCommandPlanner:
                     "-soa",
                     "-json",
                     "-silent",
+                    # Explicit local resolver: the recon container firewalls
+                    # UDP egress, so dnsx's built-in UDP resolvers time out.
+                    # 127.0.0.1 is the container-local unbound TCP forwarder.
+                    "-r",
+                    "127.0.0.1",
                 ),
                 raw_dir / "dnsx.resolved.jsonl",
                 timeout_seconds=self.timeout,
                 parser_hint="jsonl",
             ),
         ]
+        # AGGRESSIVE: active DNS bruteforce. puredns is the single canonical
+        # massdns wrapper (shuffledns was removed — same job, dead without
+        # massdns). Requires the massdns binary in the recon image.
         if scope.scan_mode == ScanMode.AGGRESSIVE:
             wl = self.tool_root / "SecLists" / "Discovery" / "DNS" / "subdomains-top1million-5000.txt"
             resolvers = self.tool_root / "resolvers.txt"
+            if not resolvers.exists():
+                # Container-local unbound TCP forwarder (UDP egress firewalled).
+                # puredns -r expects a FILE, not a bare IP — write one.
+                resolvers = raw_dir / "puredns.resolvers.txt"
+                resolvers.write_text("127.0.0.1\n", encoding="utf-8")
             if wl.exists():
-                cmds.append(
-                    ReconCommand(
-                        "shuffledns",
-                        "dns_infrastructure",
-                        (
-                            "shuffledns",
-                            "-d",
-                            scope.base_domain,
-                            "-w",
-                            str(wl),
-                            "-r",
-                            str(resolvers) if resolvers.exists() else "8.8.8.8,1.1.1.1",
-                        ),
-                        raw_dir / "shuffledns.txt",
-                        timeout_seconds=self.timeout,
-                        parser_hint="lines",
-                    )
-                )
                 cmds.append(
                     ReconCommand(
                         "puredns",
@@ -234,7 +235,12 @@ class ReconCommandPlanner:
                             str(wl),
                             scope.base_domain,
                             "-r",
-                            str(resolvers) if resolvers.exists() else "8.8.8.8",
+                            str(resolvers),
+                            # Validation pass needs the same reachable resolver:
+                            # puredns's built-in trusted list hits UDP-blocked
+                            # public DNS and fails validation in the container.
+                            "--resolvers-trusted",
+                            str(resolvers),
                             "-q",
                             "--write",
                             str(raw_dir / "puredns.txt"),
@@ -250,7 +256,9 @@ class ReconCommandPlanner:
             ReconCommand(
                 "cdncheck",
                 "dns_infrastructure",
-                ("cdncheck", "-l", str(subdomain_file), "-resp", "-json", "-silent"),
+                # NOTE: `-json` was removed from this cdncheck build — the JSONL
+                # flag is `-j`. The parser (parse_cdncheck_jsonl) reads JSONL.
+                ("cdncheck", "-l", str(subdomain_file), "-resp", "-j", "-silent"),
                 raw_dir / "cdncheck.jsonl",
                 timeout_seconds=self.timeout,
                 parser_hint="jsonl",
@@ -258,45 +266,20 @@ class ReconCommandPlanner:
         )
         return cmds
 
-    def port_commands(self, scope: ReconScope, raw_dir: Path, hosts_file: Path) -> list[ReconCommand]:
+    def port_commands(
+        self, scope: ReconScope, raw_dir: Path, hosts_file: Path, explicit_port: int | None = None
+    ) -> list[ReconCommand]:
         if scope.scan_mode == ScanMode.PASSIVE_ONLY:
             return []
         rps = str(min(scope.max_rps, 1000))
-        cmds = [
-            ReconCommand(
-                "naabu",
-                "dns_infrastructure",
-                ("naabu", "-l", str(hosts_file), "-top-ports", "1000", "-rate", rps, "-json", "-silent"),
-                raw_dir / "naabu.jsonl",
-                timeout_seconds=self.timeout,
-                parser_hint="jsonl",
-            ),
-        ]
-        if scope.scan_mode == ScanMode.AGGRESSIVE:
-            cmds.append(
-                ReconCommand(
-                    "masscan",
-                    "dns_infrastructure",
-                    (
-                        "masscan",
-                        "-iL",
-                        str(hosts_file),
-                        "-p",
-                        "1-65535",
-                        "--rate",
-                        rps,
-                        "-oJ",
-                        str(raw_dir / "masscan.json"),
-                    ),
-                    raw_dir / "masscan.stdout.txt",
-                    timeout_seconds=self.timeout * 2,
-                    parser_hint="json",
-                    metadata={
-                        "json_file": str(raw_dir / "masscan.json"),
-                        "note": "Requires raw-socket privileges; safe to skip without them.",
-                    },
-                )
-            )
+        cmds: list[ReconCommand] = []
+        # A single-target lab (e.g. localhost:8888) carries an explicit port:
+        # nmap's deep -sV/-sC on that one port is the whole job. naabu's
+        # resolver chokes on Docker's host.docker.internal alias and masscan's
+        # full-range sweep would burn the entire tool budget for zero extra
+        # signal on a one-port lab. Domain targets keep the fast pre-scan ->
+        # deep-scan chain (naabu -> masscan -> nmap).
+        if explicit_port:
             cmds.append(
                 ReconCommand(
                     "nmap",
@@ -305,8 +288,8 @@ class ReconCommandPlanner:
                         "nmap",
                         "-sV",
                         "-sC",
-                        "--top-ports",
-                        "1000",
+                        "-p",
+                        str(explicit_port),
                         "-oX",
                         str(raw_dir / "nmap_scan.xml"),
                         "-iL",
@@ -320,9 +303,70 @@ class ReconCommandPlanner:
                     metadata={"xml_file": str(raw_dir / "nmap_scan.xml")},
                 )
             )
+        else:
+            cmds.append(
+                ReconCommand(
+                    "naabu",
+                    "dns_infrastructure",
+                    ("naabu", "-l", str(hosts_file), "-top-ports", "1000", "-rate", rps, "-json", "-silent"),
+                    raw_dir / "naabu.jsonl",
+                    timeout_seconds=self.timeout,
+                    parser_hint="jsonl",
+                )
+            )
+            if scope.scan_mode == ScanMode.AGGRESSIVE:
+                cmds.append(
+                    ReconCommand(
+                        "masscan",
+                        "dns_infrastructure",
+                        (
+                            "masscan",
+                            "-iL",
+                            str(hosts_file),
+                            "-p",
+                            "1-65535",
+                            "--rate",
+                            rps,
+                            "-oJ",
+                            str(raw_dir / "masscan.json"),
+                        ),
+                        raw_dir / "masscan.stdout.txt",
+                        timeout_seconds=self.timeout * 2,
+                        parser_hint="json",
+                        metadata={
+                            "json_file": str(raw_dir / "masscan.json"),
+                            "note": "Requires raw-socket privileges; safe to skip without them.",
+                        },
+                    )
+                )
+                cmds.append(
+                    ReconCommand(
+                        "nmap",
+                        "dns_infrastructure",
+                        (
+                            "nmap",
+                            "-sV",
+                            "-sC",
+                            "--top-ports",
+                            "1000",
+                            "-oX",
+                            str(raw_dir / "nmap_scan.xml"),
+                            "-iL",
+                            str(hosts_file),
+                            "--min-rate",
+                            rps,
+                        ),
+                        raw_dir / "nmap.stdout.txt",
+                        timeout_seconds=self.timeout * 2,
+                        parser_hint="xml",
+                        metadata={"xml_file": str(raw_dir / "nmap_scan.xml")},
+                    )
+                )
         return cmds
 
-    def tls_commands(self, scope: ReconScope, raw_dir: Path, hosts_file: Path) -> list[ReconCommand]:
+    def tls_commands(
+        self, scope: ReconScope, raw_dir: Path, hosts_file: Path, explicit_port: int | None = None
+    ) -> list[ReconCommand]:
         if scope.scan_mode == ScanMode.PASSIVE_ONLY:
             return []
         cmds = [
@@ -351,7 +395,11 @@ class ReconCommandPlanner:
         ]
         # testssl.sh does a deep TLS/cipher/vuln audit — aggressive only, one
         # host at a time to stay within budget.
-        if scope.scan_mode == ScanMode.AGGRESSIVE and scope.base_domain:
+        if (
+            scope.scan_mode == ScanMode.AGGRESSIVE
+            and scope.base_domain
+            and (explicit_port is None or explicit_port == 443)
+        ):
             cmds.append(
                 ReconCommand(
                     "testssl",
@@ -375,19 +423,16 @@ class ReconCommandPlanner:
 
     # ── Phase 3: HTTP & Browser Intelligence ──────────────────────
 
-    def http_commands(self, scope: ReconScope, raw_dir: Path, hosts_file: Path) -> list[ReconCommand]:
+    def http_commands(
+        self, scope: ReconScope, raw_dir: Path, hosts_file: Path, explicit_port: int | None = None, cookie: str = ""
+    ) -> list[ReconCommand]:
         if scope.scan_mode == ScanMode.PASSIVE_ONLY:
             return []
+        # Auth-aware crawl: when the seeder already authenticated (auth-first
+        # ordering), forward the Cookie so katana/gospider see the real app
+        # instead of the 302-to-login wall.
+        _h = ("-H", f"Cookie: {cookie}") if cookie else ()
         cmds = [
-            ReconCommand(
-                "httprobe",
-                "http_browser_intelligence",
-                ("httprobe", "-c", "50", "-p", "https:443", "-p", "http:80"),
-                raw_dir / "httprobe.txt",
-                timeout_seconds=self.timeout,
-                parser_hint="lines",
-                stdin=self._read_hosts_stdin(hosts_file),
-            ),
             ReconCommand(
                 "httpx",
                 "http_browser_intelligence",
@@ -411,6 +456,7 @@ class ReconCommandPlanner:
                     "-silent",
                     "-rate-limit",
                     str(scope.max_rps),
+                    *_h,
                 ),
                 raw_dir / "httpx.jsonl",
                 timeout_seconds=self.timeout,
@@ -432,6 +478,7 @@ class ReconCommandPlanner:
                     "-silent",
                     "-rate-limit",
                     str(scope.max_rps),
+                    *_h,
                 ),
                 raw_dir / "katana.jsonl",
                 timeout_seconds=self.timeout,
@@ -455,24 +502,20 @@ class ReconCommandPlanner:
                     "--delay",
                     "0",
                     "-q",
+                    *_h,
                 ),
                 raw_dir / "gospider.jsonl",
                 timeout_seconds=self.timeout,
                 parser_hint="jsonl",
             ),
-            ReconCommand(
-                "hakrawler",
-                "http_browser_intelligence",
-                ("hakrawler", "-d", str(scope.max_depth), "-subs", "-insecure"),
-                raw_dir / "hakrawler.txt",
-                timeout_seconds=self.timeout,
-                parser_hint="lines",
-                stdin=f"http://{scope.base_domain}\nhttps://{scope.base_domain}\n",
-            ),
         ]
         if scope.scan_mode in {ScanMode.STANDARD, ScanMode.AGGRESSIVE}:
             # wafw00f removed: belongs to Sigma exploitation agent
             # whatweb removed: belongs to Sigma exploitation agent
+            # arjun's `-i` reads a list of TARGET URLs — bare `host`/`host:port`
+            # lines make it crash (`TypeError: 'NoneType' object is not
+            # iterable`). Feed the derived ABSOLUTE-URL sites file instead.
+            arjun_targets = self._build_url_sites_file(hosts_file, raw_dir)
             cmds.append(
                 ReconCommand(
                     "arjun",
@@ -480,7 +523,7 @@ class ReconCommandPlanner:
                     (
                         "arjun",
                         "-i",
-                        str(hosts_file),
+                        str(arjun_targets),
                         "-oJ",
                         str(raw_dir / "arjun.json"),
                         "-t",
@@ -494,13 +537,15 @@ class ReconCommandPlanner:
                     metadata={"json_file": str(raw_dir / "arjun.json")},
                 )
             )
-            ps_script = self.tool_root / "ParamSpider" / "paramspider.py"
-            if ps_script.exists() and scope.base_domain:
+            if scope.base_domain and self._is_registrable_domain(scope.base_domain):
                 cmds.append(
                     ReconCommand(
                         "paramspider",
                         "http_browser_intelligence",
-                        ("python", str(ps_script), "-d", scope.base_domain, "-o", str(raw_dir / "paramspider.txt")),
+                        # ParamSpider's current CLI dropped `-o`; `-s` streams
+                        # URLs to stdout, which the governed runner captures
+                        # into output_path (parser_hint="urls" reads it).
+                        ("paramspider", "-d", scope.base_domain, "-s"),
                         raw_dir / "paramspider.txt",
                         timeout_seconds=self.timeout,
                         parser_hint="urls",
@@ -552,35 +597,33 @@ class ReconCommandPlanner:
         if scope.scan_mode == ScanMode.PASSIVE_ONLY or not js_files:
             return []
         cmds: list[ReconCommand] = []
-        lf_script = self.tool_root / "LinkFinder" / "linkfinder.py"
-        sf_script = self.tool_root / "SecretFinder" / "SecretFinder.py"
 
         # Batch JS files into a single input file
         js_input = raw_dir / "js_urls_for_analysis.txt"
         js_input.parent.mkdir(parents=True, exist_ok=True)
         js_input.write_text("\n".join(js_files[:200]) + "\n", encoding="utf-8")
 
-        if lf_script.exists():
+        if js_files:
             for js_url in js_files[:50]:  # limit per-file analysis
                 safe = js_url.replace("/", "_").replace(":", "_")[:80]
                 cmds.append(
                     ReconCommand(
                         "linkfinder",
                         "http_browser_intelligence",
-                        ("python", str(lf_script), "-i", js_url, "-o", "cli"),
+                        ("linkfinder", "-i", js_url, "-o", "cli"),
                         raw_dir / f"linkfinder_{safe}.txt",
                         timeout_seconds=60,
                         parser_hint="lines",
                     )
                 )
-        if sf_script.exists():
+        if js_files:
             for js_url in js_files[:50]:
                 safe = js_url.replace("/", "_").replace(":", "_")[:80]
                 cmds.append(
                     ReconCommand(
                         "secretfinder",
                         "http_browser_intelligence",
-                        ("python", str(sf_script), "-i", js_url, "-o", "cli"),
+                        ("secretfinder", "-i", js_url, "-o", "cli"),
                         raw_dir / f"secretfinder_{safe}.txt",
                         timeout_seconds=60,
                         parser_hint="lines",
@@ -591,7 +634,12 @@ class ReconCommandPlanner:
     # ── Phase 4: Directory & Route Discovery ──────────────────────
 
     def discovery_commands(
-        self, scope: ReconScope, raw_dir: Path, live_hosts: list[str], wordlist_path: Path | None = None
+        self,
+        scope: ReconScope,
+        raw_dir: Path,
+        live_hosts: list[str],
+        wordlist_path: Path | None = None,
+        cookie: str = "",
     ) -> list[ReconCommand]:
         if scope.scan_mode == ScanMode.PASSIVE_ONLY or not live_hosts:
             return []
@@ -618,9 +666,7 @@ class ReconCommandPlanner:
         rps = str(min(scope.max_rps, 200))
 
         # Normalize live_hosts to absolute URLs (feroxbuster --stdin requires a
-        # scheme; ffuf's -u takes a single URL; gobuster + dirsearch likewise).
-        # When the orchestrator already seeded URLs (http://host:port/...) we
-        # use them as-is; otherwise prepend http:// to bare host[:port] entries.
+        # scheme; ffuf's -u takes a single URL; gobuster likewise).
         def _to_url(h: str) -> str:
             h = h.strip()
             if not h:
@@ -630,6 +676,11 @@ class ReconCommandPlanner:
         url_hosts = [u for u in (_to_url(h) for h in live_hosts) if u]
         if not url_hosts:
             return []
+
+        # Auth-forwarding header for the content fuzzers (auth-first ordering):
+        # the seeder's Cookie lets them see the real app instead of the
+        # 302-to-login wall on login-gated targets.
+        _h = ("-H", f"Cookie: {cookie}") if cookie else ()
 
         cmds.append(
             ReconCommand(
@@ -646,7 +697,13 @@ class ReconCommandPlanner:
                     rps,
                     "--depth",
                     str(min(scope.max_depth, 2)),
-                    "--auto-tune",
+                    # NOTE: --auto-tune deliberately omitted. On redirect-heavy
+                    # apps (DVWA-style: every unauthenticated path 302s to
+                    # login) feroxbuster's wildcard-detection heuristic can
+                    # decide the whole site is a wildcard and filter EVERY
+                    # result, producing a 0-entity run on an otherwise healthy
+                    # target. Plain scan + explicit status filtering is
+                    # deterministic (probe-verified 37/37/37 on DVWA).
                     "--dont-scan",
                     r"\.css$",
                     r"\.js$",
@@ -654,6 +711,7 @@ class ReconCommandPlanner:
                     r"\.jpg$",
                     r"\.gif$",
                     r"\.ico$",
+                    *_h,
                 ),
                 raw_dir / "feroxbuster.jsonl",
                 timeout_seconds=self.timeout * 2,
@@ -683,42 +741,12 @@ class ReconCommandPlanner:
                     # apps (DVWA) that 302-redirect every path to login.
                     "-maxtime",
                     str(min(self.timeout - 10, 90)),
+                    *_h,
                 ),
                 raw_dir / "ffuf.stdout.txt",
                 timeout_seconds=self.timeout,
                 parser_hint="json",
                 metadata={"json_file": str(raw_dir / "ffuf_results.json")},
-            )
-        )
-
-        # dirsearch: prefer the installed `dirsearch` binary (present in the
-        # recon container as a pipx entry point, and on PATH for local installs).
-        # The legacy `python <tool_root>/dirsearch/dirsearch.py` form broke in
-        # the container (host script path does not exist there). Run the binary
-        # directly so it works identically in Docker and locally. Output uses the
-        # modern `-o PATH --format=json` flags (this dirsearch dropped the old
-        # `--json-report` option).
-        cmds.append(
-            ReconCommand(
-                "dirsearch",
-                "directory_route_discovery",
-                (
-                    "dirsearch",
-                    "-u",
-                    url_hosts[0],
-                    "-e",
-                    "php,asp,aspx,jsp,html,js,json",
-                    "-o",
-                    str(raw_dir / "dirsearch.json"),
-                    "--format=json",
-                    "-q",
-                    "--max-time",
-                    str(min(self.timeout - 10, 60)),
-                ),
-                raw_dir / "dirsearch.stdout.txt",
-                timeout_seconds=self.timeout,
-                parser_hint="json",
-                metadata={"json_file": str(raw_dir / "dirsearch.json")},
             )
         )
 
@@ -738,17 +766,63 @@ class ReconCommandPlanner:
                     "-q",
                     "--no-error",
                     # DVWA-style apps redirect every URL to login.php (302 wildcard);
-                    # without this gobuster aborts immediately. Excluding 302 lets it
-                    # find pages that genuinely exist (200/403/401).
+                    # excluding 302 lets gobuster find pages that genuinely exist
+                    # (200/403/401). NOTE: `--wildcard` was dropped — the bundled
+                    # gobuster rejects it ("flag provided but not defined"), which
+                    # made the tool print usage help as "results".
                     "-b",
                     "302,404",
-                    "--wildcard",
+                    *_h,
                 ),
                 raw_dir / "gobuster.txt",
                 timeout_seconds=self.timeout,
                 parser_hint="lines",
             )
         )
+
+        # Virtual-host fuzzing (AGGRESSIVE only, registrable domain targets).
+        # The scoped domain's subdomains live on shared infrastructure; vhost
+        # discovery finds internal/staging apps that never got a DNS record.
+        # ffuf brute-forces the Host header against a small vhost wordlist.
+        if (
+            scope.scan_mode == ScanMode.AGGRESSIVE
+            and scope.base_domain
+            and self._is_registrable_domain(scope.base_domain)
+        ):
+            vhost_wl = self.tool_root / "SecLists" / "Discovery" / "DNS" / "subdomains-top1million-5000.txt"
+            if vhost_wl.exists():
+                cmds.append(
+                    ReconCommand(
+                        "ffuf_vhost",
+                        "directory_route_discovery",
+                        (
+                            "ffuf",
+                            "-w",
+                            str(vhost_wl),
+                            "-u",
+                            url_hosts[0],
+                            "-H",
+                            f"Host: FUZZ.{scope.base_domain}",
+                            "-mc",
+                            "200,301,302,401,403",
+                            "-fs",
+                            "0",
+                            "-rate",
+                            rps,
+                            "-t",
+                            "20",
+                            "-json",
+                            "-o",
+                            str(raw_dir / "ffuf_vhost_results.json"),
+                            "-maxtime",
+                            "45",
+                        ),
+                        raw_dir / "ffuf_vhost.stdout.txt",
+                        timeout_seconds=self.timeout,
+                        parser_hint="json",
+                        metadata={"json_file": str(raw_dir / "ffuf_vhost_results.json")},
+                    )
+                )
 
         return cmds
 
@@ -759,7 +833,12 @@ class ReconCommandPlanner:
             return []
         cmds: list[ReconCommand] = []
 
-        # Kiterunner
+        # Kiterunner — API/content route discovery. The packaged
+        # routes-*.kite files are NOT present in the recon image or the host
+        # tool root, so the planner synthesizes a compact plain-text route
+        # wordlist (kr `brute` accepts plain wordlists) covering common API and
+        # admin paths. This keeps the tool genuinely usable instead of silently
+        # skipped forever.
         kr_routes = self.tool_root / "kiterunner" / "routes-large.kite"
         if not kr_routes.exists():
             kr_routes = self.tool_root / "kiterunner" / "routes-small.kite"
@@ -774,17 +853,38 @@ class ReconCommandPlanner:
                     parser_hint="lines",
                 )
             )
+        else:
+            kr_wl = raw_dir / "kiterunner_routes.txt"
+            kr_wl.parent.mkdir(parents=True, exist_ok=True)
+            _api_routes = (
+                "/api", "/api/v1", "/api/v2", "/api/health", "/api/status", "/api/users", "/api/auth",
+                "/api/login", "/api/token", "/api/config", "/graphql", "/rest", "/rest/v1", "/v1", "/v2",
+                "/admin", "/admin/login", "/admin/api", "/dashboard", "/swagger", "/swagger.json",
+                "/openapi.json", "/api-docs", "/docs", "/redoc", "/graphiql", "/user", "/users", "/account",
+                "/login", "/logout", "/register", "/oauth", "/callback", "/webhooks", "/health", "/status",
+                "/metrics", "/debug", "/actuator", "/actuator/health", "/config.json", "/.env", "/robots.txt",
+            )
+            kr_wl.write_text("\n".join(_api_routes) + "\n", encoding="utf-8")
+            cmds.append(
+                ReconCommand(
+                    "kiterunner",
+                    "api_reconnaissance",
+                    ("kr", "brute", live_hosts[0], "-w", str(kr_wl), "-q"),
+                    raw_dir / "kiterunner.txt",
+                    timeout_seconds=min(self.timeout, 120),
+                    parser_hint="lines",
+                )
+            )
 
         # InQL for GraphQL
-        inql_script = self.tool_root / "inql" / "inql.py"
-        if inql_script.exists():
+        if live_hosts:
             for host in live_hosts[:5]:
                 safe = host.replace("/", "_").replace(":", "_")[:60]
                 cmds.append(
                     ReconCommand(
                         "inql",
                         "api_reconnaissance",
-                        ("python", str(inql_script), "-t", f"{host}/graphql", "-o", str(raw_dir / f"inql_{safe}")),
+                        ("inql", "-t", f"{host}/graphql", "-o", str(raw_dir / f"inql_{safe}")),
                         raw_dir / f"inql_{safe}.stdout.txt",
                         timeout_seconds=60,
                         parser_hint="json",
@@ -831,26 +931,9 @@ class ReconCommandPlanner:
                 timeout_seconds=self.timeout,
                 parser_hint="jsonl",
                 metadata={
-                    "note": "Requires Chrome in the recon image; expected-skip otherwise.",
+                    "note": "The recon image ships chromium, so real screenshots work.",
                     "json_file": str(raw_dir / "gowitness.jsonl"),
-                },
-            )
-        )
-        # aquatone consumes the same host list over stdin and produces a visual
-        # cluster report + screenshots (complementary to gowitness). The recon
-        # image does not currently package aquatone — the runner logs the skip.
-        cmds.append(
-            ReconCommand(
-                "aquatone",
-                "visual_documentation",
-                ("aquatone", "-out", str(raw_dir / "aquatone"), "-silent"),
-                raw_dir / "aquatone" / "aquatone_session.json",
-                timeout_seconds=self.timeout,
-                parser_hint="json",
-                stdin=self._read_hosts_stdin(hosts_file),
-                metadata={
-                    "json_file": str(raw_dir / "aquatone" / "aquatone_session.json"),
-                    "note": "Requires aquatone binary + Chrome; expected-skip otherwise.",
+                    "requires_chrome": "1",
                 },
             )
         )
@@ -859,46 +942,169 @@ class ReconCommandPlanner:
     # ── Phase 7: Template Validation ──────────────────────────────
 
     def validation_commands(
-        self, scope: ReconScope, raw_dir: Path, live_hosts: list[str], interactsh_url: str = ""
+        self, scope: ReconScope, raw_dir: Path, live_hosts: list[str], interactsh_url: str = "", cookie: str = ""
     ) -> list[ReconCommand]:
+        """Template validation for the discovered live surface.
+
+        Two-pass nuclei design (probe-verified on DVWA):
+          1. Fast `-tags default-login` pass — deterministic (~20s) and catches
+             default-credential logins (the classic critical finding). Runs
+             WITHOUT the forwarded cookie: those templates do their own session
+             handshake and a duplicate Cookie header breaks it.
+          2. Bounded CVE sweep — critical/high with a tight per-request timeout,
+             no retries, fuzz/dos excluded, `-stats` so the no-output watchdog
+             doesn't kill the silent sweep. Forwards the auth Cookie when the
+             seeder authenticated (auth-first ordering) so authenticated paths
+             are tested.
+          3. Subdomain-takeover pass (AGGRESSIVE) — `-tags takeover` templates.
+
+        `-as` (auto-scan) is deliberately NOT used: probe-verified it MISSES
+        `dvwa-default-login` because tech-detection only maps ~500 templates and
+        the default-login family falls outside them.
+        """
         if scope.scan_mode == ScanMode.PASSIVE_ONLY or not live_hosts:
             return []
+        # Nuclei templates define their OWN relative paths (/login.php, /setup.php),
+        # so they must be pointed at the target ORIGIN — a deep URL like
+        # http://host:8888/vulnerabilities/sqli/ would make every template probe
+        # /vulnerabilities/sqli/login.php (404). Derive origin URLs from whatever
+        # the live surface contains (probe-verified: origin-based runs catch
+        # dvwa-default-login; deep-URL runs catch nothing).
+        origins: list[str] = []
+        seen_origins: set[str] = set()
+        for h in live_hosts[:200]:
+            hs = h.strip()
+            if not hs:
+                continue
+            if hs.startswith(("http://", "https://")):
+                try:
+                    from urllib.parse import urlsplit
+
+                    pu = urlsplit(hs)
+                    origin = f"{pu.scheme}://{pu.netloc}/"
+                except Exception:
+                    origin = hs
+            else:
+                origin = f"http://{hs}/"
+            if origin not in seen_origins:
+                seen_origins.add(origin)
+                origins.append(origin)
+        if not origins:
+            return []
         hosts_file = raw_dir / "live_hosts_for_nuclei.txt"
-        hosts_file.write_text("\n".join(live_hosts[:200]) + "\n", encoding="utf-8")
+        hosts_file.write_text("\n".join(origins) + "\n", encoding="utf-8")
 
         cmds: list[ReconCommand] = []
-        nuclei_args = [
+        _h = ("-H", f"Cookie: {cookie}") if cookie else ()
+
+        # Pass 1: default-login tags — fast, reliable, no cookie.
+        cmds.append(
+            ReconCommand(
+                "nuclei_default_login",
+                "template_validation",
+                (
+                    "nuclei",
+                    "-l",
+                    str(hosts_file),
+                    "-tags",
+                    "default-login",
+                    "-severity",
+                    "critical,high,medium",
+                    "-timeout",
+                    "5",
+                    "-retries",
+                    "0",
+                    # Serial execution: default-login templates do a 2-request
+                    # handshake (GET login -> extract single-use CSRF token ->
+                    # POST). Parallel templates race on that token and DVWA's
+                    # login breaks (0 findings at -c 5+, deterministic 3/3 at
+                    # -c 1). -stats keeps stderr alive so the no-output watchdog
+                    # never kills the (necessarily slow) serial pass.
+                    "-c",
+                    "1",
+                    "-stats",
+                    "-stats-interval",
+                    "15",
+                    "-exclude-tags",
+                    "fuzz,dos",
+                    "-jsonl",
+                    "-silent",
+                ),
+                raw_dir / "nuclei_default_login.jsonl",
+                timeout_seconds=min(self.timeout, 120),
+                parser_hint="jsonl",
+            )
+        )
+
+        # Pass 2: bounded CVE sweep (auth-forwarding when seeded).
+        cve_args = [
             "nuclei",
             "-l",
             str(hosts_file),
             "-severity",
-            "critical,high,medium",
+            "critical,high",
+            "-timeout",
+            "5",
+            "-retries",
+            "0",
+            "-exclude-tags",
+            "fuzz,dos",
             "-rate-limit",
-            str(min(scope.max_rps, 100)),
+            str(min(scope.max_rps, 200)),
             "-jsonl",
             "-silent",
             "-bulk-size",
             "25",
             "-concurrency",
-            "10",
+            "15",
+            # -stats keeps stderr alive so the no-output watchdog never kills
+            # the silent sweep while templates still load/run.
+            "-stats",
+            "-stats-interval",
+            "20",
+            *_h,
         ]
         if interactsh_url:
-            nuclei_args.extend(["-iserver", interactsh_url])
-
+            cve_args.extend(["-iserver", interactsh_url])
         cmds.append(
             ReconCommand(
-                "nuclei",
+                "nuclei_cve",
                 "template_validation",
-                tuple(nuclei_args),
-                raw_dir / "nuclei.jsonl",
-                timeout_seconds=self.timeout * 3,
+                tuple(cve_args),
+                raw_dir / "nuclei_cve.jsonl",
+                timeout_seconds=min(self.timeout, 240),
                 parser_hint="jsonl",
             )
         )
 
-        # dalfox does focused, scope-bound XSS validation on URLs that carry
-        # parameters (aggressive only — it actively probes reflected/DOM XSS).
-        # dalfox removed: belongs to Sigma exploitation agent
+        # Pass 3: subdomain takeover (AGGRESSIVE only).
+        if scope.scan_mode == ScanMode.AGGRESSIVE and scope.base_domain:
+            cmds.append(
+                ReconCommand(
+                    "nuclei_takeover",
+                    "template_validation",
+                    (
+                    "nuclei",
+                    "-l",
+                    str(hosts_file),
+                    "-tags",
+                    "takeover",
+                    "-c",
+                    "5",
+                        "-severity",
+                        "medium,high,critical",
+                        "-timeout",
+                        "5",
+                        "-retries",
+                        "0",
+                        "-jsonl",
+                        "-silent",
+                    ),
+                    raw_dir / "nuclei_takeover.jsonl",
+                    timeout_seconds=min(self.timeout, 120),
+                    parser_hint="jsonl",
+                )
+            )
         return cmds
 
     def interactsh_commands(self, raw_dir: Path) -> list[ReconCommand]:
@@ -950,8 +1156,7 @@ TOOL_DEPENDENCY_GRAPH = {
     "spiderfoot": [],
     # STAGE 2: DNS & Infrastructure (depends on passive subdomain tools)
     "dnsx": ["subfinder", "amass"],  # Needs subdomains to resolve
-    "shuffledns": ["subfinder", "amass"],  # Needs subdomains for DNS mass resolution
-    "puredns": ["subfinder", "amass"],  # Alternative to shuffledns
+    "puredns": ["subfinder", "amass"],  # Massdns-based bruteforce on base domain
     "cdncheck": ["dnsx"],  # Needs resolved IPs to check CDN
     # STAGE 2b: Port Scanning (depends on DNS resolution)
     "naabu": ["dnsx"],  # Needs resolved hosts
@@ -961,11 +1166,9 @@ TOOL_DEPENDENCY_GRAPH = {
     "tlsx": ["dnsx"],  # TLS cert info on resolved hosts
     "testssl": ["nmap"],  # Deep TLS test on nmap-discovered ports
     # STAGE 3: HTTP & Browser Intelligence (depends on DNS + ports)
-    "httprobe": ["dnsx"],  # Check which DNS results are web servers
     "httpx": ["dnsx"],  # Tech detection, status codes on live hosts
     "katana": ["httpx"],  # Crawl live HTTP endpoints
     "gospider": ["httpx"],  # Spider live HTTP endpoints
-    "hakrawler": ["httpx"],  # Crawl for hidden endpoints
     "arjun": ["httpx"],  # Find hidden parameters on endpoints
     "paramspider": ["httpx"],  # Extract parameters from URLs
     # STAGE 3b: JavaScript Analysis (depends on HTTP crawl)
@@ -974,15 +1177,16 @@ TOOL_DEPENDENCY_GRAPH = {
     # STAGE 4: Directory & Route Discovery (depends on HTTP)
     "feroxbuster": ["httpx"],  # Directory brute-force on live hosts
     "ffuf": ["httpx"],  # Fast directory brute-force
-    "dirsearch": ["httpx"],  # Directory discovery
+    "ffuf_vhost": ["httpx"],  # Virtual-host brute-force (Host header)
     "gobuster": ["httpx"],  # Directory/file brute-force
     # STAGE 4b: API Reconnaissance (depends on HTTP)
     "kiterunner": ["httpx"],  # API route discovery
     "inql": ["httpx"],  # GraphQL introspection
     # STAGE 4c: Visual Documentation (depends on HTTP)
-    "gowitness": ["httpx"],  # Screenshot live hosts
-    "aquatone": ["httpx"],  # Visual inspection of web targets
+    "gowitness": ["httpx"],  # Screenshot live hosts (chromium in image)
     # STAGE 5: Validation (depends on all prior stages)
-    "nuclei": ["httpx"],  # Scans URLs from httpx, not ffuf dirs  # Template-based vuln scanning on endpoints
+    "nuclei_default_login": ["httpx"],  # Fast default-login detection pass
+    "nuclei_cve": ["httpx"],  # Bounded critical/high CVE sweep
+    "nuclei_takeover": ["httpx"],  # Subdomain takeover check (AGGRESSIVE)
     "interactsh": ["httpx"],  # OOB server runs alongside nuclei  # OOB vulnerability detection
 }

@@ -21,6 +21,22 @@ class StateManager:
         self._sync_lock = (
             threading.RLock()
         )  # RLock: complete_scan() acquires then calls flush_immediate() -> _save_sync() which also acquires
+        # ── V8 LOAD FIX: events no longer live inside ``_stats`` ──────────────
+        # ``_scan_events`` is the LIVE in-memory event log per scan (hot path for
+        # the events/findings/report APIs — every event stays visible). Full
+        # events are ALSO flushed durably to SQLite (scan_state_db.events) so
+        # nothing is lost on restart. ``_stats`` therefore stays small (scan
+        # metadata + findings + results only) which makes the 2s background
+        # write and ``get_stats()`` deepcopy ~instant instead of ~0.3s on a
+        # 24MB blob. ``get_scan_state()`` merges the buffer back so existing
+        # consumers (events endpoint, _findings_from_scan, reports) see exactly
+        # the same data they did before.
+        self._scan_events: dict[str, list[dict[str, Any]]] = {}
+        self._events_hydrated: set[str] = set()  # scans whose SQLite log is already in _scan_events
+        self._pending_events: list[dict[str, Any]] = []  # batch awaiting SQLite flush
+        self._sqlite_flush_lock = threading.Lock()
+        # Small stats.json / get_stats() snapshot cache (invalidated on write).
+        self._stats_cache: dict[str, Any] | None = None
         self._stats = {
             "scans": [],
             "active_scans": 0,
@@ -45,22 +61,82 @@ class StateManager:
                     # Ensure scans list exists
                     if "scans" not in self._stats:
                         self._stats["scans"] = []
+                    # V8 LOAD FIX (migration): legacy stats.json blobs embed every
+                    # event inside each scan record (that's what made the file
+                    # 24MB+). Move them into the live event buffer + durable
+                    # SQLite, then drop them from the in-memory scan records so
+                    # the NEXT save writes a compact stats.json. Nothing is lost:
+                    # the events endpoint still sees every event via
+                    # ``get_scan_state``.
+                    migrated = 0
+                    for s in self._stats["scans"]:
+                        legacy = s.pop("events", None)
+                        if isinstance(legacy, list) and legacy:
+                            sid = s.get("id") or s.get("scan_id") or ""
+                            if sid:
+                                buf = self._scan_events.setdefault(sid, [])
+                                buf[:] = legacy[-20000:]
+                                with self._sqlite_flush_lock:
+                                    self._pending_events.extend(
+                                        {"scan_id": sid, "event": e} for e in legacy
+                                    )
+                                migrated += len(legacy)
+                    if migrated:
+                        logger.info("[StateManager] Migrated %d legacy embedded events out of stats.json", migrated)
+                        self._ensure_writer()
             except Exception as e:
                 logger.error(f"[StateManager] Load Error: {e}")
 
     async def _background_writer(self) -> None:
-        """Coalesces multiple dirty flags into a single disk write every 2s."""
+        """Coalesces dirty stats into a single disk write every 2s AND flushes
+        the batched event log to SQLite (durable, all events kept).
+
+        V8 LOAD FIX: events no longer mark ``_stats`` dirty, so a chatty scan
+        writes the small stats.json (metadata/findings only) at most every 2s
+        instead of rewriting a 24MB blob per event burst.
+        """
         try:
             while True:
                 await asyncio.sleep(2.0)
+                self._flush_events_to_sqlite()
                 if self._dirty:
                     async with self._lock:
                         self._save_sync()
         except asyncio.CancelledError:
             # Final flush on shutdown
+            self._flush_events_to_sqlite()
             if self._dirty:
                 self._save_sync()
             raise
+
+    def _flush_events_to_sqlite(self) -> None:
+        """Drain the pending event batch into the durable SQLite event log.
+
+        Best-effort: on SQLite failure the events stay in the in-memory buffer
+        (still visible via the API) and are retried next cycle.
+        """
+        with self._sqlite_flush_lock:
+            if not self._pending_events:
+                return
+            batch = self._pending_events
+            self._pending_events = []
+        try:
+            from backend.core.scan_state_db import scan_state_db
+
+            rows = [
+                {
+                    "scan_id": item["scan_id"],
+                    "type": str(item["event"].get("type", "")),
+                    "source": str(item["event"].get("source", "")),
+                    "payload": item["event"],  # full event dict — nothing lost
+                }
+                for item in batch
+            ]
+            scan_state_db.add_events_bulk(rows)
+        except Exception as exc:
+            logger.warning("[StateManager] SQLite event flush failed (%s); %d events stay in memory", exc, len(batch))
+            with self._sqlite_flush_lock:
+                self._pending_events[:0] = batch  # retry next cycle
 
     async def shutdown(self) -> None:
         """Cancel the background writer cleanly and flush any pending writes.
@@ -83,6 +159,11 @@ class StateManager:
 
     def _mark_dirty(self) -> None:
         self._dirty = True
+        self._stats_cache = None  # invalidate the get_stats() snapshot cache
+        self._ensure_writer()
+
+    def _ensure_writer(self) -> None:
+        """Start the background writer task if it is not already running."""
         try:
             loop = asyncio.get_running_loop()
             if self._task is None or self._task.done():
@@ -116,6 +197,12 @@ class StateManager:
 
     def _save_sync(self) -> None:
         with self._sync_lock:
+            # Invalidate the get_stats() snapshot cache on EVERY write path.
+            # Some mutators (complete_scan, sync_complete_scan, mark_report_ready)
+            # call _save_sync() directly without going through _mark_dirty() —
+            # without this, get_stats() would serve stale scan status/results
+            # after a scan completes.
+            self._stats_cache = None
             try:
                 with open(TMP_STATE_FILE, "w", encoding="utf-8") as f:
                     json.dump(self._stats, f, indent=4, default=str)
@@ -129,10 +216,19 @@ class StateManager:
         self._mark_dirty()
 
     def get_stats(self) -> dict[str, Any]:
-        """Return a deep copy of stats to prevent mutation by callers."""
+        """Return a deep copy of stats to prevent mutation by callers.
+
+        V8 LOAD FIX: the copy is served from ``_stats_cache`` which is rebuilt
+        only after a real write (``_mark_dirty``), NOT on every call. Events
+        live outside ``_stats`` (see ``__init__``), so ``_stats`` is small and
+        this is ~instant instead of a 0.27s deepcopy of a 24MB blob on every
+        dashboard poll / VULN_CONFIRMED broadcast.
+        """
         import copy
 
-        return copy.deepcopy(self._stats)
+        if self._stats_cache is None:
+            self._stats_cache = copy.deepcopy(self._stats)
+        return copy.deepcopy(self._stats_cache)
 
     async def register_scan(self, scan_data: dict[str, Any]):
         async with self._lock:
@@ -158,47 +254,60 @@ class StateManager:
             self._save()
 
     async def add_scan_event(self, scan_id: str, event: dict[str, Any]) -> None:
-        """Append a live event to a specific scan record with auto-pruning (Max 500).
+        """Append a live event to a scan WITHOUT touching the stats.json blob.
 
-        WHY: Previously this set ``self._dirty = True`` directly — bypassing
-        ``_mark_dirty`` — so the background writer task was never started for
-        scans whose first persistence happened to be an event (writer is
-        spawned lazily by ``_mark_dirty``). Result: 1000-event scans
-        accumulated everything in memory and only flushed when something
-        else in the codebase happened to call ``_save()``. Now we route
-        through ``_mark_dirty`` which (a) ensures the 2-second debounced
-        writer is alive so 1000 events become a handful of disk syncs, and
-        (b) honours ``VIGILAGENT_TEST_MODE`` like every other path.
+        V8 LOAD FIX: events are written to the per-scan in-memory buffer
+        (``_scan_events`` — every event stays visible through the events
+        endpoint) and batched into ``_pending_events`` for the durable SQLite
+        event log (``scan_state_db.events``). The global ``_stats`` structure is
+        NOT modified and NOT marked dirty — a scan that emits 2000 events no
+        longer triggers a 24MB stats.json rewrite every 2 seconds. ``_load``
+        migrates any legacy embedded events into the same buffer/SQLite so
+        nothing is lost on restart.
 
         WHEN: Every scan event (DOM mutation, network probe, AI thought,
         etc.). On a typical scan that is 100s–1000s of events per minute.
         """
         async with self._lock:
-            for s in self._stats["scans"]:
-                if s["id"] == scan_id:
-                    if "events" not in s:
-                        s["events"] = []
-
-                    s["events"].append(event)
-
-                    # [V7] Cap events per scan to prevent unbounded memory growth.
-                    # Keep the most recent 2000 events per scan.
-                    if len(s["events"]) > 2000:
-                        s["events"] = s["events"][-2000:]
-
-                    # Route through _mark_dirty so the background writer
-                    # is guaranteed alive and writes are debounced (2s).
-                    self._mark_dirty()
-                    break
+            buf = self._scan_events.setdefault(scan_id, [])
+            buf.append(event)
+            # Bound in-memory history per scan (the SQLite log keeps EVERYTHING,
+            # so this cap only bounds RAM, never evidence).
+            if len(buf) > 20000:
+                del buf[: len(buf) - 20000]
+            with self._sqlite_flush_lock:
+                self._pending_events.append({"scan_id": scan_id, "event": event})
+                # Bounded queue: if SQLite is persistently down the batch would
+                # otherwise grow without limit (memory leak). On overflow drop
+                # the OLDEST pending events — they stay visible via
+                # ``_scan_events`` for the session; only SQLite durability is
+                # forfeited for them, which is already forfeit while it's down.
+                if len(self._pending_events) > 100_000:
+                    del self._pending_events[: len(self._pending_events) - 100_000]
+            # Keep the writer alive so the SQLite flush actually runs, but do
+            # NOT mark the stats blob dirty (events don't live in _stats).
+            self._ensure_writer()
 
     async def increment_request_count(self, count: int = 1) -> None:
-        """Atomically increment the global request counter for performance tracking."""
+        """Atomically increment the global request counter for performance tracking.
+
+        This is the per-intercepted-request hot path (socket_manager calls it
+        for EVERY request event). It must NOT go through ``_mark_dirty()``:
+        that invalidates ``_stats_cache``, forcing the next ``get_stats()`` to
+        re-deepcopy every scan record just because a scalar counter bumped —
+        turning a counter increment into O(scans) work per request. The counter
+        stays live via ``get_total_requests()``; persistence is unchanged
+        (the dirty flag still schedules the next 2s write).
+        """
         async with self._lock:
             self._stats["total_requests"] += count
-            # Use _mark_dirty to ensure the background writer is alive; a
-            # raw ``self._dirty = True`` would silently no-op when nothing
-            # else has triggered the writer yet.
-            self._mark_dirty()
+            self._dirty = True
+            self._ensure_writer()
+
+    async def get_total_requests(self) -> int:
+        """Cheap read of the live request counter (no deepcopy of the stats blob)."""
+        async with self._lock:
+            return int(self._stats.get("total_requests", 0))
 
     async def record_finding(
         self, scan_id: str, severity: str = "Medium", signature_data: dict[str, Any] = None
@@ -285,30 +394,31 @@ class StateManager:
             if scan_id in self._seen_signatures:
                 del self._seen_signatures[scan_id]
 
-        seen_results = set()
+        # Canonical dedup: collapse Docker gateway / host aliases so the
+        # same vuln on 127.0.0.1 / host.docker.internal / 192.168.65.254
+        # appears exactly once in the final results list.
+        from backend.reporting.finding_normalizer import canonical_finding_key
+
+        _target_url = ""
+        for s in self._stats["scans"]:
+            if s["id"] == scan_id:
+                _target_url = str(s.get("target_url") or s.get("target") or "")
+                break
+
+        seen_results: set[tuple] = set()
         unique_results = []
 
         for r in results:
-            # Re-verify deduplication for the final results list
             payload = r.get("payload", {})
-            # Normalized signature for result storage
-            sig_data = {
-                "u": str(payload.get("url", "")).strip().lower(),
-                "t": str(payload.get("type", "")).upper(),
-                "d": str(payload.get("data", payload.get("payload", ""))),
-            }
-            sig = hashlib.sha256(json.dumps(sig_data, sort_keys=True, default=str).encode()).hexdigest()
-
-            if sig not in seen_results:
-                seen_results.add(sig)
-                unique_results.append(r)
-
-                verdict = payload.get("severity", payload.get("verdict", "VULNERABLE")).upper()
-                if "CRITICAL" in verdict or "LEAK" in verdict or "HIGH" in verdict:
-                    # Note: record_finding already incremented global counters for real-time scans
-                    # This method updates the scan record itself.
-                    # Global counts are managed in real-time to avoid double-counting at the end.
-                    pass
+            key = canonical_finding_key(
+                str(payload.get("url", "")),
+                str(payload.get("type", "")),
+                target_url=_target_url,
+            )
+            if key is None or key in seen_results:
+                continue
+            seen_results.add(key)
+            unique_results.append(r)
 
         for s in self._stats["scans"]:
             if s["id"] == scan_id:
@@ -361,6 +471,17 @@ class StateManager:
         self._stats["critical"] = 0
         self._stats["history"] = [0] * 30
         self._stats["v6_metrics"] = {"injections_blocked": 0, "deceptive_ui_blocked": 0, "risk_score": 0}
+        # V8: clear the live event buffers + pending SQLite batch too
+        self._scan_events.clear()
+        self._events_hydrated.clear()
+        with self._sqlite_flush_lock:
+            self._pending_events.clear()
+        try:
+            from backend.core.scan_state_db import scan_state_db
+
+            scan_state_db.clear_events()
+        except Exception as exc:
+            logger.warning("[StateManager] SQLite event wipe failed: %s", exc)
 
         def _wipe_files_sync():
             # Clear sharded scan state files in scan_states/
@@ -533,12 +654,79 @@ class StateManager:
         await self.register_scan(scan_data)
         await self.write_scan_state(scan_id, scan_data)
 
-    def get_scan_state(self, scan_id: str) -> dict[str, Any] | None:
-        """Get the current state of a scan by scan_id."""
+    def _hydrate_events_from_sqlite(self, scan_id: str) -> None:
+        """Load a scan's durable SQLite event log into the live buffer once.
+
+        Post-restart the in-memory ``_scan_events`` is empty; this restores the
+        full event history from the SQLite log so the events API keeps showing
+        every event (the user-visible proof contract is unchanged).
+
+        OPTIMIZATION: ``_events_hydrated`` records that a scan's SQLite log was
+        loaded (or found empty) so the API list endpoint doesn't re-query
+        SQLite for every scan on every poll — the per-scan event buffer is
+        authoritative once hydrated, and ``add_scan_event`` appends to it
+        directly.
+        """
+        if scan_id in self._events_hydrated:
+            return
+        self._events_hydrated.add(scan_id)
+        try:
+            from backend.core.scan_state_db import scan_state_db
+
+            events = scan_state_db.get_events(scan_id, limit=20000)
+            if events:
+                self._scan_events[scan_id] = events[-20000:]
+        except Exception as exc:
+            logger.debug("[StateManager] SQLite event hydrate skipped for %s: %s", scan_id, exc)
+
+    def get_scan_state(self, scan_id: str, include_events: bool = True) -> dict[str, Any] | None:
+        """Get the current state of a scan by scan_id.
+
+        V8 LOAD FIX: the returned dict is a shallow copy of the scan record with
+        the LIVE event list attached (``_scan_events``), so every consumer that
+        previously read ``scan["events"]`` (events endpoint, ``_findings_from_scan``,
+        reports) sees exactly the same data — all events, always visible.
+
+        ``include_events=False`` skips the event-buffer copy entirely (used by
+        the scan LIST endpoint, which only needs persisted findings/results and
+        must stay fast even with 100+ historical scans).
+        """
         for scan in self._stats.get("scans", []):
             if scan.get("id") == scan_id or scan.get("scan_id") == scan_id:
-                return scan
+                out = dict(scan)
+                if include_events:
+                    events = self._scan_events.get(scan_id)
+                    if not events:
+                        self._hydrate_events_from_sqlite(scan_id)
+                        events = self._scan_events.get(scan_id)
+                    out["events"] = list(events or [])
+                return out
         return None
+
+    def get_scan_events_page(
+        self, scan_id: str, *, limit: int = 500, offset: int = 0, newest_first: bool = False
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Page a scan's event log WITHOUT copying the whole scan record.
+
+        The events endpoint previously went through ``get_scan_state()`` which
+        shallow-copies the scan record AND ``list(events)``-copies every event
+        (up to 20k) just to slice out a page. This slices the live buffer
+        directly, so a 2000-event scan costs a 500-item slice instead of a
+        2000-item copy plus the scan-record copy on every request.
+        """
+        events = self._scan_events.get(scan_id)
+        if not events:
+            self._hydrate_events_from_sqlite(scan_id)
+            events = self._scan_events.get(scan_id) or []
+        total = len(events)
+        if newest_first:
+            # Slice from the tail without materialising a reversed copy.
+            start = max(0, total - offset - limit)
+            end = max(0, total - offset)
+            page = list(reversed(events[start:end]))
+        else:
+            page = events[offset : offset + limit]
+        return page, total
 
     def update_scan_status(self, scan_id: str, status: str) -> None:
         """Update the status of a scan."""

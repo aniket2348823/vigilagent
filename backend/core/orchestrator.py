@@ -96,6 +96,45 @@ _MODULE_ALIASES = {
 }
 
 
+class _DispatchPacer:
+    """Bounded-burst pacing for JOB_ASSIGNED dispatch.
+
+    WHY: The swarm dispatches ~70+ jobs in three tight loops (module mapper,
+    Sigma validation, full-swarm). Fired back-to-back, they saturate the
+    CommandLane *instantly*, which makes Zeta's governor oscillate
+    THROTTLE→RESUME every cycle (observed 60×/60× per scan). Pacing the
+    publishes with a small inter-burst delay lets the lane drain between
+    bursts, so the governor stays quiet and agents actually start work while
+    the rest of the dispatch is still in flight.
+
+    Semantics are unchanged: every job is still published, in the same order,
+    with the same payload. Only the timing is spread.
+    """
+
+    __slots__ = ("_burst", "_delay", "_fired")
+
+    def __init__(self, burst: int | None = None, delay: float | None = None):
+        try:
+            self._burst = max(1, int(getattr(settings, "DISPATCH_BURST_SIZE", 8) or 8))
+        except Exception:
+            self._burst = 8
+        try:
+            self._delay = max(0.0, float(getattr(settings, "DISPATCH_BURST_DELAY_SECONDS", 0.05) or 0.05))
+        except Exception:
+            self._delay = 0.05
+        if burst is not None:
+            self._burst = max(1, int(burst))
+        if delay is not None:
+            self._delay = max(0.0, float(delay))
+        self._fired = 0
+
+    async def wait(self) -> None:
+        """Call before each publish; sleeps every ``burst`` publishes."""
+        self._fired += 1
+        if self._delay > 0 and self._fired % self._burst == 0:
+            await asyncio.sleep(self._delay)
+
+
 def _log_task_error(task, label="task", scan_id="unknown"):
     """Callback for asyncio.create_task() to surface silent exceptions.
 
@@ -328,7 +367,7 @@ class HiveOrchestrator:
                                 }
                                 await stats_db_manager.record_finding(scan_id, severity, enriched_finding)
                             except Exception as _enrich_err:
-                                logger.debug("Finding enrichment failed, recording raw: %s", _enrich_err)
+                                logger.warning("Finding enrichment failed, recording raw: %s", _enrich_err)
                                 sig_data["severity"] = severity
                                 await stats_db_manager.record_finding(scan_id, severity, sig_data)
                         else:
@@ -350,7 +389,7 @@ class HiveOrchestrator:
                                 final_risk = gi5_score * 0.35 + gamma_score * 0.30 + cvss_normalized * 0.35
                                 real_payload["final_risk_score"] = round(final_risk, 4)
                             except Exception as cvss_err:
-                                logger.debug(f"CVSS payload injection failed: {cvss_err}")
+                                logger.warning(f"CVSS payload injection failed: {cvss_err}")
 
                         # Broadcast authoritative stats to UI
                         # Throttle: VULN_UPDATE is just dashboard counters; emitting
@@ -840,7 +879,7 @@ class HiveOrchestrator:
         try:
             recon_max_wait = float(getattr(settings, "RECON_MAX_WAIT_SECONDS", 180))
         except Exception:
-            logger.debug("[Orchestrator] RECON_MAX_WAIT_SECONDS parse failed")
+            logger.warning("[Orchestrator] RECON_MAX_WAIT_SECONDS parse failed; defaulting to 180s")
             recon_max_wait = 180.0
         try:
             await asyncio.wait_for(alpha_recon_complete.wait(), timeout=recon_max_wait)
@@ -864,17 +903,31 @@ class HiveOrchestrator:
         try:
             from backend.core.attack_surface_seeder import seed_attack_surface
 
-            # Gather any recon-discovered endpoints that carry query params.
+            # Gather recon-discovered endpoints from the RECON_COMPLETE payload
+            # (authoritative attack_surface) plus any live RECON_PACKET URLs.
+            # Feeding the FULL surface — not just URLs carrying '?' — lets the
+            # seeder authenticate and then point Sigma/Beta at the actual
+            # discovered injection points.
             recon_eps = []
             try:
                 for ev in scan_events:
-                    payload = ev.get("payload", {}) if isinstance(ev, dict) else {}
-                    u = payload.get("url") if isinstance(payload, dict) else None
-                    if isinstance(u, str) and "?" in u:
-                        recon_eps.append(u)
+                    if not isinstance(ev, dict):
+                        continue
+                    ev_type = str(ev.get("type", "")).upper()
+                    payload = ev.get("payload", {}) if isinstance(ev.get("payload"), dict) else {}
+                    if ev_type == "RECON_COMPLETE":
+                        for ep in payload.get("attack_surface", []) or []:
+                            u = (ep or {}).get("url") if isinstance(ep, dict) else None
+                            if isinstance(u, str) and u:
+                                recon_eps.append(u)
+                    elif ev_type == "RECON_PACKET":
+                        u = payload.get("url")
+                        if isinstance(u, str) and u:
+                            recon_eps.append(u)
             except Exception as exc:
-                logger.debug("[Orchestrator] recon endpoint extraction failed: %s", exc)
+                logger.warning("[Orchestrator] recon endpoint extraction failed: %s", exc)
                 recon_eps = []
+            recon_eps = list(dict.fromkeys(recon_eps))[:500]
             seeded_surface = await seed_attack_surface(target_config["url"], scan_id, recon_endpoints=recon_eps)
             seeded_targets = seeded_surface.targets
             logger.info(
@@ -1050,6 +1103,11 @@ class HiveOrchestrator:
         logger.info("[%s] Canary wired into %d probe modules", scan_id, len(_canary_modules))
 
         # [V6 REAL-TIME FIX] Dispatch selected modules concurrently!
+        # Bounded-burst pacing: ~70 jobs fire across the module mapper, Sigma
+        # validation and swarm loops below. Fired back-to-back they saturate
+        # the CommandLane instantly → Zeta THROTTLE/RESUME oscillation. One
+        # pacer spans all four loops so the lane drains between bursts.
+        _dispatch_pacer = _DispatchPacer()
         module_mapper = {
             "The Tycoon": "logic_tycoon",
             "The Escalator": "logic_escalator",
@@ -1069,6 +1127,15 @@ class HiveOrchestrator:
         if not selected_modules:
             selected_modules = list(module_mapper.keys())
 
+        # FULL-SWARM ROUTING FIX: each module is owned by the agent whose
+        # handler implements it. Previously EVERY module (including
+        # ``delta_pinch_extract``) was hardcoded to AgentID.SIGMA — so Delta's
+        # browser pipeline never received a job and the other specialized
+        # agents starved. Modules default to Sigma (exploitation engine);
+        # browser/DOM work is owned by Delta.
+        _module_owner = {mid: AgentID.SIGMA for mid in module_mapper.values()}
+        _module_owner["delta_pinch_extract"] = AgentID.DELTA
+
         for ui_module_name in selected_modules:
             internal_id = module_mapper.get(ui_module_name)
             if not internal_id:
@@ -1083,18 +1150,53 @@ class HiveOrchestrator:
                     target=atk,
                     config=ModuleConfig(
                         module_id=internal_id,
-                        agent_id=AgentID.SIGMA,
+                        agent_id=_module_owner.get(internal_id, AgentID.SIGMA),
                         params={
                             "concurrency": target_config.get("concurrency", 50),
                             "rps": target_config.get("rps", 100),
                         },
                     ),
                 )
+                await _dispatch_pacer.wait()
                 await bus.publish(
                     HiveEvent(
                         type=EventType.JOB_ASSIGNED, source="VIGILAGENT", scan_id=scan_id, payload=packet.model_dump()
                     )
                 )
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # RECON→SIGMA FINDINGS FEED (Architecture §5.1.1 handoff):
+        # Sigma's 5 exclusive CLI tools (nuclei/httpx/dalfox/whatweb/wafw00f)
+        # were wired in _technique_tool_map but NEVER dispatched — the module
+        # mapper only ever emits tech_sqli/logic_*/etc ids. Dispatch the
+        # Sigma-owned validation modules now, against the AUTHENTICATED seeded
+        # targets, so recon findings + the seeder session reach the CLI
+        # validators (which now forward the Cookie header). This is what makes
+        # nuclei/dalfox actually find things on login-gated labs like DVWA.
+        for _sigtool_target in _attack_targets():
+            for _vmod in ("recon_nuclei", "tech_fingerprint", "tech_xss"):
+                try:
+                    _vp = JobPacket(
+                        priority=TaskPriority.NORMAL,
+                        target=_sigtool_target,
+                        config=ModuleConfig(
+                            module_id=_vmod,
+                            agent_id=AgentID.SIGMA,
+                            params={"concurrency": 15, "rps": 150},
+                        ),
+                    )
+                    await _dispatch_pacer.wait()
+                    await bus.publish(
+                        HiveEvent(
+                            type=EventType.JOB_ASSIGNED,
+                            source="VIGILAGENT",
+                            scan_id=scan_id,
+                            payload=_vp.model_dump(),
+                        )
+                    )
+                    logger.info("[%s] Dispatched Sigma validation module %s -> %s", scan_id, _vmod, _sigtool_target.url)
+                except Exception as _vd_exc:
+                    logger.warning("[%s] Sigma validation dispatch failed (%s): %s", scan_id, _vmod, _vd_exc)
 
         # [V6 REAL-TIME FIX] Always force an AI Generative Assault payload to feed BetaAgent
         ai_packet = JobPacket(
@@ -1107,6 +1209,7 @@ class HiveOrchestrator:
             ),
         )
 
+        await _dispatch_pacer.wait()
         await bus.publish(
             HiveEvent(type=EventType.JOB_ASSIGNED, source="VIGILAGENT", scan_id=scan_id, payload=ai_packet.model_dump())
         )
@@ -1120,6 +1223,7 @@ class HiveOrchestrator:
                 target=atk,
                 config=ModuleConfig(module_id="beta_direct_assault", agent_id=AgentID.BETA, aggression=8),
             )
+            await _dispatch_pacer.wait()
             await bus.publish(
                 HiveEvent(
                     type=EventType.JOB_ASSIGNED,
@@ -1128,6 +1232,83 @@ class HiveOrchestrator:
                     payload=beta_assault_packet.model_dump(),
                 )
             )
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # FULL-SWARM DISPATCH — every agent gets assigned work.
+        # All 13 agents previously came online but only Sigma/Beta (and the
+        # event-driven Omega/Zeta/Network/Planner) ever received jobs — Prism,
+        # Chi, Gamma, Lambda and Kappa sat idle after their AGENT_ACTIVATED
+        # broadcast. Fetch one page snapshot per seeded target and hand each
+        # agent the payload its handler actually consumes so the whole swarm
+        # participates in the pentest.
+        # ═══════════════════════════════════════════════════════════════════════
+        _snapshots: dict[str, dict[str, Any]] = {}
+        try:
+            for _atk in _attack_targets():
+                _u = _atk.url
+                if _u in _snapshots:
+                    continue
+                try:
+                    _rec = await http_client.request(
+                        "GET", _u, headers=dict(_atk.headers or {}), scan_id=scan_id, timeout=10
+                    )
+                    _snapshots[_u] = {
+                        "text": str(getattr(_rec, "response_body", "") or "")[:20000],
+                        "headers": dict(getattr(_rec, "response_headers", {}) or {}),
+                        "status": int(getattr(_rec, "status", 0) or 0),
+                    }
+                except Exception:
+                    _snapshots[_u] = {"text": "", "headers": {}, "status": 0}
+        except Exception:
+            pass
+
+        for _atk in _attack_targets():
+            _snap = _snapshots.get(_atk.url, {"text": "", "headers": {}, "status": 0})
+            _base_headers = dict(_atk.headers or {})
+            _swarm_jobs = [
+                # Prism: DOM safety analysis (expects target.payload = DOM snapshot).
+                (
+                    "prism_dom_analysis",
+                    AgentID.PRISM,
+                    {"innerText": _snap["text"], "style": {}, "url": _atk.url},
+                ),
+                # Chi: traffic interception + token extraction (expects
+                # target.payload = intercepted request/response event data).
+                (
+                    "chi_intercept",
+                    AgentID.CHI,
+                    {"method": "GET", "url": _atk.url, "headers": _snap["headers"], "body": _snap["text"]},
+                ),
+                # Gamma: forensic audit of the seeded target.
+                ("vulnerability_audit", AgentID.GAMMA, {"url": _atk.url, "evidence": _snap["text"][:5000]}),
+                # Lambda: SAST on JS assets discovered during recon.
+                (
+                    "lambda_js_sast",
+                    AgentID.LAMBDA,
+                    {"js_urls": [u for u in endpoint_tracker.discovered if ".js" in u.lower()][:10] or [_atk.url]},
+                ),
+                # Kappa: tactic recall to arm the swarm with memory.
+                ("kappa_recall", AgentID.KAPPA, {"query": f"Exploit strategy for {_atk.url}"}),
+            ]
+            for _module_id, _agent_id, _job_payload in _swarm_jobs:
+                try:
+                    _sp = JobPacket(
+                        priority=TaskPriority.NORMAL,
+                        target=TaskTarget(url=_atk.url, headers=_base_headers, payload=_job_payload),
+                        config=ModuleConfig(module_id=_module_id, agent_id=_agent_id, params=_job_payload),
+                    )
+                    await _dispatch_pacer.wait()
+                    await bus.publish(
+                        HiveEvent(
+                            type=EventType.JOB_ASSIGNED,
+                            source="VIGILAGENT",
+                            scan_id=scan_id,
+                            payload=_sp.model_dump(),
+                        )
+                    )
+                    logger.info("[%s] Dispatched %s -> %s", scan_id, _module_id, _atk.url)
+                except Exception as _sw_exc:
+                    logger.warning("[%s] Swarm dispatch %s failed: %s", scan_id, _module_id, _sw_exc)
 
         await manager.broadcast({"type": "GI5_LOG", "payload": "HYPER-MIND ONLINE. Parallel Overdrive Active."})
 
@@ -1180,6 +1361,17 @@ class HiveOrchestrator:
             loop_start = time.time()
             broadcast_interval = 2.0
 
+            # Early-stop rule: when the scan has confirmed a healthy number of
+            # findings AND has gone quiet (no new VULN_CONFIRMED signal for the
+            # idle window), end the exploitation phase instead of burning the
+            # full SCAN_TIMEOUT. Preserves full-length scans on slow/quiet
+            # targets; turns DVWA-class scans from ~1h into minutes.
+            _early_stop_min_findings = int(getattr(settings, "SCAN_EARLY_STOP_MIN_FINDINGS", 5) or 5)
+            _early_stop_idle = float(getattr(settings, "SCAN_EARLY_STOP_IDLE_SECONDS", 45) or 45)
+            _early_stop_min_elapsed = float(getattr(settings, "SCAN_EARLY_STOP_MIN_ELAPSED", 90) or 90)
+            _last_finding_ts = loop_start
+            _last_finding_count = 0
+
             _monitor_agents = [
                 "planner",
                 "alpha",
@@ -1205,6 +1397,61 @@ class HiveOrchestrator:
             while time.time() - loop_start < scan_duration:
                 _mon_idx = int((time.time() - loop_start) / broadcast_interval) % len(_monitor_agents)
                 _cur_mon = _monitor_agents[_mon_idx]
+
+                # ── Early-stop check ────────────────────────────────────────
+                # Only fires when findings have stopped growing: a scan that is
+                # still producing signal keeps running exactly as before.
+                _cur_findings = len(endpoint_tracker.vulnerable)
+                _elapsed = time.time() - loop_start
+                _coverage_pct = endpoint_tracker.get_metrics().get("coverage_percent", 0.0)
+                if _cur_findings != _last_finding_count:
+                    _last_finding_count = _cur_findings
+                    _last_finding_ts = time.time()
+                _idle_too_long = time.time() - _last_finding_ts >= _early_stop_idle
+                _min_elapsed = _elapsed >= _early_stop_min_elapsed
+                _enough_findings = _cur_findings >= _early_stop_min_findings
+                _high_coverage = _coverage_pct >= 98.0
+                _should_stop = False
+                _stop_reason = ""
+                if _min_elapsed and _idle_too_long:
+                    if _enough_findings:
+                        _should_stop = True
+                        _stop_reason = (
+                            f"{_cur_findings} findings, no new signal for "
+                            f"{int(_early_stop_idle)}s"
+                        )
+                    elif _high_coverage:
+                        _should_stop = True
+                        _stop_reason = (
+                            f"{_cur_findings} findings, coverage {_coverage_pct:.0f}%, "
+                            f"no new signal for {int(_early_stop_idle)}s"
+                        )
+                if _should_stop:
+                    logger.info(
+                        "[%s] Early-stop: %s (min elapsed %.0fs). "
+                        "Ending exploitation phase.",
+                        scan_id, _stop_reason, _early_stop_min_elapsed,
+                    )
+                    await manager.broadcast(
+                        {
+                            "type": "LIVE_ATTACK_FEED",
+                            "scan_id": scan_id,
+                            "payload": {
+                                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                "agent": "zeta",
+                                "threat_type": "EARLY_STOP",
+                                "url": target_config["url"],
+                                "result": (
+                                    f"\u26a1 Early stop: {_stop_reason}"
+                                ),
+                                "severity": "INFO",
+                                "risk_score": 0,
+                            },
+                        }
+                    )
+                    break
+                # ────────────────────────────────────────────────────────────
+
                 # Use broadcast_immediate to ensure events hit the listener
                 await manager.broadcast_immediate(
                     {
@@ -1334,11 +1581,20 @@ class HiveOrchestrator:
             await asyncio.sleep(1.0)
 
             # --- SHUTDOWN CORTEX ENSURING SOCKET RELEASE ---
-            await ai_cortex.shutdown()
+            try:
+                await asyncio.wait_for(ai_cortex.shutdown(), timeout=15.0)
+            except asyncio.TimeoutError:
+                logger.warning("[%s] Cortex shutdown timed out, forcing", scan_id)
 
             # --- AWAIT CAPTURED ORPHAN TASKS ---
             if HiveOrchestrator._orphaned_tasks:
-                await asyncio.gather(*HiveOrchestrator._orphaned_tasks, return_exceptions=True)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*HiveOrchestrator._orphaned_tasks, return_exceptions=True),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("[%s] Orphaned tasks did not complete in 30s, proceeding to report", scan_id)
                 HiveOrchestrator._orphaned_tasks.clear()
 
             # --- METHOD 8: STOP CANARY SERVER & CLEAR MODULE STATE ---
@@ -1381,7 +1637,7 @@ class HiveOrchestrator:
             try:
                 await bus.evict_scan_context(scan_id)
             except Exception as _evict_err:
-                logger.debug("[%s] Scan context eviction skipped: %s", scan_id, _evict_err)
+                logger.warning("[%s] Scan context eviction skipped: %s", scan_id, _evict_err)
 
             try:
 
@@ -1718,7 +1974,7 @@ class HiveOrchestrator:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.debug(f"[ZombieSweep] Sweep error: {e}")
+                logger.warning(f"[ZombieSweep] Sweep error: {e}")
 
     @staticmethod
     async def _cluster_telemetry_loop(redis_url: str, scan_id: str):
@@ -1771,7 +2027,7 @@ class HiveOrchestrator:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.debug(f"Cluster Telemetry loop failure: {e}")
+            logger.warning(f"Cluster Telemetry loop failure: {e}")
         finally:
             # Don't close r — it's the centralized pool client; other
             # callers share the same connection pool.

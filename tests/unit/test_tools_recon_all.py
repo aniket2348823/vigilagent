@@ -12,7 +12,7 @@ class TestReconRegistry:
         from backend.tools.recon.registry import check_tool_availability
         result = check_tool_availability("nmap")
         assert isinstance(result, dict)
-        assert "available" in result
+        assert "installed" in result
 
 
 class TestReconRunner:

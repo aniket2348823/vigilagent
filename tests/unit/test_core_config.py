@@ -82,8 +82,10 @@ class TestConfigManager:
 class TestRedisConfig:
     def test_defaults(self):
         rc = RedisConfig()
-        assert rc.max_connections == 10
-        assert rc.socket_timeout == 5
+        # Pool sized for the full 13-agent swarm (was 10/5). Mirrors
+        # backend.core.redis_client defaults.
+        assert rc.max_connections == 150
+        assert rc.socket_timeout == 15
         assert "redis" in rc.url
 
 

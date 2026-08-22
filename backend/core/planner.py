@@ -203,6 +203,12 @@ class MissionPlanner(BaseAgent):
     V6 Innovation: Instead of simple event reaction, the Planner generates
     structured 3-step offensive chains for every targets.
     """
+
+    # Long-running WORK handler: handle_new_target plans + chains the entire
+    # campaign (LLM + multi-step). Opt out of the generic 30s event-bus
+    # handler ceiling so the mission isn't cancelled mid-plan.
+    _HANDLER_TIMEOUT_SECONDS = None
+
     def __init__(self, bus):
         super().__init__("agent_planner", bus)
         self.cortex = get_cortex_engine()

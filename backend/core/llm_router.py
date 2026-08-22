@@ -15,9 +15,10 @@ class ModelTier(StrEnum):
 
 
 # ─── Agent-to-Tier Mapping ───────────────────────────────────────────────────
-# HIGH = Strategic reasoning (OpenRouter / GPT OSS 20B)
-# MID  = Tactical execution (Gemini 2.5 Flash)
-# LOW  = Fast/lightweight ops (Gemini 2.5 Flash)
+# HIGH = Strategic reasoning (NVIDIA Llama 3.3 Nemotron Super 49B — planning,
+#        arbitration, reporting; Gemini fallback)
+# MID  = Tactical execution (NVIDIA Nemotron 3 Nano 30B primary, Gemini fallback)
+# LOW  = Fast/lightweight ops (NVIDIA Nemotron 3 Nano 30B primary, Gemini fallback)
 AGENT_TIERS = {
     "orchestrator": ModelTier.HIGH,
     "alpha": ModelTier.LOW,
@@ -33,13 +34,17 @@ AGENT_TIERS = {
     "analyst": ModelTier.HIGH,
 }
 
-# ─── Dual-LLM Tier Models ────────────────────────────────────────────────────
-# Provider 1: OpenRouter (GPT OSS 20B) — deep reasoning, arbitration, reporting
-# Provider 2: Gemini API — fast execution, payloads, validation, embeddings
+# ─── Multi-LLM Tier Models ───────────────────────────────────────────────────
+# Provider 1: NVIDIA STRATEGIC (Llama 3.3 Nemotron Super 49B via NVIDIA_API_KEY_2)
+#             — deep reasoning, arbitration, reporting, forensics
+# Provider 2: NVIDIA TACTICAL (Nemotron 3 Nano 30B) — PRIMARY fast execution,
+#             payloads, validation pass 1
+# Provider 3: Gemini API — fallback for both NVIDIA keys
+# NOTE: OpenRouter retired from the runtime chain (NVIDIA-only policy).
 TIER_MODELS = {
-    ModelTier.HIGH: ["openrouter/gpt-oss-20b", "gemini/gemini-2.5-flash"],
-    ModelTier.MID: ["gemini/gemini-2.5-flash", "openrouter/gpt-oss-20b"],
-    ModelTier.LOW: ["gemini/gemini-2.5-flash"],
+    ModelTier.HIGH: ["nvidia/llama-3.3-nemotron-super-49b-v1", "nvidia/nemotron-3-nano-30b-a3b", "gemini/gemini-2.5-flash"],
+    ModelTier.MID: ["nvidia/nemotron-3-nano-30b-a3b", "gemini/gemini-2.5-flash"],
+    ModelTier.LOW: ["nvidia/nemotron-3-nano-30b-a3b", "gemini/gemini-2.5-flash"],
 }
 
 AGENT_TEMPERATURES = {

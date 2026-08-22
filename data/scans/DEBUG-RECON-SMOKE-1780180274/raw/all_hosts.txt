@@ -1,2 +1,0 @@
-host.docker.internal
-host.docker.internal:8080

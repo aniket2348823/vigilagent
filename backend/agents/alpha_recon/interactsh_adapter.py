@@ -47,6 +47,35 @@ class InteractshAdapter:
     def correlation_id(self) -> str:
         return self._correlation_id
 
+    def _fallback_url(self) -> str:
+        """Placeholder OOB URL so payload injection still works when the
+        real interactsh client cannot start (offline network, missing client)."""
+        self._interactsh_url = f"INTERACT_{self._correlation_id}.oast.live"
+        return self._interactsh_url
+
+    @staticmethod
+    async def _terminate(proc) -> None:
+        """Best-effort cleanup of the client subprocess."""
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(proc.wait(), timeout=3)
+        except Exception:
+            pass
+        with contextlib.suppress(Exception):
+            proc.kill()
+
+    @staticmethod
+    async def _drain_stderr(proc, seconds: float = 1.0) -> str:
+        """Read a short sample of stderr for diagnostics (best-effort)."""
+        try:
+            data = await asyncio.wait_for(proc.stderr.read(4000), timeout=seconds)
+            return data.decode("utf-8", errors="replace").strip()[:2000]
+        except Exception:
+            return ""
+
     async def start(self) -> str:
         """Start the Interactsh client and return the OOB URL."""
         # Generate a correlation ID for this scan
@@ -57,11 +86,10 @@ class InteractshAdapter:
         import shutil
         client_path = shutil.which("interactsh-client")
         if not client_path:
-            # Fallback: generate a placeholder URL for payload injection
-            self._interactsh_url = f"INTERACT_{self._correlation_id}.oast.live"
             logger.warning("[INTERACTSH] Client not found, using placeholder URL")
-            return self._interactsh_url
+            return self._fallback_url()
 
+        proc = None
         # Start the client process
         try:
             async with command_lane.slot():
@@ -71,20 +99,61 @@ class InteractshAdapter:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-            # Read the first line to get the URL
-            first_line = await asyncio.wait_for(
-                proc.stdout.readline(), timeout=15)
-            url_data = json.loads(first_line.decode("utf-8", errors="replace"))
+
+            # Read the first line to get the URL. A timeout / empty line /
+            # non-JSON line means the client cannot reach the interactsh
+            # server (no network) — fall back instead of logging an empty
+            # "Failed to start:" and leaking the process.
+            try:
+                first_line = await asyncio.wait_for(proc.stdout.readline(), timeout=12)
+            except asyncio.TimeoutError:
+                _err = await self._drain_stderr(proc)
+                logger.warning(
+                    "[INTERACTSH] Client produced no URL within 12s (network blocked? stderr: %.200s); using placeholder",
+                    _err,
+                )
+                await self._terminate(proc)
+                return self._fallback_url()
+
+            if not first_line:
+                _err = await self._drain_stderr(proc)
+                logger.warning(
+                    "[INTERACTSH] Client exited without output (stderr: %.200s); using placeholder",
+                    _err,
+                )
+                await self._terminate(proc)
+                return self._fallback_url()
+
+            try:
+                url_data = json.loads(first_line.decode("utf-8", errors="replace"))
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "[INTERACTSH] Unexpected client output (%s: %.120r); using placeholder",
+                    exc,
+                    first_line[:120],
+                )
+                await self._terminate(proc)
+                return self._fallback_url()
+
             self._interactsh_url = url_data.get("url", "")
+            if not self._interactsh_url:
+                logger.warning("[INTERACTSH] Client returned no URL; using placeholder")
+                await self._terminate(proc)
+                return self._fallback_url()
+
             self._running = True
             self._poll_task = asyncio.create_task(
                 self._poll_interactions(proc))
             logger.info(f"[INTERACTSH] Started with URL: {self._interactsh_url}")
             return self._interactsh_url
         except Exception as exc:
-            logger.warning(f"[INTERACTSH] Failed to start: {exc}")
-            self._interactsh_url = f"INTERACT_{self._correlation_id}.oast.live"
-            return self._interactsh_url
+            logger.warning(
+                "[INTERACTSH] Failed to start (%s: %s); using placeholder",
+                type(exc).__name__,
+                exc,
+            )
+            await self._terminate(proc)
+            return self._fallback_url()
 
     async def stop(self) -> list[dict]:
         """Stop the client and return all interactions."""

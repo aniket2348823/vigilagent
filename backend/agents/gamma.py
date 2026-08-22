@@ -43,6 +43,45 @@ class GammaAgent(SkillRecallMixin, ScanContextRecorderMixin, BrowserEnabledAgent
 
     async def setup(self):
         self.bus.subscribe(EventType.VULN_CANDIDATE, self.audit_candidate)
+        # FULL-SWARM: Gamma must also consume JOB_ASSIGNED — the planner and
+        # orchestrator dispatch ``vulnerability_audit`` packets addressed to
+        # AgentID.GAMMA, but without this subscription they were silently
+        # dropped, so the auditor never engaged on any scan.
+        self.bus.subscribe(EventType.JOB_ASSIGNED, self.handle_job)
+
+    async def handle_job(self, event: HiveEvent):
+        """Handle vulnerability_audit jobs dispatched by the planner/orchestrator.
+
+        Audits the assigned target by feeding it through the same forensic
+        candidate pipeline as audit_candidate (heuristic signal fusion + AI
+        fallback), then publishes the verdict so Kappa archives confirmed
+        vulns and the swarm reacts.
+        """
+        try:
+            from backend.core.protocol import AgentID, JobPacket
+
+            packet = JobPacket(**event.payload)
+        except Exception as exc:
+            logger.debug("[%s] Job packet parse failed: %s", self.name, exc)
+            return
+
+        if packet.config.agent_id != AgentID.GAMMA:
+            return
+
+        # Re-enter the forensic audit pipeline for the assigned target.
+        candidate = dict(packet.target.payload or {})
+        candidate.setdefault("url", packet.target.url)
+        candidate.setdefault("type", "TARGET_AUDIT")
+        candidate.setdefault("source", event.source)
+        candidate.setdefault("scan_id", event.scan_id)
+        await self.audit_candidate(
+            HiveEvent(
+                type=EventType.VULN_CANDIDATE,
+                source=self.name,
+                scan_id=event.scan_id,
+                payload=candidate,
+            )
+        )
 
     # --- FORENSIC SIGNALS ---
 

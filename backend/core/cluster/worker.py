@@ -55,7 +55,11 @@ class WorkerNode:
 
         rc = await get_redis_client()
         self.redis_client = rc.client
-        await self.bus.start()
+        # Publisher-only bus: the worker consumes jobs via brpop on its own
+        # queue, and only EMITS VULN_CONFIRMED / JOB_COMPLETED. Subscribing
+        # here added a phantom peer (NUMSUB=2) in single-process installs,
+        # re-enabling the Redis round-trip + duplicate events.
+        await self.bus.start(listen=False)
         if self.specialty in ["browser", "hybrid"]:
             await self.pinchtab.start()
         self._task_manager.create_task(self.send_heartbeat(), name="heartbeat")

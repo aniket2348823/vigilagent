@@ -41,8 +41,14 @@ class TestValidateCommand:
 
 
 class TestValidateOutputPath:
-    def test_valid_path(self):
-        assert validate_output_path("/tmp/output.json") is True
+    def test_valid_path_under_scan_dirs(self):
+        # FIX-019: output paths must stay within project scan directories.
+        assert validate_output_path("data/scans/output.json") is True
+        assert validate_output_path("scan_states/scan_x.json") is True
+
+    def test_rejects_arbitrary_tmp_path(self):
+        # FIX-019: /tmp is no longer an allowed output root.
+        assert validate_output_path("/tmp/output.json") is False
 
     def test_rejects_path_traversal(self):
         assert validate_output_path("/etc/passwd") is False

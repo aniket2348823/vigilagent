@@ -59,6 +59,24 @@ logger = logging.getLogger("vigilagent.terminal")
 _DEFAULT_OUTPUT_CAP = 10 * 1024 * 1024  # 10 MB (config/tools.yaml output_cap_bytes)
 _STDERR_TAIL = 16 * 1024
 
+# Serialize concurrent ``docker cp`` of the SAME input file into the shared
+# recon container. Parallel recon tools (feroxbuster/ffuf/gobuster) all
+# reference the same host wordlist; without this, concurrent `docker cp` to
+# one destination can race/corrupt the copy and make tools fail.
+_CP_IN_LOCKS: dict[str, "asyncio.Lock"] = {}
+
+
+def _cp_in_lock(key: str) -> "asyncio.Lock":
+    # Bound the cache: per-scan container paths accumulate over a long-running
+    # backend. Resetting at a generous cap keeps memory flat with no perf cost.
+    if len(_CP_IN_LOCKS) > 512:
+        _CP_IN_LOCKS.clear()
+    lock = _CP_IN_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _CP_IN_LOCKS[key] = lock
+    return lock
+
 # Real-time output sink: invoked with each stdout chunk as it arrives so an
 # orchestrator can relay it to the WebSocket event stream (Architecture §8
 # "Stream output to WebSocket"). May be a plain or async callable.
@@ -243,11 +261,15 @@ class TerminalEngine:
     @staticmethod
     def _extract_target(argv: Sequence[str]) -> str | None:
         """Find a host/URL inside an argv array for scope validation."""
-        for arg in argv:
+        for idx, arg in enumerate(argv):
             a = str(arg)
             if a.startswith(("http://", "https://")):
                 return a
             # bare domain heuristic: contains a dot, no slash, no leading dash
+            # Skip argv[0] (the binary name) — e.g. `testssl.sh` or `massdns`
+            # look like bare domains but are tool names, not targets.
+            if idx == 0:
+                continue
             if "." in a and "/" not in a and not a.startswith("-") and " " not in a:
                 # Skip obvious file paths / flags-with-values
                 if a.lower().endswith((".txt", ".json", ".jsonl", ".xml", ".kite", ".py", ".csv")):
@@ -485,7 +507,7 @@ class TerminalEngine:
         (network=none) used for non-recon commands.
         """
         from backend.tools.recon.docker_runtime import (
-            DOCKER_RECON_TOOLS,
+            DOCKER_ALL_TOOLS,
             build_docker_argv,
             docker_recon_ready,
             running_recon_container,
@@ -493,8 +515,33 @@ class TerminalEngine:
 
         tool = os.path.basename(argv[0]) if argv else ""
         tool_key = self._recon_tool_key(tool)
+        # Python-launched vendored scripts (spiderfoot, linkfinder, dirsearch,
+        # inql, paramspider, secretfinder) dispatch as `python <script>.py ...`.
+        # Resolve the script back to its registry key so it runs in the recon
+        # image (which bundles the scripts + their Python deps) instead of the
+        # bare generic sandbox where the interpreter (and deps) don't exist.
+        if tool_key == "python":
+            for arg in argv[1:]:
+                base = os.path.basename(str(arg)).lower()
+                mapped = {
+                    "sf.py": "spiderfoot",
+                    "linkfinder.py": "linkfinder",
+                    "secretfinder.py": "secretfinder",
+                    "dirsearch.py": "dirsearch",
+                    "inql.py": "inql",
+                    "paramspider.py": "paramspider",
+                }.get(base)
+                if mapped:
+                    tool_key = mapped
+                    break
 
-        if tool_key in DOCKER_RECON_TOOLS and docker_recon_ready() and output_path:
+        # Run ANY registry tool (all 39 live in the recon image) through the
+        # recon image. The Alpha/Sigma ownership split is about which AGENT
+        # dispatches a tool — not which image can execute it. Restricting to
+        # DOCKER_RECON_TOOLS silently broke httpx + nuclei (Sigma-owned), which
+        # Alpha's planner legitimately dispatches: they fell back to the generic
+        # sandbox (no recon tools) and died with "sh: 1: <tool>: not found".
+        if tool_key in DOCKER_ALL_TOOLS and docker_recon_ready() and output_path:
             raw_dir = Path(output_path).resolve().parent
             tool_root = Path(
                 getattr(
@@ -730,15 +777,16 @@ class TerminalEngine:
                             src = tmp
                 except (UnicodeDecodeError, OSError):
                     src = host_path  # binary or unreadable — copy as-is
-                cp = await _asyncio.create_subprocess_exec(
-                    "docker",
-                    "cp",
-                    src,
-                    f"{container}:{container_path}",
-                    stdout=_asyncio.subprocess.PIPE,
-                    stderr=_asyncio.subprocess.PIPE,
-                )
-                await _asyncio.wait_for(cp.communicate(), timeout=60)
+                async with _cp_in_lock(container_path):
+                    cp = await _asyncio.create_subprocess_exec(
+                        "docker",
+                        "cp",
+                        src,
+                        f"{container}:{container_path}",
+                        stdout=_asyncio.subprocess.PIPE,
+                        stderr=_asyncio.subprocess.PIPE,
+                    )
+                    await _asyncio.wait_for(cp.communicate(), timeout=60)
                 if tmp:
                     with contextlib.suppress(OSError):
                         os.unlink(tmp)

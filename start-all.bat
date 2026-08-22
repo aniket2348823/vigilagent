@@ -6,13 +6,21 @@ echo ========================================
 echo.
 
 echo [1/2] Starting Backend (port 8000)...
-if not "%API_AUTH_KEY%"=="" goto :skip_api_key
-set /p API_AUTH_KEY="  Enter API_AUTH_KEY: "
+:: Read API_AUTH_KEY from .env automatically. Both the backend (load_dotenv
+:: override) and Vite (loadEnv) use .env as the single source of truth — a
+:: manually typed key here would diverge and cause 401 key_present=True on
+:: every /api request through the proxy.
+if exist ".env" (
+    for /f "usebackq tokens=1,* delims==" %%a in (`findstr /b "API_AUTH_KEY=" ".env"`) do (
+        set "API_AUTH_KEY=%%b"
+        goto :key_loaded
+    )
+)
+:key_loaded
 if "%API_AUTH_KEY%"=="" (
-    echo   ERROR: API_AUTH_KEY is required.
+    echo   ERROR: API_AUTH_KEY not found in .env and not set in the environment.
     goto :end
 )
-:skip_api_key
 
 start "Vigilagent Backend" cmd /k "cd /d "%~dp0" && call .venv_win\Scripts\activate.bat && set API_AUTH_KEY=%API_AUTH_KEY% && set VIGILAGENT_DEV_MODE=true && echo Starting backend... && python -m backend.main --mode serve"
 

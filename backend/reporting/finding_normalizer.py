@@ -21,6 +21,86 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+# Hosts that are aliases of the same local machine/container. Findings that
+# only differ by these hostnames (e.g. ``host.docker.internal:8888`` vs
+# ``127.0.0.1:8888``) are the SAME service — the PDF/API must not report the
+# same vulnerability 2-3 times just because Docker NAT or loopback aliasing
+# surfaced it under different host strings.
+_LOCAL_HOST_ALIASES = frozenset(
+    {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "0.0.0.0",
+        "host.docker.internal",
+        "gateway.docker.internal",
+        "docker.for.mac.localhost",
+        "docker.for.win.localhost",
+        # Docker Desktop gateway IPs (Linux VM on Windows/macOS) — appear
+        # when tools run inside the recon container and resolve the target
+        # via the bridge network instead of loopback.
+        "192.168.65.254",
+        "192.168.65.1",
+        "172.17.0.1",
+        "172.18.0.1",
+        "172.19.0.1",
+    }
+)
+
+
+def _is_loopback_host(host: str) -> bool:
+    h = (host or "").lower().strip(".")
+    if h in _LOCAL_HOST_ALIASES:
+        return True
+    return h.startswith("127.") or h == "::1"
+
+
+def canonical_finding_key(
+    url: str,
+    vuln_type: str,
+    target_url: str = "",
+) -> tuple[str, ...] | None:
+    """Return a dedup key for a finding, collapsing local-host aliases.
+
+    Two findings are the SAME finding when they share the vulnerability type
+    and the same service endpoint (scheme, port, path) — even if one was
+    captured via ``127.0.0.1:8888`` and another via ``host.docker.internal``
+    or the docker gateway IP. Keeps distinct hosts distinct for real-world
+    multi-host engagements: only loopback / docker-internal aliases (and the
+    scan target's own host when the target is itself local) collapse.
+
+    Returns ``None`` when the finding carries no usable URL or type.
+    """
+    t = str(vuln_type or "").strip().upper()
+    if not t:
+        return None
+    for prefix in (
+        "ALPHA:", "NUCLEI:", "SIGMA:", "BETA:", "OMEGA:", "DELTA:",
+        "GAMMA:", "KAPPA:", "PRISM:", "CHI:",
+    ):
+        if t.startswith(prefix):
+            t = t[len(prefix):]
+            break
+    from urllib.parse import urlparse
+
+    try:
+        u = urlparse(str(url or ""))
+        host = (u.hostname or "").lower().strip(".")
+        port = u.port or (443 if u.scheme == "https" else 80)
+        path = (u.path or "/").rstrip("/") or "/"
+    except Exception:
+        return (t, str(url or "").lower())
+    if not host:
+        return (t, str(url or "").lower())
+
+    # Normalise the host: loopback/docker aliases (and the target's own host
+    # when the target is local) all become one canonical token.
+    target_is_local = _is_loopback_host(urlparse(target_url).hostname or "")
+    if _is_loopback_host(host) or (target_is_local and host and u.port == urlparse(target_url).port):
+        host = "<local>"
+    return (t, u.scheme or "http", str(port), host, path)
+
+
 # ── Lightweight CWE lookup (mirror of backend.core.reporting.SecurityReportPDF.CWE_MAP) ──
 _CWE_MAP: dict[str, dict[str, Any]] = {
     "SQL_INJECTION": {"cwe": "CWE-89", "base_cvss": 9.8},

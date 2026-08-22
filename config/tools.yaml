@@ -13,7 +13,7 @@
 execution:
   prefer_docker: true          # default backend for external security tools
   allow_local_fallback: true   # trusted native tools / lightweight commands
-  default_timeout_seconds: 180
+  default_timeout_seconds: 300
   output_cap_bytes: 10485760   # 10 MB per tool run
   argv_only: true              # shell strings are rejected by guardrails
 

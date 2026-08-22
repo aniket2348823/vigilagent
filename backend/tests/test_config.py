@@ -20,8 +20,10 @@ class TestConfigManager:
         """Test RedisConfig defaults."""
         config = RedisConfig()
         assert config.url.startswith("redis://")
-        assert config.max_connections == 10
-        assert config.socket_timeout == 5
+        # Pool sized for the full 13-agent swarm (parallel recon + attack load
+        # exhausted the old 50-conn pool and 5s socket timeout).
+        assert config.max_connections == 150
+        assert config.socket_timeout == 15
 
     def test_global_settings_defaults(self):
         """Test GlobalSettings has required attributes."""

@@ -73,7 +73,14 @@ async def start_recon(req: StartReconRequest):
 
     async def _run():
         try:
-            return await orch.run(req.target_url, scan_id=scan_id, mode=req.mode)
+            # enable_external_tools is forwarded per-scan so the frontend can
+            # opt into the full 39-tool arsenal regardless of the env default.
+            return await orch.run(
+                req.target_url,
+                scan_id=scan_id,
+                mode=req.mode,
+                enable_external_tools=req.enable_external_tools or None,
+            )
         except Exception as exc:
             logger.error(f"Scan {scan_id} failed: {exc}")
             await recon_live_feed.on_error(scan_id, str(exc), "orchestrator")

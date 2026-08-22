@@ -1,6 +1,0 @@
-{"input":"http://host.docker.internal:8080","source":"robots","type":"url","output":"http://host.docker.internal:8080/","status":0,"length":0}
-{"input":"http://host.docker.internal:8080","source":"body","type":"url","output":"http://host.docker.internal:8080/login.php","status":200,"length":76}
-{"input":"http://host.docker.internal:8080","source":"body","type":"url","output":"http://host.docker.internal:8080/login.php","status":200,"length":76}
-{"input":"http://host.docker.internal:8080","source":"body","type":"form","output":"http://host.docker.internal:8080/dvwa/css/login.css","status":0,"length":0}
-{"input":"http://host.docker.internal:8080","source":"body","type":"form","output":"http://host.docker.internal:8080/login.php","status":0,"length":0}
-{"input":"http://host.docker.internal:8080","source":"body","type":"form","output":"http://www.dvwa.co.uk/","status":0,"length":0}

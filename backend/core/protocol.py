@@ -31,6 +31,7 @@ class AgentID(StrEnum):
     DELTA = "agent_delta"
     PRISM = "agent_prism"
     CHI = "agent_chi"
+    LAMBDA = "agent_lambda"
 
 
 # --- THE JOB PACKET (Input) ---

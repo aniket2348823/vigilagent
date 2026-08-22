@@ -46,6 +46,16 @@ def _get_cortex():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def score_for_vector(vector: str) -> tuple[float, str]:
+    """Compute the CVSS 4.0 base score for a concrete vector string.
+
+    Used when a finding record already carries the exact vector it was scored
+    with — scoring THAT vector (NVD parity) is strictly more accurate than
+    re-deriving from the vuln-class profile.
+    """
+    return _cvss4_calculate(str(vector or "").strip())
+
+
 def _cvss4_calculate(vector: str) -> tuple[float, str]:
     """Compute CVSS 4.0 base score using the official ``cvss`` package.
 

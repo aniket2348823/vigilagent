@@ -438,7 +438,7 @@ def _rewrite_loopback_host(token: str) -> str:
 
 
 # Tools that live INSIDE the recon image, owned by Alpha (recon commander).
-# 34 recon tools — Alpha-exclusive. Sigma NEVER dispatches these.
+# Alpha-exclusive. Sigma NEVER dispatches these.
 DOCKER_RECON_TOOLS: set[str] = {
     "subfinder",
     "amass",
@@ -449,44 +449,44 @@ DOCKER_RECON_TOOLS: set[str] = {
     "cloudlist",
     "spiderfoot",
     "dnsx",
-    "shuffledns",
     "puredns",
+    "massdns",
+    "dnsgen",
     "cdncheck",
     "naabu",
     "masscan",
     "nmap",
     "tlsx",
     "testssl",
-    "httprobe",
     "katana",
     "gospider",
-    "hakrawler",
     "linkfinder",
     "secretfinder",
     "arjun",
     "paramspider",
     "feroxbuster",
     "ffuf",
-    "dirsearch",
     "gobuster",
     "kiterunner",
     "inql",
     "gowitness",
-    "aquatone",
     "interactsh",
 }
 
 # Tools that live INSIDE the recon image, owned by Sigma (validation commander).
-# 5 validation tools — Sigma-exclusive. Alpha NEVER dispatches these.
+# Validation tools — Sigma-exclusive. Alpha NEVER dispatches these.
 DOCKER_SIGMA_TOOLS: set[str] = {
     "nuclei",
     "dalfox",  # vulnerability validation
+    "sqlmap",  # SQLi validation (AGGRESSIVE)
+    "nikto",  # web server scanning
+    "wpscan",  # WordPress scanning (AGGRESSIVE)
     "httpx",
     "whatweb",
     "wafw00f",  # fingerprinting & WAF detection
 }
 
-# Combined set for availability checks (all 39 tools in the image).
+# Combined set for availability checks (35 tools in the image).
 DOCKER_ALL_TOOLS: set[str] = DOCKER_RECON_TOOLS | DOCKER_SIGMA_TOOLS
 
 

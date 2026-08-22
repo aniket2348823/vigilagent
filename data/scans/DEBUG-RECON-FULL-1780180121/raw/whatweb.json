@@ -1,5 +1,0 @@
-[
-{"target":"http://host.docker.internal:8080","http_status":302,"request_config":{"headers":{"User-Agent":"WhatWeb/0.5.5"}},"plugins":{"Apache":{"version":["2.4.25"]},"Cookies":{"string":["PHPSESSID","security"]},"Country":{"string":["RESERVED"],"module":["ZZ"]},"HTTPServer":{"os":["Debian Linux"],"string":["Apache/2.4.25 (Debian)"]},"IP":{"string":["192.168.65.254"]},"RedirectLocation":{"string":["login.php"]}}}
-,
-{"target":"http://host.docker.internal:8080/login.php","http_status":200,"request_config":{"headers":{"User-Agent":"WhatWeb/0.5.5"}},"plugins":{"Apache":{"version":["2.4.25"]},"Cookies":{"string":["PHPSESSID","security"]},"Country":{"string":["RESERVED"],"module":["ZZ"]},"DVWA":{},"HTTPServer":{"os":["Debian Linux"],"string":["Apache/2.4.25 (Debian)"]},"IP":{"string":["192.168.65.254"]},"PasswordField":{"string":["password"]},"Title":{"string":["Login :: Damn Vulnerable Web Application (DVWA) v1.10 *Development*"]}}}
-]

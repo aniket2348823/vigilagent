@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 from backend.core.approval import approval_store
-from backend.core.sandbox import DockerSandbox
 from backend.core.tool_registry import ToolDefinition, tool_registry
 from backend.core.tool_types import ToolType
-from backend.modules.tech.http_client import http_client
 from backend.modules.tech.jwt import crack_hs256_secret, forge_alg_none, forge_hs256, parse_jwt
-from backend.tools.recon import RECON_TOOLS, check_tool_availability
 
 
 async def http_request_tool(
@@ -25,6 +22,8 @@ async def http_request_tool(
             reason=f"{method.upper()} {url} changes remote state and requires approval.",
             payload={"method": method.upper(), "url": url},
         )
+    from backend.modules.tech.http_client import http_client  # deferred: aiohttp chain
+
     record = await http_client.request(
         method,
         url,
@@ -38,6 +37,8 @@ async def http_request_tool(
 
 
 async def sandbox_run_tool(command: str, timeout: int = 120, scan_id: str = "GLOBAL"):
+    from backend.core.sandbox import DockerSandbox  # deferred: docker SDK chain
+
     sandbox = DockerSandbox()
     result = await sandbox.run(command, engagement_id=scan_id, timeout=timeout)
     return result.__dict__
@@ -60,6 +61,8 @@ def jwt_crack_hs256_tool(token: str, candidates: list[str]):
 
 
 def recon_tool_inventory_tool():
+    from backend.tools.recon import RECON_TOOLS, check_tool_availability  # deferred: recon chain
+
     return [
         {
             "name": spec.name,
@@ -186,4 +189,3 @@ def register_default_tools() -> None:
     )
 
 
-register_default_tools()

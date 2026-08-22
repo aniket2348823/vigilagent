@@ -28,7 +28,7 @@ import time
 import uuid
 from datetime import UTC
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 
@@ -258,10 +258,19 @@ async def list_scans():
                     duration = f"{int(_total // 60)}m {int(_total % 60)}s"
             except Exception:
                 pass
-        # Extract findings from scan results/events
+        # Extract findings from scan results/events. OPTIMIZATION: findings are
+        # persisted immediately via record_finding (scan["findings"]) and at
+        # completion via complete_scan (scan["results"]), so the list view can
+        # read those without copying every scan's event buffer (up to 20k events
+        # × N historical scans was the list endpoint's main latency driver).
+        # Only ACTIVE scans still hydrate events to catch mid-scan confirmations
+        # that raced ahead of persistence — at most a couple of scans, never the
+        # whole history.
         findings_list = []
         try:
-            findings_list = _findings_from_scan(s)
+            _active = (s.get("status") or "") in ("Initializing", "Running", "Finalizing")
+            _hydrated = stats_db_manager.get_scan_state(s.get("id", ""), include_events=_active) or s
+            findings_list = _findings_from_scan(_hydrated)
             findings_list = [
                 _enrich_finding_for_api(f, s.get("id", "")) for f in findings_list[:20]
             ]  # Cap at 20 for list view
@@ -294,7 +303,17 @@ async def get_scan(scan_id: str):
     scan = stats_db_manager.get_scan_state(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="Unknown scan_id")
-    return scan
+    # Apply canonical dedup to the scan detail view so the UI always
+    # sees a de-duplicated findings list (Docker host aliases collapse).
+    out = dict(scan)
+    try:
+        deduped = _findings_from_scan(scan)
+        out["findings"] = [
+            _enrich_finding_for_api(f, scan_id) for f in deduped[:20]
+        ]
+    except Exception:
+        pass
+    return out
 
 
 def _signal(scan_id: str, signal: str) -> dict:
@@ -353,10 +372,34 @@ async def cancel_scan(scan_id: str):
 
 
 @router.get("/{scan_id}/events")
-async def scan_events(scan_id: str, limit: int = 500):
-    scan = stats_db_manager.get_scan_state(scan_id) or {}
-    events = scan.get("events", [])
-    return {"scan_id": scan_id, "events": events[-limit:], "count": len(events)}
+async def scan_events(
+    scan_id: str,
+    limit: int = Query(500, ge=1, le=2000, description="Max events per page"),
+    offset: int = Query(0, ge=0, description="Events to skip (oldest first)"),
+    newest_first: bool = Query(False, description="Return newest events first"),
+):
+    """Paginated scan event transcript.
+
+    ``offset``+``limit`` page through the full event log (oldest first by
+    default), so "is the swarm working?" no longer truncates at 500 events.
+    Response carries ``total`` (full count) and ``has_more`` so clients can
+    page until exhausted.
+    """
+    # Unknown scans return an empty page (200) — same contract as before, so
+    # polling clients (dashboard monitors) never get a hard failure for a scan
+    # that another process finished and archived.
+    page, total = stats_db_manager.get_scan_events_page(
+        scan_id, limit=limit, offset=offset, newest_first=newest_first
+    )
+    return {
+        "scan_id": scan_id,
+        "events": page,
+        "count": len(page),
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + len(page) < total,
+    }
 
 
 def _findings_from_scan(scan: dict) -> list[dict]:
@@ -372,10 +415,12 @@ def _findings_from_scan(scan: dict) -> list[dict]:
          regardless of GuardLayer side-effect filtering.
 
     During an active scan only (3) is populated; after completion (1) is the
-    canonical source. We merge all three and de-duplicate by ``(url, type)`` so
-    the API always surfaces every confirmed finding, even mid-scan and even if
-    the dashboard counters were filtered."""
-    seen: set[tuple[str, str]] = set()
+    canonical source. We merge all three and de-duplicate by a canonical
+    ``(type, scheme, port, normalized-host, path)`` key so the API always
+    surfaces every confirmed finding, even mid-scan and even if the dashboard
+    counters were filtered. Host aliases of the same local target collapse
+    (``127.0.0.1`` == ``host.docker.internal`` == docker gateway IP)."""
+    seen: set[tuple[str, ...]] = set()
     out: list[dict] = []
 
     def _coerce(item: dict) -> dict:
@@ -390,11 +435,16 @@ def _findings_from_scan(scan: dict) -> list[dict]:
             return payload
         return dict(item)
 
+    from backend.reporting.finding_normalizer import canonical_finding_key
+
+    target_url = str(scan.get("target_url") or scan.get("target") or "")
     for source in (scan.get("results") or [], scan.get("findings") or []):
         for it in source:
             f = _coerce(it)
-            key = (str(f.get("url", "")).lower(), str(f.get("type", "")).upper())
-            if key in seen or not f.get("url"):
+            key = canonical_finding_key(
+                str(f.get("url", "")), str(f.get("type", "")), target_url=target_url
+            )
+            if key is None or key in seen or not f.get("url"):
                 continue
             seen.add(key)
             out.append(f)
@@ -412,8 +462,10 @@ def _findings_from_scan(scan: dict) -> list[dict]:
         else:
             continue
         f = _coerce(ev)
-        key = (str(f.get("url", "")).lower(), str(f.get("type", "")).upper())
-        if key in seen or not f.get("url"):
+        key = canonical_finding_key(
+            str(f.get("url", "")), str(f.get("type", "")), target_url=target_url
+        )
+        if key is None or key in seen or not f.get("url"):
             continue
         seen.add(key)
         out.append(f)

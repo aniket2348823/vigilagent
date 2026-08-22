@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
@@ -51,13 +52,13 @@ logger = logging.getLogger(__name__)
 
 # Load .env file before validating environment variables
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 # Validate required environment variables at startup
 def _validate_env_vars():
     """Validate required environment variables are set.
 
-    Only API_AUTH_KEY is truly required. Other API keys (SUPABASE, OPENROUTER,
+    Only API_AUTH_KEY is truly required. Other API keys (SUPABASE, NVIDIA,
     GEMINI) are optional — the system degrades gracefully without them
     (GI5 deterministic engine still works, LLM features are simply unavailable).
     """
@@ -67,7 +68,7 @@ def _validate_env_vars():
     optional_vars = [
         "SUPABASE_URL",
         "SUPABASE_KEY",
-        "OPENROUTER_API_KEY",
+        "NVIDIA_API_KEY",
         "GEMINI_API_KEY",
     ]
     missing_required = [var for var in required_vars if not os.getenv(var)]
@@ -80,7 +81,7 @@ def _validate_env_vars():
     if missing_optional:
         logger.warning(
             f"Optional API keys not configured: {', '.join(missing_optional)}. "
-            f"LLM features (Gemini/OpenRouter) will be unavailable. "
+            f"LLM features (NVIDIA/Gemini) will be unavailable. "
             f"System will use GI5 deterministic engine only."
         )
 
@@ -100,7 +101,6 @@ from backend.api.socket_manager import manager
 from backend.core.config import ConfigManager, settings
 from backend.core.csrf_protection import csrf_protection, get_session_id, start_csrf_cleanup_task
 from backend.core.default_tools import register_default_tools
-from backend.core.orchestrator import MasterNode, WorkerNode
 from backend.core.rate_limiter import rate_limiter, start_cleanup_task
 from backend.core.state import stats_db_manager
 from backend.core.task_manager import TaskManager
@@ -301,6 +301,20 @@ async def lifespan(app: FastAPI):
             await shutdown_redis_client()
         except Exception as _re:
             logger.info(f"[LIFECYCLE] redis_client shutdown warning: {_re}")
+        # Close long-lived aiohttp sessions so shutdown doesn't emit
+        # "unclosed session" warnings (previously left to GC on Ctrl+C).
+        try:
+            from backend.ai.cortex import get_cortex_engine
+
+            await get_cortex_engine().shutdown()
+        except Exception as _ce:
+            logger.info(f"[LIFECYCLE] cortex session shutdown warning: {_ce}")
+        try:
+            from backend.core.exploit_engine import exploit_engine
+
+            await exploit_engine.shutdown()
+        except Exception as _ee:
+            logger.info(f"[LIFECYCLE] exploit_engine session shutdown warning: {_ee}")
         # Create final backup of scan states before shutdown
         try:
             logger.info("[LIFECYCLE] Backup manager ready")
@@ -357,6 +371,12 @@ if _is_production:
 
 # Security headers middleware
 
+# Env flags are read ONCE at startup, not per request — the headers middleware
+# runs on every API call and rebuilding these from env on each one was pure
+# per-request overhead. (`_is_production` already exists above; `_dev_mode`
+# is hoisted here for the same reason.)
+_dev_mode = os.getenv("VIGILAGENT_DEV_MODE", "false").lower() == "true"
+
 # TrustedHostMiddleware — use env-configurable allowlist instead of hardcoded
 # localhost-only list which breaks production deployments.
 _trusted_hosts_env = os.getenv("TRUSTED_HOSTS", "localhost,127.0.0.1,0.0.0.0").strip()
@@ -389,13 +409,12 @@ async def _security_headers_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    _dev_mode = os.getenv("VIGILAGENT_DEV_MODE", "false").lower() == "true"
-    _prod_mode = os.getenv("VIGILAGENT_ENV", "development").lower() == "production"
     # #7: In production, nonces fully replace unsafe-inline.
     # The SPA catch-all route injects nonces into every <script> tag served
     # by the backend, so 'unsafe-inline' is no longer needed in prod mode.
     # Dev mode keeps unsafe-inline for Vite HMR inline scripts.
-    if _prod_mode:
+    # (env flags are module constants — see "Security headers middleware".)
+    if _is_production:
         _script_src = f"'self' 'nonce-{_csp_nonce}'"
     elif _dev_mode:
         _script_src = "'self' 'unsafe-inline' 'unsafe-eval'"
@@ -403,7 +422,7 @@ async def _security_headers_middleware(request: Request, call_next):
         _script_src = f"'self' 'nonce-{_csp_nonce}'"
     # In production, nonces fully replace unsafe-inline for both scripts and styles.
     # Dev mode keeps unsafe-inline for Vite HMR and browser devtools.
-    if _prod_mode:
+    if _is_production:
         _style_src = f"'self' 'nonce-{_csp_nonce}'"
     elif _dev_mode:
         _style_src = "'self' 'unsafe-inline'"
@@ -414,7 +433,7 @@ async def _security_headers_middleware(request: Request, call_next):
     # (GlobalBackground.jsx, Modal.jsx, etc.), we need style-src-attr.
     # This only allows the style="..." HTML attribute, not <style> elements.
     _nonce_val = f"'nonce-{_csp_nonce}'"
-    _style_elem = f"'self' {_nonce_val}" if _prod_mode else ("'self' 'unsafe-inline'" if _dev_mode else f"'self' {_nonce_val}")
+    _style_elem = f"'self' {_nonce_val}" if _is_production else ("'self' 'unsafe-inline'" if _dev_mode else f"'self' {_nonce_val}")
     _style_attr = "'unsafe-inline'"  # Required for React style={{}}, element.style.*
     # SECURITY (#18): Modern Reporting API — use report-to instead of legacy report-uri.
     # Reporting-Endpoints header defines the endpoint; report-to references it by name.
@@ -422,9 +441,13 @@ async def _security_headers_middleware(request: Request, call_next):
     response.headers["Content-Security-Policy"] = (
         f"default-src 'self'; "
         f"script-src 'self' {_script_src}; "
-        f"style-src {_style_elem}; style-src-attr {_style_attr}; "
+        # Google Fonts: allow the external stylesheet (fonts.googleapis.com)
+        # and the font files it references (fonts.gstatic.com). Without these
+        # the SPA's Inter/Space Grotesk/Material Symbols links were silently
+        # blocked and the UI fell back to system fonts (icons broke entirely).
+        f"style-src {_style_elem} https://fonts.googleapis.com; style-src-attr {_style_attr}; "
         f"img-src 'self' data: https:; "
-        f"font-src 'self' data:; "
+        f"font-src 'self' data: https://fonts.gstatic.com; "
         f"connect-src 'self' wss: https:; "
         f"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
         f"report-to csp-endpoint; report-uri /api/v1/csp-report"
@@ -481,6 +504,14 @@ _app_api_key = os.getenv("API_AUTH_KEY")
 if not _app_api_key:
     raise RuntimeError("API_AUTH_KEY environment variable is required. Set a secure API key for production use.")
 
+# Startup fingerprint (sha256 prefix — never the raw key) so API-key
+# mismatches between the backend and the Vite proxy are diagnosable from the
+# log alone: compare this value against the proxy's injected key.
+logger.info(
+    "[SECURITY] API_AUTH_KEY loaded: fingerprint=sha256:%s",
+    hashlib.sha256(_app_api_key.encode("utf-8")).hexdigest()[:12],
+)
+
 
 @app.middleware("http")
 async def _api_key_middleware(request: Request, call_next):
@@ -492,6 +523,12 @@ async def _api_key_middleware(request: Request, call_next):
         path in ("/api/health", "/docs", "/openapi.json", "/", "/redoc")
         or not path.startswith("/api/")
         or path.startswith("/api/defense/")
+        # Extension bridge: the local Chrome extension POSTs its passive
+        # recon packets + captured keys here with no API key (it has none).
+        # These are read-only observation paths, already covered by the
+        # scope-guard + CORS middleware — same trust domain as /api/defense/.
+        # GET /api/recon/keyring stays key-protected (returns captured data).
+        or (path.startswith("/api/recon/") and request.method == "POST")
     )
     if _api_key_skip:
         return await call_next(request)
@@ -595,6 +632,21 @@ async def _csrf_middleware(request: Request, call_next):
     """
     # Only apply to state-changing methods on API routes
     if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
+        # Extension bridge/recon endpoints run over localhost only and are
+        # protected by scope-guard + CORS.  Skip CSRF+API-key for these — the
+        # local Chrome extension POSTs passive observation data (recon packets,
+        # captured keys) with no CSRF token and no API key. FIX: this check
+        # must be TOP-LEVEL, not nested inside the skip_paths branch below —
+        # nested, /api/recon/ingest never matched and every extension POST fell
+        # through to "Missing X-CSRF-Token" → 403 (observed: extension relay
+        # broken since the CSRF middleware landed).
+        if (
+            request.url.path.startswith("/api/recon/")
+            or request.url.path.startswith("/api/bridge/")
+            or request.url.path.startswith("/api/defense/")
+        ):
+            return await call_next(request)
+
         # Skip for endpoints that don't require CSRF (e.g., webhooks, internal APIs)
         # SECURITY FIX (C-8): Instead of skipping CSRF for write endpoints,
         # require API key auth as alternative. This prevents CSRF on attack/
@@ -604,14 +656,6 @@ async def _csrf_middleware(request: Request, call_next):
             "/api/defense/analyze",
         ]
         if any(request.url.path.startswith(p) for p in skip_paths):
-            # Extension bridge/recon endpoints run over localhost only and are
-            # protected by scope-guard + CORS.  Skip CSRF+API-key for these.
-            if (
-                request.url.path.startswith("/api/recon/")
-                or request.url.path.startswith("/api/bridge/")
-                or request.url.path.startswith("/api/defense/")
-            ):
-                return await call_next(request)
             # Other skip paths: require X-API-Key as CSRF alternative
             api_key = request.headers.get("X-API-Key", "")
             if not api_key or not hmac.compare_digest(api_key, _app_api_key):
@@ -960,14 +1004,21 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
         from urllib.parse import urlparse as _urlparse
 
         try:
-            origin_host = (_urlparse(origin).hostname or "").lower()
+            _origin_parsed = _urlparse(origin)
+            origin_host = (_origin_parsed.hostname or "").lower()
+            origin_scheme = (_origin_parsed.scheme or "").lower()
         except Exception as exc:
             import logging as _log
 
             _log.getLogger("main").debug("CORS origin parse failed: %s", exc)
             origin_host = ""
+            origin_scheme = ""
         # SECURITY FIX (C-7): Origin validation was dead code (inside except block)
-        if origin_host:
+        # The local Chrome extension (Vigilagent Spy) connects from a
+        # chrome-extension://<id> origin whose hostname is the extension ID,
+        # never an HTTP host. It's a locally-installed component in the same
+        # trust domain as localhost, so it bypasses the HTTP-origin allowlist.
+        if origin_host and origin_scheme != "chrome-extension":
             _allowed_hosts = set()
             for _o in ALLOWED_ORIGINS:
                 try:
@@ -1018,7 +1069,11 @@ async def websocket_endpoint(websocket: WebSocket, client_type: str = Query("ui"
         # FIX: Also verify a TOTP secret exists — enabled=true without a
         # secret is a misconfiguration that should not block WebSocket access.
         auth_required = bool(config.get("enabled", True)) and bool(config.get("secret"))
-        if auth_required:
+        # The local Chrome extension (spy) is in the same trust domain as the
+        # exempted /api/recon + /api/defense paths — it cannot read the web
+        # app's localStorage session token, so enforcing it here would make the
+        # spy bridge permanently unusable whenever 2FA is enabled.
+        if auth_required and client_type != "spy":
             try:
                 session = load_session() or {}
             except Exception as exc:
@@ -1050,8 +1105,8 @@ class DistributedAttackCluster:
         self.mode = mode
         self.config = ConfigManager()
         self.running = False
-        self.master_node: MasterNode | None = None
-        self.worker_node: WorkerNode | None = None
+        # MasterNode/WorkerNode are imported lazily inside start_cluster (the
+        # serve path never needs the ~6s orchestrator import chain).
         self._task_manager = TaskManager("DistributedCluster")
 
         try:
@@ -1066,6 +1121,8 @@ class DistributedAttackCluster:
 
     async def start_master(self):
         try:
+            from backend.core.orchestrator import MasterNode  # deferred: cluster mode only
+
             self.master_node = MasterNode(self.config.redis.url, self.config.supabase.url, self.config.supabase.key)
             self.running = True
             logger.info("📡 VIGILAGENT: Master Node Activated.")
@@ -1076,6 +1133,8 @@ class DistributedAttackCluster:
 
     async def start_worker(self, worker_id: str | None = None):
         try:
+            from backend.core.orchestrator import WorkerNode  # deferred: cluster mode only
+
             worker_id = worker_id or self.config.worker.worker_id or f"worker-{uuid.uuid4().hex[:6]}"
             self.worker_node = WorkerNode(
                 worker_id,

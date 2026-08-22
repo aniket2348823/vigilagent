@@ -12,9 +12,12 @@ class TestLanePriority:
 
 class TestProcessResult:
     def test_creation(self):
-        pr = ProcessResult(exit_code=0, stdout="ok", stderr="")
+        pr = ProcessResult(exit_code=0, stdout="ok", stderr="", timed_out=False, killed=False, duration_ms=12)
         assert pr.exit_code == 0
         assert pr.stdout == "ok"
+        assert pr.timed_out is False
+        assert pr.killed is False
+        assert pr.duration_ms == 12
 
 
 class TestCommandLane:

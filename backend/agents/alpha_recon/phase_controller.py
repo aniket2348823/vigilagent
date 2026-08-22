@@ -59,34 +59,73 @@ class PhaseState:
     interactsh_url: str = ""
 
     def add_entities(self, entities: list[ParsedEntity]) -> None:
-        """Ingest parsed entities into phase state for downstream consumption."""
+        """Ingest parsed entities into phase state for downstream consumption.
+
+        Maps every entity kind produced by external tools AND the browser
+        engines (PinchTab / ScraplingRecon / BrowserOrchestrator) into the
+        buckets downstream phases consume. Without the engine kinds
+        (browser_endpoint, websocket, javascript_route, form, cookie, ...) the
+        browsers' discoveries were silently dropped.
+        """
         for e in entities:
             self.all_entities.append(e)
+            props = e.properties or {}
             if e.kind == "subdomain":
                 self.subdomains.add(e.label)
             elif e.kind == "ip":
                 self.ips.add(e.label)
             elif e.kind == "dns_record":
                 self.subdomains.add(e.label)
-                for ip in e.properties.get("a", []) + e.properties.get("aaaa", []):
+                for ip in props.get("a", []) + props.get("aaaa", []):
                     self.ips.add(ip)
-            elif e.kind == "open_port":
-                host = e.properties.get("host", e.label.split(":")[0])
-                port = int(e.properties.get("port", 0))
-                self.open_ports.setdefault(host, []).append(port)
+            elif e.kind in ("open_port", "service"):
+                # The nmap XML parser emits discovered services as kind="service"
+                # (host/port in properties); the naabu/httpx parsers emit
+                # kind="open_port". Accept both so discovered ports always reach
+                # state.open_ports -> summary.total_open_ports + build_http_targets
+                # (previously every nmap run showed total_open_ports: 0).
+                host = props.get("host", e.label.split(":")[0])
+                try:
+                    port = int(props.get("port", 0))
+                except (TypeError, ValueError):
+                    port = 0
+                if port:
+                    self.open_ports.setdefault(host, []).append(port)
             elif e.kind == "http_service":
-                self.http_services.append(e.label)
-                self.live_hosts.append(e.label)
+                if e.label not in self.http_services:
+                    self.http_services.append(e.label)
+                    self.live_hosts.append(e.label)
             elif e.kind in ("js_file", "js_endpoint"):
-                self.js_files.append(e.label)
-            elif e.kind in ("crawled_endpoint", "discovered_path", "api_route", "endpoint"):
-                self.endpoints.append(e.label)
+                if e.label not in self.js_files:
+                    self.js_files.append(e.label)
+            # Endpoint-ish kinds from crawlers, APIs, and browser engines — all
+            # become attack-surface candidates for downstream discovery/nuclei.
+            elif e.kind in (
+                "browser_endpoint",
+                "websocket",
+                "javascript_route",
+                "api_endpoint",
+                "api_route",
+                "crawled_endpoint",
+                "discovered_path",
+                "endpoint",
+                "form",
+                "form_action",
+            ):
+                if e.label not in self.endpoints:
+                    self.endpoints.append(e.label)
             elif e.kind == "parameter":
-                self.parameters.append(e.properties)
+                self.parameters.append(props)
             elif e.kind == "secret":
-                self.secrets.append(e.properties)
+                self.secrets.append(props)
+            elif e.kind == "insecure_cookie":
+                self.vulnerability_candidates.append(props)
+            elif e.kind == "security_headers" and props.get("missing"):
+                self.vulnerability_candidates.append(
+                    {**props, "vuln_type": "missing_security_headers", "source_url": e.label}
+                )
             elif e.kind == "vulnerability_candidate":
-                self.vulnerability_candidates.append(e.properties)
+                self.vulnerability_candidates.append(props)
 
     def build_subdomain_file(self, raw_dir: Path) -> Path:
         """Write discovered subdomains to a file for downstream tools."""
@@ -101,6 +140,54 @@ class PhaseState:
         path.parent.mkdir(parents=True, exist_ok=True)
         all_hosts = sorted(self.subdomains | self.ips)
         path.write_text("\n".join(all_hosts) + "\n", encoding="utf-8")
+        return path
+
+    def build_http_targets(self, raw_dir: Path) -> Path:
+        """Write host[:port] scan targets derived from INFRA findings.
+
+        Intelligence-driven chaining: every port discovered by nmap/naabu
+        becomes an explicit ``host:port`` probe so the HTTP phase sees services
+        running off the default web ports (8080, 8443, 3000, ...) instead of
+        only 80/443. Bare hosts are included first so default-port probing
+        never regresses, and the seed target (already a ``host:port`` entry in
+        subdomains) is naturally covered.
+        """
+        from urllib.parse import urlparse
+
+        path = raw_dir / "http_scan_targets.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        seen: set[str] = set()
+        targets: list[str] = []
+
+        def _add(value: str) -> None:
+            v = value.strip()
+            if v and v not in seen:
+                seen.add(v)
+                targets.append(v)
+
+        # 1. Bare hosts (subdomains + IPs) — default-port probing.
+        for h in sorted(self.subdomains | self.ips):
+            _add(h)
+        # 2. Ports discovered by nmap/naabu — probe each explicitly. 80/443 are
+        #    already covered by the bare-host entries; every other open port
+        #    (even ssh/DB ports) gets a cheap probe in case HTTP runs there.
+        for host, ports in self.open_ports.items():
+            for p in sorted(ports):
+                if p in (80, 443):
+                    continue
+                _add(f"{host}:{p}")
+        # 3. Known live HTTP services (normalized to host[:port]) in case the
+        #    open_ports map is sparse (e.g. internal probe found them first).
+        for u in self.http_services:
+            try:
+                pu = urlparse(u)
+                host = (pu.hostname or "").strip().lower()
+                if not host:
+                    continue
+                _add(f"{host}:{pu.port}" if pu.port else host)
+            except Exception:
+                continue
+        path.write_text("\n".join(targets) + ("\n" if targets else ""), encoding="utf-8")
         return path
 
     def build_live_hosts_file(self, raw_dir: Path) -> Path:

@@ -13,11 +13,18 @@ import hashlib
 #     Role: sanitization, deobfuscation, entropy/pattern analysis, sigmoid risk
 #           scoring, fast-path pre-processing, and offline fallback.
 #
-#   CORE 2 - GEMINI (gemini-2.5-flash) :: MID/LOW tier
-#     Role: fast tactical reasoning, payload ideation, validation support,
-#           summarization, evidence narration, embeddings.
+#   CORE 2a - NVIDIA TACTICAL (nvidia/nemotron-3-nano-30b-a3b) :: PRIMARY tactical LLM
+#     Role: fast tactical reasoning, payload ideation, WAF mutation, validation
+#           support (pass 1). Benchmark-verified best under-50B strict-JSON model.
 #
-#   CORE 3 - OPENROUTER (openai/gpt-oss-20b) :: HIGH tier
+#   CORE 2a-2 - NVIDIA STRATEGIC (nvidia/llama-3.3-nemotron-super-49b-v1 via
+#           NVIDIA_API_KEY_2) :: strategic LLM
+#     Role: planning, arbitration, reporting, forensics, summaries, remediation.
+#
+#   CORE 2b - GEMINI (gemini-2.5-flash) :: MID/LOW tier (NVIDIA fallback)
+#     Role: tactical reasoning fallback when NVIDIA is unavailable/rate-limited.
+#
+#   CORE 3 - OPENROUTER (google/gemma-4-26b-a4b-it:free) :: last-resort tier
 #     Role: campaign planning, arbitration, strategy, remediation, reporting.
 #
 # HYBRID PROTOCOL:
@@ -27,9 +34,11 @@ import hashlib
 #   4. If the LLMs are offline, GI5 alone still provides full functionality.
 #
 # MODEL POLICY (Architecture s11, s12): the ONLY network LLM endpoints reachable
-# are Gemini `gemini-2.5-flash` and OpenRouter `openai/gpt-oss-20b`. The legacy
-# `_call_ollama` / `_call_nvidia_*` names are backward-compatible ALIASES that
-# route onto `_call_gemini`. No on-device / Ollama / NVIDIA endpoint exists.
+# are NVIDIA TACTICAL `nvidia/nemotron-3-nano-30b-a3b` (primary), NVIDIA STRATEGIC
+# `nvidia/llama-3.3-nemotron-super-49b-v1` (NVIDIA_API_KEY_2), Gemini
+# `gemini-2.5-flash` (fallback) and OpenRouter `google/gemma-4-26b-a4b-it:free`.
+# The legacy `_call_ollama` / `_call_nvidia_*` names are backward-compatible
+# ALIASES that route onto `_call_gemini` (the tactical/strategic NVIDIA chain).
 # ------------------------------------------------------------
 # Removed unused sync aiohttp import
 import json
@@ -124,8 +133,10 @@ class CortexEngine:
     Vigilagent Cortex: HYBRID Intelligence Engine.
 
     Core 1: GI5 OMEGA - deterministic heuristic engine (always available).
-    Core 2: Gemini (gemini-2.5-flash) - MID/LOW tier tactical reasoning.
-    Core 3: OpenRouter (openai/gpt-oss-20b) - HIGH tier deep reasoning.
+    Core 2a: NVIDIA TACTICAL (nemotron-3-nano-30b-a3b) - PRIMARY tactical reasoning.
+    Core 2a-2: NVIDIA STRATEGIC (llama-3.3-nemotron-super-49b-v1) - strategic reasoning.
+    Core 2b: Gemini (gemini-2.5-flash) - tactical fallback for NVIDIA.
+    Core 3: OpenRouter (google/gemma-4-26b-a4b-it:free) - last-resort tier.
 
     The hybrid architecture ensures:
     - GI5 provides instant deterministic analysis (sanitization, deobfuscation, patterns)
@@ -133,8 +144,9 @@ class CortexEngine:
     - Results are FUSED via the Bayesian weight matrix
     - Full functionality even when the LLMs are offline (GI5 takes over)
 
-    Only two network LLM endpoints are ever reached (Architecture s11/s12):
-    Gemini `gemini-2.5-flash` and OpenRouter `openai/gpt-oss-20b`.
+    Only the sanctioned network LLM endpoints are ever reached (Architecture s11/s12):
+    NVIDIA `nvidia/nemotron-3-nano-30b-a3b`, NVIDIA `nvidia/llama-3.3-nemotron-super-49b-v1`,
+    Gemini `gemini-2.5-flash` and OpenRouter `google/gemma-4-26b-a4b-it:free`.
     """
 
     def __init__(self, api_key=None, base_url=None, model=None):
@@ -211,31 +223,58 @@ class CortexEngine:
         # --- BAYESIAN WEIGHT MATRIX ---
         self.bayesian = BayesianWeightMatrix()
 
-        # --- CORE 3: OpenRouter (GPT OSS 20B) - Final Arbitration ---
+        # --- CORE 3: REMOVED (OpenRouter retired from runtime) ---
+        # OpenRouter (Gemma 4 26B) is NO LONGER part of the provider chain —
+        # the two NVIDIA engines (tactical 30B + strategic 49B) are the only
+        # LLM providers, with Gemini as the sole fallback. The module is kept
+        # on disk for reference but is never imported at runtime.
+        self._openrouter = None
+
+        # --- CORE 2a: NVIDIA (Primary Tactical Engine - replaces Gemini) ---
         try:
-            from backend.ai.openrouter import openrouter_client
+            from backend.ai.nvidia import nvidia_client
 
-            self._openrouter = openrouter_client
-            if self._openrouter.is_available:
-                logger.info("CORTEX CORE-3 [OPENROUTER] GPT OSS 20B initialized.")
+            self._nvidia = nvidia_client
+            if self._nvidia.is_available:
+                logger.info("CORTEX CORE-2a [NVIDIA] Primary tactical LLM initialized.")
             else:
-                logger.warning("CORTEX CORE-3 [OPENROUTER] No API key - cloud reasoning disabled.")
+                logger.warning("CORTEX CORE-2a [NVIDIA] No API key; NVIDIA inference disabled.")
         except Exception as e:
-            self._openrouter = None
-            logger.warning(f"CORTEX CORE-3 [OPENROUTER] unavailable: {e}")
+            self._nvidia = None
+            logger.warning(f"CORTEX CORE-2a [NVIDIA] unavailable: {e}")
 
-        # --- CORE 2: Gemini API (Fast Tactical Engine) ---
+        # --- CORE 2a-2: NVIDIA STRATEGIC (second key/model) ---
+        # Purpose-split: strategic engine (llama-3.3-nemotron-super-49b-v1 via
+        # NVIDIA_API_KEY_2) owns planning, arbitration, reporting, forensics and
+        # validation pass 2 — while the tactical client (nemotron-3-nano-30b)
+        # owns payloads, WAF mutation and validation pass 1.
+        try:
+            from backend.ai.nvidia import nvidia_strategic_client
+
+            self._nvidia_strategic = nvidia_strategic_client
+            if self._nvidia_strategic.is_available:
+                logger.info(
+                    "CORTEX CORE-2a-2 [NVIDIA-STRATEGIC] Strategic LLM initialized (%s).",
+                    getattr(self._nvidia_strategic, "_model", "?"),
+                )
+            else:
+                logger.warning("CORTEX CORE-2a-2 [NVIDIA-STRATEGIC] No key; strategic NVIDIA disabled.")
+        except Exception as e:
+            self._nvidia_strategic = None
+            logger.warning(f"CORTEX CORE-2a-2 [NVIDIA-STRATEGIC] unavailable: {e}")
+
+        # --- CORE 2b: Gemini API (Fallback tactical engine for NVIDIA) ---
         try:
             from backend.ai.gemini import gemini_client
 
             self._gemini = gemini_client
             if self._gemini.is_available:
-                logger.info("CORTEX CORE-2 [GEMINI] Gemini 2.5 Flash initialized.")
+                logger.info("CORTEX CORE-2b [GEMINI] Gemini 2.5 Flash initialized (NVIDIA fallback).")
             else:
-                logger.warning("CORTEX CORE-2 [GEMINI] No API key; Gemini inference disabled.")
+                logger.warning("CORTEX CORE-2b [GEMINI] No API key; Gemini inference disabled.")
         except Exception as e:
             self._gemini = None
-            logger.warning(f"CORTEX CORE-2 [GEMINI] unavailable: {e}")
+            logger.warning(f"CORTEX CORE-2b [GEMINI] unavailable: {e}")
 
         # Periodic Redis health check (every 60s)
         async def _periodic_redis_health():
@@ -256,7 +295,7 @@ class CortexEngine:
             self._health_check_task = loop.create_task(_periodic_redis_health())
         except RuntimeError:
             pass
-        logger.info("CORTEX HYBRID ENGINE: ACTIVE (GI5 + Gemini + OpenRouter)")
+        logger.info("CORTEX HYBRID ENGINE: ACTIVE (GI5 + NVIDIA-Tactical + NVIDIA-Strategic + Gemini)")
 
     # =========================================================================
     # Context Compression + Warm-up + Cache
@@ -323,16 +362,16 @@ class CortexEngine:
                 logger.debug(f"CORTEX Redis cache write failed: {e}")
 
     async def warm_up(self):
-        logger.info("CORTEX: Warming up Gemini API...")
+        logger.info("CORTEX: Warming up tactical LLM chain (NVIDIA -> Gemini)...")
         try:
-            if self._gemini and self._gemini.is_available:
+            if (self._nvidia and self._nvidia.is_available) or (self._gemini and self._gemini.is_available):
                 result = await self._call_gemini("Respond with: READY", temperature=0.0, max_tokens=8)
                 if not self._is_error(result):
-                    logger.info("CORTEX: Gemini warm-up complete.")
+                    logger.info("CORTEX: Tactical LLM warm-up complete.")
                 else:
                     logger.warning(f"CORTEX: Warm-up response: {result[:50]}")
             else:
-                logger.warning("CORTEX: Gemini unavailable, skipping warm-up.")
+                logger.warning("CORTEX: No tactical LLM (NVIDIA/Gemini) available, skipping warm-up.")
         except Exception as e:
             logger.warning(f"CORTEX: Warm-up failed: {e}")
 
@@ -348,14 +387,31 @@ class CortexEngine:
         scan_ctx=None,
         model_override=None,
         _skip_cache=False,
-        timeout=10.0,
+        timeout=45.0,
+        strategic=False,
     ):
-        """Send a prompt to Gemini with circuit breaker + cache + telemetry."""
+        """Send a prompt through the tactical LLM chain with circuit breaker + cache + telemetry.
+
+        Provider chain (NVIDIA primary, per architecture): NVIDIA -> Gemini ->
+        OpenRouter. When NVIDIA fails — rate-limited, 5xx, timeout, offline, or
+        its client breaker is open — the call FALLS BACK to Gemini, then to
+        OpenRouter, so a rate-limited primary key degrades gracefully instead of
+        stalling scans. Only when ALL cloud LLMs fail does GI5-only mode kick in.
+
+        When ``strategic=True`` the NVIDIA STRATEGIC client (NVIDIA_API_KEY_2 /
+        NVIDIA_MODEL_2, default llama-3.3-nemotron-super-49b-v1) is preferred for
+        the first NVIDIA slot — planning, arbitration, reporting and forensic
+        work use the bigger strategic model while tactical payload/validation
+        work keeps the fast Nemotron 3 Nano.
+        """
         self._telemetry["llm_calls"] += 1
+        # Gemini-side gate: if the Cortex circuit breaker is open (Gemini
+        # hammering detected), skip straight to the OpenRouter fallback.
+        gemini_blocked = False
         if self._circuit_open:
             if _time.time() < self._circuit_open_until:
+                gemini_blocked = True
                 self._telemetry["degraded_mode_responses"] += 1
-                return "[CORTEX DEGRADED] Circuit breaker open - GI5-only mode active."
             else:
                 self._circuit_open = False
                 self._consecutive_failures = 0
@@ -371,57 +427,121 @@ class CortexEngine:
         if scan_ctx and getattr(scan_ctx, "is_cancelled", False):
             raise asyncio.CancelledError()
         call_start = _time.perf_counter()
-        if not self._gemini or not self._gemini.is_available:
-            self._consecutive_failures += 1
-            self._check_circuit_breaker("OFFLINE")
-            return "[CORTEX OFFLINE] Gemini API is not configured. Set GEMINI_API_KEY."
-        try:
-            async with command_lane.slot(LanePriority.LOW):
-                result = await asyncio.wait_for(
-                    self._gemini.call(
-                        prompt,
-                        system_prompt=SYSTEM_GUARD,
-                        temperature=temperature,
-                        max_tokens=min(max_tokens, 8192),
-                        scan_ctx=scan_ctx,
-                    ),
-                    timeout=timeout,
-                )
-            if self._is_error(result):
-                self._consecutive_failures += 1
-                self._telemetry["llm_errors"] += 1
-                self._check_circuit_breaker("ERROR")
-                return result
-            latency = _time.perf_counter() - call_start
-            self._telemetry["llm_successes"] += 1
-            self._telemetry["llm_total_latency"] += latency
-            self._consecutive_failures = 0
-            await self._set_cached_async(prompt, result, scan_ctx)
-            return result
-        except TimeoutError:
-            self._consecutive_failures += 1
-            self._telemetry["llm_timeouts"] += 1
-            self._check_circuit_breaker("TIMEOUT")
-            logger.warning(f"CORTEX CORE-2: Call timed out after {timeout}s")
-            return f"[CORTEX TIMEOUT] Call timed out after {timeout}s"
-        except asyncio.CancelledError:
-            logger.warning("CORTEX CORE-2: Execution cancelled via ScanContext.")
-            raise
-        except Exception as e:
-            self._consecutive_failures += 1
+
+        result = None
+        circuit_reason = None
+
+        # Provider chain: NVIDIA (primary) -> Gemini (fallback). OpenRouter was
+        # retired from the chain (NVIDIA-only policy). When the Cortex circuit
+        # breaker is open we skip the tactical providers and use GI5-only mode.
+        providers = []
+        if not gemini_blocked:
+            # Purpose-split NVIDIA: strategic slot first (bigger 49B model) when
+            # the call requests strategic work, otherwise tactical (Nano 30B).
+            if strategic and self._nvidia_strategic and self._nvidia_strategic.is_available:
+                providers.append(("NVIDIA-STRATEGIC", self._nvidia_strategic, "openai"))
+            if self._nvidia and self._nvidia.is_available:
+                providers.append(("NVIDIA", self._nvidia, "openai"))
+            if self._gemini and self._gemini.is_available:
+                providers.append(("GEMINI", self._gemini, "gemini"))
+
+        if not providers:
+            circuit_reason = "BREAKER" if gemini_blocked else "OFFLINE"
+            result = (
+                "[CORTEX BREAKER] Cortex circuit breaker open - no fallback LLM available."
+                if gemini_blocked
+                else "[CORTEX OFFLINE] No LLM provider configured. Set NVIDIA_API_KEY or GEMINI_API_KEY."
+            )
+        else:
+            for provider_name, client, api_style in providers:
+                try:
+                    async with command_lane.slot(LanePriority.LOW):
+                        if api_style == "gemini":
+                            attempt = await asyncio.wait_for(
+                                client.call(
+                                    prompt,
+                                    system_prompt=SYSTEM_GUARD,
+                                    temperature=temperature,
+                                    max_tokens=min(max_tokens, 8192),
+                                    scan_ctx=scan_ctx,
+                                ),
+                                timeout=timeout,
+                            )
+                        else:
+                            attempt = await asyncio.wait_for(
+                                client.call(
+                                    user_prompt=prompt,
+                                    system_prompt=SYSTEM_GUARD,
+                                    temperature=temperature,
+                                    max_tokens=min(max_tokens, 4096),
+                                    scan_ctx=scan_ctx,
+                                    # NVIDIA + OpenRouter accept OpenAI-style
+                                    # json_object mode — pin it for tactical
+                                    # calls so the model returns valid JSON
+                                    # instead of prose (observed: the Cortex
+                                    # extractor failed on ~every free-form
+                                    # NVIDIA response, forcing the Gemini
+                                    # fallback).
+                                    json_mode="NVIDIA" in provider_name,
+                                ),
+                                timeout=timeout,
+                            )
+                    if attempt is not None and not self._is_error(attempt):
+                        result = attempt
+                        logger.info("CORTEX: %s tactical call succeeded.", provider_name)
+                        break
+                    result = attempt
+                    logger.info(
+                        "CORTEX: %s failed (%s) -> trying next provider",
+                        provider_name,
+                        str(attempt)[:60] if attempt else "empty",
+                    )
+                except (TimeoutError, asyncio.TimeoutError):
+                    self._telemetry["llm_timeouts"] += 1
+                    logger.warning(f"CORTEX CORE-2 [{provider_name}]: Call timed out after {timeout}s")
+                    result = f"[CORTEX TIMEOUT] {provider_name} call timed out after {timeout}s"
+                    circuit_reason = "TIMEOUT"
+                except asyncio.CancelledError:
+                    logger.warning("CORTEX CORE-2: Execution cancelled via ScanContext.")
+                    raise
+                except Exception as e:
+                    logger.error(f"CORTEX CORE-2 [{provider_name}] UNEXPECTED ERROR: {str(e)}")
+                    result = f"[CORTEX ERROR] {str(e)}"
+                    circuit_reason = "ERROR"
+
+        if result is None:
+            circuit_reason = "ERROR"
+            result = "[CORTEX ERROR] LLM providers returned empty responses."
+
+        if self._is_error(result):
             self._telemetry["llm_errors"] += 1
-            logger.error(f"CORTEX CORE-2 UNEXPECTED ERROR: {str(e)}")
-            self._check_circuit_breaker("ERROR")
-            return f"[CORTEX ERROR] {str(e)}"
+            # Count the failure and evaluate the breaker exactly once per call
+            # (prevents double-tripping when all providers fail).
+            self._consecutive_failures += 1
+            self._check_circuit_breaker(circuit_reason or "ERROR")
+            return result
+
+        latency = _time.perf_counter() - call_start
+        self._telemetry["llm_successes"] += 1
+        self._telemetry["llm_total_latency"] += latency
+        self._consecutive_failures = 0
+        await self._set_cached_async(prompt, result, scan_ctx)
+        return result
 
     def _prompt_with_transcript(self, prompt: str, scan_ctx=None) -> str:
         transcript = ""
         if scan_ctx and hasattr(scan_ctx, "transcript_text"):
             transcript = scan_ctx.transcript_text(tail=80)
         elif scan_ctx and getattr(scan_ctx, "transcript", None):
-            # Honour the bounded ring buffer (deque doesn't support slice
-            # syntax, so use list() + tail-cap instead of ``[-80:]``).
-            tail_items = list(scan_ctx.transcript)[-80:]
+            # Honour the bounded ring buffer: slice the TAIL without copying
+            # the whole deque into a list. list() of a 10k-entry buffer per
+            # LLM call was pure garbage for an 80-item slice — islice from
+            # the tail keeps this O(tail) in memory regardless of buffer size.
+            from itertools import islice as _islice
+
+            _buf = scan_ctx.transcript
+            _tail_start = max(0, len(_buf) - 80)
+            tail_items = list(_islice(_buf, _tail_start, None))
             transcript = "\n\n".join(tail_items)
         if not transcript:
             return prompt
@@ -434,79 +554,50 @@ class CortexEngine:
         )
 
     async def _call_ollama(
-        self, prompt, temperature=0.2, max_tokens=256, scan_ctx=None, model_override=None, _skip_cache=False
+        self,
+        prompt,
+        temperature=0.2,
+        max_tokens=256,
+        scan_ctx=None,
+        model_override=None,
+        _skip_cache=False,
+        strategic=False,
     ):
-        """LEGACY ALIAS: Routes to _call_gemini for backward compatibility."""
+        """LEGACY ALIAS: Routes to _call_gemini for backward compatibility.
+
+        Pass ``strategic=True`` to route through the strategic NVIDIA model
+        (llama-3.3-nemotron-super-49b-v1 via NVIDIA_API_KEY_2)."""
         return await self._call_gemini(
-            prompt, temperature=temperature, max_tokens=max_tokens, scan_ctx=scan_ctx, _skip_cache=_skip_cache
+            prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            scan_ctx=scan_ctx,
+            _skip_cache=_skip_cache,
+            strategic=strategic,
         )
 
     async def _call_nvidia_payload_model(self, prompt, max_tokens=1024, scan_ctx=None):
-        """LEGACY ALIAS: payload generation via Gemini (gemini-2.5-flash).
-        Now participates in the circuit breaker for consistent protection."""
-        if self._circuit_open:
-            if _time.time() < self._circuit_open_until:
-                self._telemetry["degraded_mode_responses"] += 1
-                return "[CORTEX DEGRADED] Circuit breaker open - GI5-only mode active."
-            else:
-                self._circuit_open = False
-                self._consecutive_failures = 0
-        if not self._gemini or not self._gemini.is_available:
-            self._consecutive_failures += 1
-            self._check_circuit_breaker("OFFLINE")
-            return "[CORTEX OFFLINE] Gemini API is not configured."
-        try:
-            async with command_lane.slot(LanePriority.LOW):
-                result = await asyncio.wait_for(
-                    self._gemini.generate_payloads(
-                        self._prompt_with_transcript(prompt, scan_ctx),
-                        max_tokens=max_tokens,
-                        scan_ctx=scan_ctx,
-                    ),
-                    timeout=10.0,
-                )
-            self._consecutive_failures = 0
-            return result
-        except TimeoutError:
-            self._consecutive_failures += 1
-            self._check_circuit_breaker("TIMEOUT")
-            logger.warning("CORTEX: _call_nvidia_payload_model timed out")
-            return "[CORTEX TIMEOUT] Payload generation timed out"
+        """LEGACY ALIAS: payload generation, routed through the _call_gemini
+        chain so NVIDIA failures (rate limit / 5xx / timeout) fall back to
+        Gemini, then OpenRouter."""
+        return await self._call_gemini(
+            prompt, temperature=0.2, max_tokens=max_tokens, scan_ctx=scan_ctx
+        )
 
     async def _call_nvidia_validation_model(self, prompt, max_tokens=4096, scan_ctx=None):
-        """LEGACY ALIAS: validation via Gemini (gemini-2.5-flash).
-        Now participates in the circuit breaker for consistent protection."""
-        if self._circuit_open:
-            if _time.time() < self._circuit_open_until:
-                self._telemetry["degraded_mode_responses"] += 1
-                return "[CORTEX DEGRADED] Circuit breaker open - GI5-only mode active."
-            else:
-                self._circuit_open = False
-                self._consecutive_failures = 0
-        if not self._gemini or not self._gemini.is_available:
-            self._consecutive_failures += 1
-            self._check_circuit_breaker("OFFLINE")
-            return "[CORTEX OFFLINE] Gemini API is not configured."
-        try:
-            async with command_lane.slot(LanePriority.LOW):
-                result = await asyncio.wait_for(
-                    self._gemini.validate_candidate(
-                        self._prompt_with_transcript(prompt, scan_ctx),
-                        max_tokens=max_tokens,
-                        scan_ctx=scan_ctx,
-                    ),
-                    timeout=10.0,
-                )
-            self._consecutive_failures = 0
-            return result
-        except TimeoutError:
-            self._consecutive_failures += 1
-            self._check_circuit_breaker("TIMEOUT")
-            logger.warning("CORTEX: _call_nvidia_validation_model timed out")
-            return "[CORTEX TIMEOUT] Validation timed out"
+        """LEGACY ALIAS: validation, routed through the _call_gemini chain so
+        NVIDIA failures (rate limit / 5xx / timeout) fall back to Gemini, then
+        OpenRouter."""
+        return await self._call_gemini(
+            prompt, temperature=0.1, max_tokens=max_tokens, scan_ctx=scan_ctx
+        )
 
     def _check_circuit_breaker(self, reason: str):
         """Trip the circuit breaker if failures exceed threshold."""
+        # If the breaker is already open, don't re-trip: one trip per outage
+        # window keeps the trip counter and log output honest.
+        if self._circuit_open and _time.time() < self._circuit_open_until:
+            return
         if self._consecutive_failures >= self._CIRCUIT_THRESHOLD:
             self._circuit_open = True
             self._circuit_open_until = _time.time() + self._CIRCUIT_COOLDOWN
@@ -632,6 +723,10 @@ class CortexEngine:
                 self._warm_task.cancel()
             await self._session.close()
             logger.info("CORTEX: Base AIOHTTP session safely closed.")
+        if self._nvidia:
+            await self._nvidia.shutdown()
+        if self._nvidia_strategic:
+            await self._nvidia_strategic.shutdown()
         if self._gemini:
             await self._gemini.shutdown()
         # Close shared Redis client
@@ -816,7 +911,7 @@ class CortexEngine:
 
     def _is_error(self, result: str) -> bool:
         """Check if an LLM response is an error."""
-        return isinstance(result, str) and result.startswith(("[CORTEX", "[GEMINI", "[OPENROUTER"))
+        return isinstance(result, str) and result.startswith(("[CORTEX", "[GEMINI", "[OPENROUTER", "[NVIDIA"))
 
     def _gi5_analyze(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Run GI5 OMEGA full threat analysis pipeline (instant)."""
@@ -866,15 +961,17 @@ class CortexEngine:
         # CORE 1: GI5 deterministic risk classification
         gi5_severity = "CRITICAL" if hit_rate > 30 else "MODERATE" if hit_rate > 10 else "LOW"
 
-        # CORE 2: Gemini narrative (Primary)
-        if self._gemini and self._gemini.is_available:
-            try:
-                gemini_prompt = f"Target: {target}. Success: {success_count}/{total_count}. Duration: {duration}. Risk: {gi5_severity}. Write a 3-sentence executive summary."
-                result = await self._gemini.generate_narrative(gemini_prompt, scan_ctx=scan_ctx)
-                if result and not self._is_error(result):
-                    return result
-            except Exception as e:
-                logger.warning(f"Gemini executive brief failed ({e}), falling back to OpenRouter.")
+        # CORE 2: narrative — STRATEGIC NVIDIA first (49B), then tactical
+        # NVIDIA, then Gemini fallback.
+        for narrative_client in (self._nvidia_strategic, self._nvidia, self._gemini):
+            if narrative_client and narrative_client.is_available:
+                try:
+                    narrative_prompt = f"Target: {target}. Success: {success_count}/{total_count}. Duration: {duration}. Risk: {gi5_severity}. Write a 3-sentence executive summary."
+                    result = await narrative_client.generate_narrative(narrative_prompt, scan_ctx=scan_ctx)
+                    if result and not self._is_error(result):
+                        return result
+                except Exception as e:
+                    logger.warning(f"LLM executive brief failed ({e}), falling back.")
 
         # CORE 2: Gemini AI narrative (enriched with GI5 data)
         prompt = f"""You are a senior cybersecurity analyst writing a forensic report for Vigilagent.
@@ -888,7 +985,7 @@ Write a concise 2-4 sentence executive summary.
 Focus on: what was tested, whether vulnerabilities were found, and the severity.
 Use professional, technical language. No markdown. No headers. Just the summary."""
 
-        result = await self._call_ollama(prompt, temperature=0.2, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.2, scan_ctx=scan_ctx, strategic=True)
         if self._is_error(result):
             # GI5-only fallback
             if hit_rate > 30:
@@ -931,7 +1028,7 @@ VERDICT: {verdict}{gi5_info}
 Write a 2-3 sentence forensic analysis. Explain: technique used, why it succeeded/failed, risk level.
 No markdown. No headers. Just the analysis."""
 
-        result = await self._call_ollama(prompt, temperature=0.2, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.2, scan_ctx=scan_ctx, strategic=True)
         if self._is_error(result):
             if verdict in ("VULNERABLE", "CRITICAL_LEAK", "POTENTIAL_IDOR"):
                 return f"Variant '{variant}' bypassed defenses via insufficient input validation. Immediate remediation required."
@@ -954,17 +1051,26 @@ No markdown. No headers. Just the analysis."""
                 if start != -1 and end != -1:
                     json_str = json_str[start : end + 1]
 
-            # 3. Defensive: try parsing as-is first, then fix trailing commas outside strings
+            # 3. Try as-is, then repair trailing commas and retry.
             json_str = json_str.strip()
             try:
                 return json.loads(json_str)
             except json.JSONDecodeError:
                 pass
-            # Fix trailing commas: split on unquoted braces/brackets, remove commas before them.
-            # Use a char-by-char approach to avoid stripping commas inside string values.
-            json_str = self._remove_trailing_commas(json_str)
-
-            return json.loads(json_str)
+            repaired = self._remove_trailing_commas(json_str)
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                # 4. Truncated JSON (max_tokens cut mid-object): find the longest
+                #    prefix that still parses. Cheap for tactical payloads and
+                #    recovers most mid-output cuts instead of dropping the
+                #    finding and falling back to another provider.
+                for cut in range(len(repaired), len(repaired) // 2, -1):
+                    try:
+                        return json.loads(repaired[:cut])
+                    except json.JSONDecodeError:
+                        continue
+            return None
         except Exception as e:
             logger.warning(f"CORTEX JSON Extraction Failed: {e}")
             return None
@@ -975,7 +1081,7 @@ No markdown. No headers. Just the analysis."""
         result = []
         in_string = False
         escape_next = False
-        for ch in s:
+        for i, ch in enumerate(s):
             if escape_next:
                 result.append(ch)
                 escape_next = False
@@ -991,14 +1097,18 @@ No markdown. No headers. Just the analysis."""
             if in_string:
                 result.append(ch)
                 continue
-            # Outside string: strip comma before } or ]
-            if ch == chr(44) and result and result[-1] in (chr(32), chr(10), chr(9), chr(13)):
-                continue
+            # Outside a string: drop a comma only when the next non-whitespace
+            # char is a closing brace/bracket. The closer itself is preserved
+            # (the old second pass replaced `,}` with a control char, corrupting
+            # the very JSON it was meant to repair).
+            if ch == chr(44):
+                j = i + 1
+                while j < len(s) and s[j] in " \t\r\n":
+                    j += 1
+                if j < len(s) and s[j] in "}]":
+                    continue
             result.append(ch)
-        # Second pass: remove ',}' and ',]' patterns (comma immediately before closing)
-        out = "".join(result)
-        out = re.sub(r",\s*([}\]])", r"", out)
-        return out
+        return "".join(result)
 
     def _extract_payload_list(self, text: str) -> list[str]:
         """Extract a payload list from JSON, markdown JSON, or newline output."""
@@ -1070,20 +1180,10 @@ No markdown. No headers. Just the analysis."""
                 "code_fix": "print('Fix implemented via test mock')",
             }
 
-        # CORE 3: OpenRouter generation (Professional Report Engine)
-        # Falls back to local Gemini if OpenRouter is unavailable
-        if self._openrouter and self._openrouter.is_available:
-            try:
-                result = await self._openrouter.generate_summary(vuln_type, payload, url, scan_ctx=scan_ctx)
-            except Exception as e:
-                logger.warning(f"OpenRouter summary failed ({e}), falling back to local LLM.")
-                result = None
-        else:
-            result = None
-
-        if not result or result.startswith("["):
-            # Local Gemini fallback
-            prompt = f"""You are a senior cybersecurity forensic analyst writing a professional penetration test report.
+        # Strategic NVIDIA engine (llama-3.3-nemotron-super-49b-v1) writes the
+        # PDF vulnerability summary — OpenRouter retired. Falls back through the
+        # tactical NVIDIA -> Gemini chain, then to deterministic templates.
+        prompt = f"""You are a senior cybersecurity forensic analyst writing a professional penetration test report.
 Analyze this security finding and generate a structured JSON report.
 
 VULNERABILITY TYPE: {vuln_type}
@@ -1126,7 +1226,9 @@ IMPORTANT RULES FOR code_fix:
 
 Output ONLY valid JSON. No markdown. No explanations."""
 
-            result = await self._call_ollama(prompt, temperature=0.1, max_tokens=1500, scan_ctx=scan_ctx)
+        result = await self._call_ollama(
+            prompt, temperature=0.1, max_tokens=1500, scan_ctx=scan_ctx, strategic=True
+        )
         data = self._extract_json(result)
 
         if data and isinstance(data, dict) and "name" in data:
@@ -1561,17 +1663,24 @@ Output ONLY the mutated payload. Nothing else. No explanation."""
         }
 
     async def _llm_classify_candidate(self, prompt, scan_ctx=None):
-        """Layer 3: Dual-pass Gemini validation with self-consistency check.
+        """Layer 3: Dual-pass LLM validation with self-consistency check.
+
+        Pass 1 runs on the TACTICAL NVIDIA (Nemotron 3 Nano 30B); pass 2 runs
+        on the STRATEGIC NVIDIA (Llama 3.3 Nemotron Super 49B via
+        NVIDIA_API_KEY_2) — a genuine cross-model consistency check, not the
+        same provider twice.
         Returns (result_text, is_consistent)."""
         nonce = random.randint(10000, 99999)
         result_pass_1 = await self._call_nvidia_validation_model(prompt, max_tokens=4096, scan_ctx=scan_ctx)
-        result_pass_2 = await self._call_nvidia_validation_model(
+        result_pass_2 = await self._call_gemini(
             prompt + f"\n\n[VERIFICATION PASS nonce={nonce}]",
+            temperature=0.1,
             max_tokens=4096,
             scan_ctx=scan_ctx,
+            strategic=True,
         )
         if self._is_error(result_pass_1) or self._is_error(result_pass_2):
-            logger.warning("Gemini validation unavailable; falling back to GI5 validation.")
+            logger.warning("LLM validation unavailable; falling back to GI5 validation.")
             result_pass_1 = await self._call_ollama(prompt, temperature=0.1, max_tokens=300, scan_ctx=scan_ctx)
             nonce2 = random.randint(10000, 99999)
             result_pass_2 = await self._call_ollama(
@@ -1579,6 +1688,7 @@ Output ONLY the mutated payload. Nothing else. No explanation."""
                 temperature=0.1,
                 max_tokens=300,
                 scan_ctx=scan_ctx,
+                strategic=True,
             )
 
         result = result_pass_1
@@ -1625,8 +1735,9 @@ Output ONLY the mutated payload. Nothing else. No explanation."""
     async def _openrouter_arbitrate(
         self, candidate_data, verdict, raw_llm_conf, gi5_risk, evidence_obj, posterior_prob, scan_ctx=None
     ):
-        """Layer 6: GPT-OSS-20B final arbitration via OpenRouter.
-        Updates verdict in-place if arbiter is called."""
+        """Layer 6: final arbitration via the NVIDIA strategic engine (49B).
+        Updates verdict in-place if arbiter is called. (Name kept for
+        backward compatibility — OpenRouter is retired.)"""
         conf_pct = raw_llm_conf * 100
         is_ambiguous = 45 <= conf_pct <= 55
 
@@ -1634,7 +1745,16 @@ Output ONLY the mutated payload. Nothing else. No explanation."""
         if (conf_pct < 65 and conf_pct > 30) or (gi5_risk > 75 and conf_pct < 80) or is_ambiguous:
             call_arbiter = True
 
-        if not (call_arbiter and self._openrouter and self._openrouter.is_available):
+        arbiter_client = None
+        arbiter_name = ""
+        if self._nvidia_strategic and self._nvidia_strategic.is_available:
+            arbiter_client = self._nvidia_strategic
+            arbiter_name = "NVIDIA-STRATEGIC"
+        elif self._nvidia and self._nvidia.is_available:
+            arbiter_client = self._nvidia
+            arbiter_name = "NVIDIA"
+
+        if not (call_arbiter and arbiter_client is not None):
             # Fast track Decision Rules
             if posterior_prob >= 0.75:
                 verdict["is_real"] = True
@@ -1658,10 +1778,10 @@ Output ONLY the mutated payload. Nothing else. No explanation."""
         }
 
         try:
-            arbiter_result = await self._openrouter.arbitrate(arbiter_input, scan_ctx=scan_ctx)
+            arbiter_result = await arbiter_client.arbitrate(arbiter_input, scan_ctx=scan_ctx)
             arbiter_data = self._extract_json(arbiter_result) or {}
         except Exception as e:
-            logger.warning(f"CORTEX: OpenRouter arbitration failed: {e}")
+            logger.warning(f"CORTEX: {arbiter_name} arbitration failed: {e}")
             arbiter_data = {}
 
         if arbiter_data and "vulnerable" in arbiter_data:
@@ -1680,12 +1800,12 @@ Output ONLY the mutated payload. Nothing else. No explanation."""
             verdict["confidence"] = min(1.0, fused_conf)
             verdict["type"] = arbiter_data.get("type", verdict["type"])
             verdict["reasoning"] += (
-                f" | GPT-OSS-20B ARBITER: {arbiter_data.get('reason', 'None')} ({arbiter_data.get('evidence', '')}) | Fusion={fused_conf:.2f}"
+                f" | {arbiter_name} ARBITER: {arbiter_data.get('reason', 'None')} ({arbiter_data.get('evidence', '')}) | Fusion={fused_conf:.2f}"
             )
-            verdict["engine"] = "HYBRID_GPT_OSS_FUSED"
+            verdict["engine"] = "HYBRID_STRATEGIC_FUSED"
         else:
             verdict["is_real"] = posterior_prob >= 0.75
-            verdict["reasoning"] += " | GPT-OSS-20B parse error, fallback to Bayes."
+            verdict["reasoning"] += f" | {arbiter_name} parse error, fallback to Bayes."
 
     async def audit_candidate(self, candidate_data: dict[str, Any], scan_ctx=None) -> dict[str, Any]:
         """HYBRID: Audit vulnerability candidate (decomposed)."""
@@ -1806,7 +1926,7 @@ Answer strictly "yes" or "no"."""
             verdict["confidence"] = round(posterior_prob, 3)
             verdict["reasoning"] += fusion_str
 
-            # Layer 6: OpenRouter Arbitration
+            # Layer 6: Strategic NVIDIA Arbitration
             await self._openrouter_arbitrate(
                 candidate_data, verdict, raw_llm_conf, gi5_risk, evidence_obj, posterior_prob, scan_ctx
             )
@@ -2041,7 +2161,7 @@ TARGET: {self._compress_context(str(finding.get("url", "")), 100)}
 EVIDENCE: {self._compress_context(str(finding.get("evidence", "")), 200)}{gi5_info}
 Explain: what was found, evidence, consequences. Professional tone. No markdown."""
 
-        result = await self._call_ollama(prompt, temperature=0.3, max_tokens=200)
+        result = await self._call_ollama(prompt, temperature=0.3, max_tokens=200, strategic=True)
         if self._is_error(result):
             # GI5-only fallback
             risk = gi5_result.get("risk_score", "unknown") if gi5_result else "unknown"
@@ -2563,15 +2683,57 @@ Write exactly 4 concise bullet points for the executive summary.
 Each bullet should be one sentence. No numbering, no dashes, just the text.
 {instructions}"""
 
-        result = await self._call_ollama(prompt, temperature=0.2, max_tokens=512)
+        result = await self._call_ollama(prompt, temperature=0.2, max_tokens=512, strategic=True)
         if self._is_error(result):
             return []
-        bullets = [
-            line.strip().lstrip("â€¢-*123456789. ")
-            for line in result.split("\n")
-            if line.strip() and len(line.strip()) > 10
-        ]
-        return bullets[:4]
+
+        bullets: list[str] = []
+        # NVIDIA json_mode returns structured output instead of plain newline
+        # text. Two shapes are observed in the wild:
+        #   {"executive_summary": {"bullet_points": [...]}}
+        #   {"executive_summary": ["...", "..."]}
+        # Parse BOTH so the PDF shows clean prose, not raw JSON keys/quotes.
+        data = self._extract_json(result)
+        if isinstance(data, dict):
+            _inner = data.get("executive_summary")
+            if isinstance(_inner, list):
+                bullets = [str(b).strip() for b in _inner if str(b).strip()]
+            elif isinstance(_inner, dict):
+                _pts = (
+                    _inner.get("bullet_points")
+                    or _inner.get("bullets")
+                    or _inner.get("points")
+                )
+                if isinstance(_pts, list):
+                    bullets = [str(b).strip() for b in _pts if str(b).strip()]
+                elif isinstance(_pts, str) and _pts.strip():
+                    bullets = [l.strip() for l in _pts.splitlines() if l.strip()]
+            elif _inner is None:
+                # No "executive_summary" key — the payload may BE the list.
+                for _val in data.values():
+                    if isinstance(_val, list):
+                        bullets = [str(b).strip() for b in _val if str(b).strip()]
+                        break
+        elif isinstance(data, list):
+            bullets = [str(b).strip() for b in data if str(b).strip()]
+
+        # Fallback: newline split (plain-text responses), then clean any stray
+        # JSON quoting / trailing commas from structured responses that slipped
+        # past the parse above.
+        if not bullets:
+            bullets = [
+                line.strip().lstrip("\u2022-*123456789. ")
+                for line in result.split("\n")
+                if line.strip() and len(line.strip()) > 10
+            ]
+        clean = []
+        for b in bullets:
+            b = b.strip().strip('"').strip(",").strip()
+            # Strip markdown bold/italics the model loves to add.
+            b = b.replace("**", "").replace("__", "").strip()
+            if b and len(b) > 10 and not b.startswith(("{", "[", '"executive_summary"', '"bullet_points"')):
+                clean.append(b)
+        return clean[:4]
 
     #  REPORTING: AI Vulnerability Categorization
 
@@ -2746,25 +2908,8 @@ Respond with ONLY the choice."""
                 "evidence_analysis": "Test environment mock evidence analysis.",
                 "attacker_advantage": "Test environment mock attacker advantage.",
             }
-        # Try OpenRouter first (GPT-OSS-20B)
-        if self._openrouter and self._openrouter.is_available:
-            try:
-                or_result = await self._openrouter.reconstruct_forensics(
-                    vuln_type, payload, response_snippet, url, scan_ctx=scan_ctx
-                )
-                if or_result and not or_result.startswith("["):
-                    clean = or_result
-                    if "```json" in clean:
-                        clean = clean.split("```json")[1].split("```")[0].strip()
-                    elif "```" in clean:
-                        clean = clean.split("```")[1].split("```")[0].strip()
-                    parsed = json.loads(clean)
-                    if all(k in parsed for k in ["root_cause", "evidence_analysis", "attacker_advantage"]):
-                        return parsed
-            except Exception as e:
-                logger.warning(f"OpenRouter forensic failed ({e}), falling back to local.")
-
-        # Fallback to local Gemini
+        # NVIDIA strategic engine (49B) reconstructs forensics — OpenRouter
+        # retired. Falls back through the tactical NVIDIA -> Gemini chain.
         prompt = f"""You are a senior forensic security analyst reconstructing a successful security exploit.
 
 VULNERABILITY TYPE: {vuln_type}
@@ -2780,7 +2925,7 @@ Provide a precise forensic reconstruction. Each field must be ONE specific, tech
 
 Output ONLY valid JSON with these 3 fields. No markdown. No extra text."""
 
-        result = await self._call_ollama(prompt, temperature=0.1, max_tokens=400, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.1, max_tokens=400, scan_ctx=scan_ctx, strategic=True)
         try:
             if "```json" in result:
                 result = result.split("```json")[1].split("```")[0].strip()
@@ -2805,21 +2950,8 @@ Output ONLY valid JSON with these 3 fields. No markdown. No extra text."""
         """
         if self.test_mode:
             return "# Test environment mock remediation code snippet."
-        # Try OpenRouter first
-        if self._openrouter and self._openrouter.is_available:
-            try:
-                or_result = await self._openrouter.generate_code_fix(vuln_type, tech_stack, scan_ctx=scan_ctx)
-                if or_result and not or_result.startswith("["):
-                    cleaned = or_result.strip()
-                    if cleaned.startswith("```"):
-                        cleaned = cleaned.split("\n", 1)[-1] if "\n" in cleaned else cleaned[3:]
-                    if cleaned.endswith("```"):
-                        cleaned = cleaned[:-3].rstrip()
-                    return cleaned
-            except Exception as e:
-                logger.warning(f"OpenRouter code fix failed ({e}), falling back to local.")
-
-        # Fallback to local Gemini
+        # NVIDIA strategic engine (49B) generates code fixes — OpenRouter
+        # retired. Falls back through the tactical NVIDIA -> Gemini chain.
         prompt = f"""Generate a secure, production-ready code fix for this vulnerability.
 
 VULNERABILITY: {vuln_type}
@@ -2842,7 +2974,9 @@ def secure_query(db, user_input):
 
 Now generate the fix for {vuln_type}. Output ONLY the code."""
 
-        result = await self._call_ollama(prompt, temperature=0.1, max_tokens=500, scan_ctx=scan_ctx)
+        result = await self._call_ollama(
+            prompt, temperature=0.1, max_tokens=500, scan_ctx=scan_ctx, strategic=True
+        )
         if self._is_error(result):
             # Use deterministic fallback
             return self._generate_fallback_code_fix(vuln_type)
@@ -2877,7 +3011,7 @@ Write a 3-sentence "Strategic Attack Path Analysis".
 Explain how an attacker might chain these vulnerabilities together to achieve a high-impact objective (e.g., full system compromise).
 No headers. No markdown. Professional tone."""
 
-        result = await self._call_ollama(prompt, temperature=0.3, max_tokens=300, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.3, max_tokens=300, scan_ctx=scan_ctx, strategic=True)
         if self._is_error(result):
             return "Multiple vulnerabilities were identified that could potentially be chained for increased impact. Review each finding for cross-component risks."
         return result
@@ -2902,7 +3036,7 @@ CHAIN STEPS:
 Explain in 2-3 sentences how these steps connect to achieve an exploit.
 Focus on the causal relationship between steps. Professional tone. No markdown."""
 
-        result = await self._call_ollama(prompt, temperature=0.3, max_tokens=300, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.3, max_tokens=300, scan_ctx=scan_ctx, strategic=True)
         if self._is_error(result):
             return "The attack chain demonstrates a sequential progression from initial reconnaissance through multiple vulnerability triggers, ultimately leading to system compromise."
         return result
@@ -2930,7 +3064,7 @@ Provide a mapping for:
 
 Output ONLY valid JSON."""
 
-        result = await self._call_ollama(prompt, temperature=0.1, max_tokens=300, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.1, max_tokens=300, scan_ctx=scan_ctx, strategic=True)
         try:
             if "```json" in result:
                 result = result.split("```json")[1].split("```")[0].strip()
@@ -2986,7 +3120,7 @@ FIX: {code_fix}
 What is the potential impact on legitimate application functionality?
 Provide a 1-sentence professional warning. No markdown."""
 
-        result = await self._call_ollama(prompt, temperature=0.3, max_tokens=200, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.3, max_tokens=200, scan_ctx=scan_ctx, strategic=True)
         if self._is_error(result):
             return "Applying this fix may impact input handling. Perform full regression testing."
         return result
@@ -3003,7 +3137,7 @@ Provide a 1-sentence professional warning. No markdown."""
 Explain the potential financial, reputational, or legal impact.
 Provide a concise 3-sentence narrative. No headers. No markdown. Professional tone."""
 
-        result = await self._call_ollama(prompt, temperature=0.4, max_tokens=300, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.4, max_tokens=300, scan_ctx=scan_ctx, strategic=True)
         if self._is_error(result):
             return "The identified vulnerabilities represent a significant risk to organizational data integrity and regulatory compliance. Immediate remediation is advised to mitigate potential financial and reputational impact."
         return result
@@ -3023,7 +3157,7 @@ Create a "Tactical Remediation Roadmap" in 3 bullet points.
 Identify "Pivot Points" (critical vulnerabilities that break multiple attack chains).
 Sequence the fixes for maximum risk reduction. No headers. No markdown. Professional tone."""
 
-        result = await self._call_ollama(prompt, temperature=0.3, max_tokens=300, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.3, max_tokens=300, scan_ctx=scan_ctx, strategic=True)
         if self._is_error(result):
             return "Prioritize critical findings and focus on centralized input validation and authentication gates."
         return result
@@ -3042,7 +3176,7 @@ PAYLOAD: {payload[:200]}
 The script should print [STILL VULNERABLE] if the exploit works and [FIXED] if it fails.
 Keep it under 15 lines. Output ONLY the code block. No explanation."""
 
-        result = await self._call_ollama(prompt, temperature=0.1, max_tokens=400, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.1, max_tokens=400, scan_ctx=scan_ctx, strategic=True)
         if self._is_error(result):
             return "# Verification Script: Manual verification required using the original payload."
         return result
@@ -3061,7 +3195,7 @@ Show the chain from Initial Access -> Payload Execution -> Impact.
 Example: [Initial Access] -> [Injection] -> [DB Access].
 Keep it simple (3-4 nodes). One line only. No markdown."""
 
-        result = await self._call_ollama(prompt, temperature=0.1, max_tokens=100, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.1, max_tokens=100, scan_ctx=scan_ctx, strategic=True)
         if self._is_error(result):
             return "[Initial Access] -> [Payload Injection] -> [Exploit Success]"
         return result.strip()
@@ -3078,7 +3212,7 @@ FIX: {code_fix[:200]}
 
 Output ONLY valid JSON: {{"hours": "2-4 hours", "complexity": "Medium", "reason": "Reason here"}}"""
 
-        result = await self._call_ollama(prompt, temperature=0.2, max_tokens=200, scan_ctx=scan_ctx)
+        result = await self._call_ollama(prompt, temperature=0.2, max_tokens=200, scan_ctx=scan_ctx, strategic=True)
         try:
             if "```json" in result:
                 result = result.split("```json")[1].split("```")[0].strip()

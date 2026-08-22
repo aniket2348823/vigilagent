@@ -10,8 +10,10 @@ class TestRedisConfig:
         from backend.core.redis_client import RedisConfig
 
         cfg = RedisConfig()
-        assert cfg.max_connections == 50
-        assert cfg.socket_timeout == 5
+        # Pool sized for the full 13-agent swarm (was 50/5). See the comment in
+        # redis_client.RedisConfig for the tuning rationale.
+        assert cfg.max_connections == 150
+        assert cfg.socket_timeout == 15
         assert cfg.decode_responses is True
 
     @patch.dict(os.environ, {"REDIS_MAX_CONNECTIONS": "10", "REDIS_SOCKET_TIMEOUT": "2"})
@@ -38,7 +40,7 @@ class TestRedisClient:
         stats = client.get_pool_stats()
         assert stats["active"] == 0
         assert stats["idle"] == 0
-        assert stats["max"] == 50
+        assert stats["max"] == 150
         assert stats["overflow"] == 0
 
     @pytest.mark.asyncio

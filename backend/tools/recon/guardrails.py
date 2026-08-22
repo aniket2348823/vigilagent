@@ -89,8 +89,14 @@ def validate_command(argv: tuple[str, ...] | list[str], *, allow_shell: bool = F
                 if construct in str(arg) and str(arg) != construct:
                     # Allow pipes/redirects as standalone args only in special cases
                     pass
-            # Full shell string detection
-            if any(c in str(arg) for c in ["|", ";", "$(", "`"]):
+            # Full shell string detection. NOTE: `;` inside a single argv token
+            # is NOT a shell construct when the token is passed as a literal
+            # argument to exec (never interpolated). HTTP header values such as
+            # `Cookie: PHPSESSID=x; security=low` legitimately contain `;` — the
+            # seeder's authenticated session MUST be forwardable to nuclei/
+            # whatweb/wafw00f. Only the pipe/command-substitution constructs are
+            # shell-significant in an argv array.
+            if any(c in str(arg) for c in ["|", "$(", "`"]):
                 return GuardrailResult(allowed=False, reason=f"shell_construct_in_argv:{arg[:50]}")
 
     # 3. Check dangerous patterns
@@ -123,7 +129,6 @@ def validate_command(argv: tuple[str, ...] | list[str], *, allow_shell: bool = F
         "spiderfoot",
         "github-subdomains",
         "dnsx",
-        "shuffledns",
         "puredns",
         "cdncheck",
         "naabu",
@@ -132,25 +137,27 @@ def validate_command(argv: tuple[str, ...] | list[str], *, allow_shell: bool = F
         "tlsx",
         "testssl.sh",
         "httpx",
-        "httprobe",
         "whatweb",
         "wafw00f",
         "katana",
         "gospider",
-        "hakrawler",
         "arjun",
         "paramspider",
+        "linkfinder",
+        "secretfinder",
         "feroxbuster",
         "ffuf",
         "gobuster",
         "kr",
         "kiterunner",
         "gowitness",
-        "aquatone",
         "nuclei",
         "dalfox",
+        "sqlmap",
+        "nikto",
+        "wpscan",
+        "dnsgen",
         "interactsh-client",
-        "dirsearch",
         "inql",
         "python",
         "python3",

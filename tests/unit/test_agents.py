@@ -43,6 +43,11 @@ class TestAlphaAgent:
         agent.cortex = AsyncMock()
         agent.cortex.classify_target = AsyncMock(return_value={"is_api": False, "tags": []})
         
+        # Mock the full recon pipeline: handle_job tests must assert dispatch
+        # behavior, not trigger real recon (docker exec + network) against
+        # example.com — that used to hang the suite.
+        agent.alpha_recon.run = AsyncMock(return_value=None)
+        
         yield agent
     
     @pytest.mark.asyncio
@@ -783,6 +788,13 @@ class TestKappaAgent:
         )
         
         await kappa_agent.archive_victory(event)
+        
+        # PATTERN_LEARNED is published from the background _slow_archive task
+        # (archiving is intentionally non-blocking on the bus) — drain the
+        # tracked background tasks before asserting.
+        if kappa_agent._archive_tasks:
+            await asyncio.gather(*list(kappa_agent._archive_tasks), return_exceptions=True)
+            kappa_agent._archive_tasks.clear()
         
         # Should publish PATTERN_LEARNED event for high confidence
         calls = kappa_agent.bus.publish.call_args_list

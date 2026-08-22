@@ -10,8 +10,9 @@ from starlette.responses import JSONResponse
 from backend.ai.cortex import get_cortex_engine
 from backend.api.socket_manager import manager  # UI Broadcast
 
-# Import your orchestrator instance class to access static registry
-from backend.core.orchestrator import HiveOrchestrator
+# HiveOrchestrator imported lazily at the call site: importing it eagerly
+# loads every agent + database + fpdf chain (~17s of import time) on boot even
+# when /api/v1/defense is never hit this session.
 from backend.core.protocol import AgentID, JobPacket, ModuleConfig, TaskTarget
 
 logger = logging.getLogger(__name__)
@@ -177,7 +178,9 @@ async def analyze_threat(request: Request):
         if not payload.agent_id:
             return JSONResponse(status_code=500, content={"error": "agent_id is required", "mode": "validation_error"})
 
-        # 1. Lookup Agent
+        # 1. Lookup Agent (HiveOrchestrator imported lazily — see module docstring)
+        from backend.core.orchestrator import HiveOrchestrator
+
         agent = HiveOrchestrator.active_agents.get(payload.agent_id)
 
         if not agent:

@@ -29,7 +29,7 @@ class TestAgentID:
     def test_all_agents_present(self):
         expected = {"agent_omega", "agent_zeta", "agent_alpha", "agent_beta",
                     "agent_gamma", "agent_sigma", "agent_kappa", "agent_delta",
-                    "agent_prism", "agent_chi"}
+                    "agent_prism", "agent_chi", "agent_lambda"}
         actual = {a.value for a in AgentID}
         assert expected == actual
 

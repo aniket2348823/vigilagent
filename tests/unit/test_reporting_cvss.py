@@ -25,7 +25,10 @@ class TestSeverityBand:
         assert severity_band(3.0) == "LOW"
 
     def test_info(self):
-        assert severity_band(0.0) == "INFO"
+        # CVSS 4.0 spec: a 0.0 base score is rated NONE (the engine's own
+        # docstring — bands: 9.0-10.0 CRITICAL, 7.0-8.9 HIGH, 4.0-6.9 MEDIUM,
+        # 0.1-3.9 LOW, 0.0 NONE). INFO is a display-only concept, not a band.
+        assert severity_band(0.0) == "NONE"
 
 
 class TestCVSS31Base:

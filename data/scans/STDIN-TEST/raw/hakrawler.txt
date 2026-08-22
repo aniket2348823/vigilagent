@@ -1,2 +1,0 @@
-http://www.dvwa.co.uk/
-http://host.docker.internal:8080/login.php

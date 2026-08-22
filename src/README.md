@@ -11,28 +11,24 @@ src/
 ├── App.jsx              # Top-level router + auth gate + global providers
 ├── main.jsx             # React 18 root, mounts <App /> into #root
 ├── index.css            # Tailwind layers + global glass/nebula styles
-├── README.md            # ← this file
-│
-├── components/          # All page + presentational components
+├── README.md            # ← this file│   ├── components/          # All page + presentational components
 │   ├── ui/              # Reusable primitives (Button, Modal, Toast, …)
 │   ├── Dashboard.jsx    # Main scan dashboard
 │   ├── Scans.jsx        # Scan history list
 │   ├── NewScan.jsx      # Create-a-scan form
-│   ├── LiveMonitor.jsx  # Real-time agent activity feed
+│   ├── Vulnerabilities.jsx  # CVE/MITRE/SBOM correlation views
 │   ├── Library.jsx      # Read-only catalogue of agents + modules
 │   ├── Settings.jsx     # Account + 2FA toggles
 │   ├── Login.jsx        # 2FA gate
 │   ├── Navigation.jsx   # Top nav bar
 │   ├── ErrorBoundary.jsx
-│   ├── SeverityBadge.jsx
+│   ├── FindingDetailModal.jsx
 │   ├── SmoothScroll.jsx # Lenis wrapper (respects prefers-reduced-motion)
 │   ├── GlobalBackground.jsx
 │   └── AnimationWrapper.jsx
 │
 ├── hooks/
-│   ├── useWebSocket.js  # Singleton WS bridge (backoff + WS_GIVEUP)
-│   ├── useReconFeed.js  # Derived recon-event stream
-│   └── useMagnetic.js   # Pointer-magnet hover effect
+│   └── useWebSocket.js  # Singleton WS bridge (backoff + WS_GIVEUP)
 │
 ├── lib/
 │   ├── api.js           # API_BASE_URL, websocketUrl(), createScan(), …
@@ -112,9 +108,10 @@ are surfaced as user-visible Toasts instead of silent broken downloads.
 
 1. Create `src/components/MyPage.jsx`, importing `Navigation` and any UI
    primitives you need from `./ui`.
-2. Register the page in `src/App.jsx`:
+2. Register the page in `src/App.jsx` as a lazy route (keeps the initial
+   bundle small — `Suspense` is already wired around the page switcher):
    ```jsx
-   import MyPage from './components/MyPage';
+   const MyPage = lazy(() => import('./components/MyPage'));
    // …inside <AnimatePresence>:
    {currentPage === 'mypage' && <MyPage key="mypage" navigate={navigate} />}
    ```

@@ -1,9 +1,19 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# VIGILAGENT :: OPENROUTER CLIENT — GPT-OSS-20B INTEGRATION
+# VIGILAGENT :: NVIDIA CLIENT — NVIDIA NIM / BUILD.NVIDIA.COM INTEGRATION
 # ═══════════════════════════════════════════════════════════════════════════════
-# PURPOSE: Production-grade async client for OpenRouter API.
-#          Provides Final Arbitration, Exploit Planning, and Auto-Remediation
-#          reasoning via OpenAI GPT-OSS-20B (free model, cloud inference).
+# PURPOSE: Production-grade async client for the NVIDIA API (build.nvidia.com /
+#          NVIDIA NIM microservices). OpenAI-compatible chat-completions endpoint
+#          hosting the full NVIDIA model catalog (Llama, DeepSeek, Qwen, Nemotron,
+#          Mistral, Gemma, ...) — like OpenRouter, one key reaches many models.
+#          DEFAULT MODEL: NVIDIA Nemotron 3 Nano 30B (nvidia/nemotron-3-nano-30b-a3b)
+#          — benchmark-verified best under-50B tactical model for strict-JSON
+#          payload/validation workloads (4/4 in live tests, 1–5s latency).
+#          Controls reasoning via OpenAI-style `reasoning_effort`.
+#          A SECOND client (nvidia_strategic_client) reads NVIDIA_API_KEY_2 /
+#          NVIDIA_MODEL_2 and serves strategic work (planning, arbitration,
+#          reporting) — default llama-3.3-nemotron-super-49b-v1.
+#          Configured to act as the PRIMARY tactical LLM provider, with Gemini
+#          as the sole fallback (OpenRouter retired from the runtime chain).
 # ═══════════════════════════════════════════════════════════════════════════════
 
 import asyncio
@@ -16,29 +26,14 @@ from typing import Any
 
 import aiohttp
 
-logger = logging.getLogger("OPENROUTER")
-
-# ─── Configuration ────────────────────────────────────────────────────────────
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "google/gemma-4-26b-a4b-it:free"
-OPENROUTER_TIMEOUT = 120  # seconds
-MAX_RETRIES = 4
-_BASE_BACKOFF = 1.0
-_MAX_BACKOFF = 12.0
-_MAX_COOLDOWN = 60.0
-_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
-_MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB limit to prevent OOM
-
-
+# Shared system prompts + retry helper were previously imported from
+# backend.ai.openrouter. OpenRouter is retired from the runtime chain
+# (NVIDIA-only policy) — the definitions now live here so openrouter.py is
+# never imported at runtime. The file remains on disk for reference.
 def _parse_retry_after(headers) -> float | None:
     """Honour the server's Retry-After header (seconds only), capped."""
     raw = headers.get("Retry-After")
     if not raw:
-        return None
-    try:
-        value = float(raw)
-        return min(max(value, 0.0), _MAX_COOLDOWN)
-    except (TypeError, ValueError):
         return None
 
 # ─── Master System Prompts ────────────────────────────────────────────────────
@@ -115,14 +110,35 @@ OUTPUT FORMAT (STRICT JSON):
 
 Output ONLY valid JSON. No markdown. No extra text."""
 
+logger = logging.getLogger("NVIDIA")
 
-class OpenRouterClient:
+# ─── Configuration ────────────────────────────────────────────────────────────
+NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+NVIDIA_TIMEOUT = 120  # seconds
+MAX_RETRIES = 4
+_BASE_BACKOFF = 1.0
+_MAX_BACKOFF = 12.0
+_MAX_COOLDOWN = 60.0
+_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+_MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB limit to prevent OOM
+
+
+class NVIDIAClient:
     """
-    Production-grade async client for OpenRouter API.
-    Powers all high-level reasoning tasks via OpenAI GPT-OSS-20B (free model).
+    Production-grade async client for the NVIDIA API (build.nvidia.com).
+
+    OpenAI-compatible chat-completions endpoint hosting the full NVIDIA model
+    catalog. Acts as the PRIMARY tactical LLM provider (replacing Gemini);
+    Gemini remains as the sole fallback in the Cortex chain.
     """
 
-    def __init__(self, api_key: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        api_key_env: str = "NVIDIA_API_KEY",
+        model_env: str = "NVIDIA_MODEL",
+    ):
         # 1. Check direct argument
         # 2. Check current OS environment
         # 3. Load from .env file (Robust fix)
@@ -130,15 +146,42 @@ class OpenRouterClient:
 
         load_dotenv(override=True)
 
-        self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
+        self._api_key = api_key or os.environ.get(api_key_env, "")
+        # Read lazily so .env (loaded by load_dotenv above) is honoured even
+        # when the module was imported before the .env values were present.
+        self._model = model or os.environ.get(
+            model_env, "nvidia/nemotron-3-nano-30b-a3b"
+        )
+        # Thinking-token budget — Nemotron / DeepSeek-style models only.
+        # (Muse Glimmer uses reasoning_effort, not these.) Set to 0 to disable.
+        try:
+            self._min_thinking = int(os.environ.get("NVIDIA_MIN_THINKING_TOKENS", "1024") or "0")
+        except (TypeError, ValueError):
+            self._min_thinking = 1024
+        try:
+            self._max_thinking = int(os.environ.get("NVIDIA_MAX_THINKING_TOKENS", "2048") or "0")
+        except (TypeError, ValueError):
+            self._max_thinking = 2048
+        try:
+            self._max_output = int(os.environ.get("NVIDIA_MAX_OUTPUT_TOKENS", "2048") or "2048")
+        except (TypeError, ValueError):
+            self._max_output = 2048
+        # Muse Glimmer + Nemotron 3 family use OpenAI-style reasoning_effort
+        # instead of thinking-token bounds (min/max_thinking_tokens 400 on
+        # those models).
+        _effort = os.environ.get("NVIDIA_REASONING_EFFORT", "medium").strip().lower()
+        if _effort not in ("low", "medium", "high", "xhigh"):
+            logger.warning("NVIDIA: Invalid NVIDIA_REASONING_EFFORT=%r — using 'medium'", _effort)
+            _effort = "medium"
+        self._reasoning_effort = _effort
 
         # Security Guard: Detect if the key is still a placeholder
-        if self._api_key == "your_openrouter_api_key_here":
-            logger.warning("OPENROUTER: Key is still the placeholder! Please update .env")
+        if self._api_key in ("your_nvidia_api_key_here", "nvapi-...", "nvapi-"):
+            logger.warning("NVIDIA: Key is still the placeholder! Please update .env")
             self._api_key = ""
 
         self._session: aiohttp.ClientSession | None = None
-        self._session_lock = asyncio.Lock()  # FIX: Eagerly initialized lock prevents race condition
+        self._session_lock = asyncio.Lock()  # Eagerly initialized lock prevents race
         self._telemetry = {
             "calls": 0,
             "successes": 0,
@@ -149,9 +192,9 @@ class OpenRouterClient:
         }
 
         if self._api_key:
-            logger.info(f"OPENROUTER: Client initialized -> model={OPENROUTER_MODEL}")
+            logger.info(f"NVIDIA: Client initialized -> model={self._model}")
         else:
-            logger.warning("OPENROUTER: No valid API key found. Cloud reasoning disabled.")
+            logger.warning("NVIDIA: No valid API key found. Cloud reasoning disabled.")
 
     @property
     def is_available(self) -> bool:
@@ -160,7 +203,7 @@ class OpenRouterClient:
     async def _ensure_session(self):
         async with self._session_lock:
             if self._session is None or self._session.closed:
-                timeout = aiohttp.ClientTimeout(total=OPENROUTER_TIMEOUT)
+                timeout = aiohttp.ClientTimeout(total=NVIDIA_TIMEOUT)
                 self._session = aiohttp.ClientSession(timeout=timeout)
 
     async def call(
@@ -170,17 +213,20 @@ class OpenRouterClient:
         temperature: float = 0.1,
         max_tokens: int = 1500,
         scan_ctx=None,
+        model: str | None = None,
         json_mode: bool = False,
     ) -> str:
         """
-        Send a prompt to GPT-OSS-20B via OpenRouter.
+        Send a prompt to an NVIDIA-hosted model.
         Returns the raw text response or an error string.
 
-        ``json_mode`` requests ``response_format`` json_object where the
-        upstream model/provider supports it (silently ignored otherwise).
+        ``json_mode`` pins ``response_format`` to ``json_object`` (verified
+        live on nemotron-3-nano-30b-a3b) so tactical calls that need
+        structured output get valid JSON instead of prose that the Cortex
+        JSON extractor then has to guess at.
         """
         if not self._api_key:
-            return "[OPENROUTER OFFLINE] No API key configured."
+            return "[NVIDIA OFFLINE] No API key configured. Set NVIDIA_API_KEY."
 
         self._telemetry["calls"] += 1
         call_start = _time.perf_counter()
@@ -194,67 +240,86 @@ class OpenRouterClient:
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://vigilagent.local",
-            "X-Title": "Vigilagent",
         }
 
         payload = {
-            "model": OPENROUTER_MODEL,
+            "model": model or self._model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": temperature,
-            "max_tokens": min(max_tokens, 4096),
-            "top_p": 0.9,
+            "max_tokens": min(max_tokens, self._max_output),
+            "top_p": 0.95,
+            "frequency_penalty": 0,
+            "presence_penalty": 0,
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
+        # Reasoning-model tuning. Two styles exist in the NVIDIA catalog
+        # (both verified live):
+        #   - OpenAI-style `reasoning_effort` (low/medium/high/xhigh):
+        #     Muse Glimmer + Nemotron 3 family. min/max_thinking_tokens are
+        #     REJECTED with HTTP 400 on these.
+        #   - Legacy `min/max_thinking_tokens` bounds: only the old
+        #     nemotron-nano-9b/12b-v2 line.
+        # Sent ONLY for reasoning models — keeps plain-model switches from 400s.
+        _model_l = (model or self._model).lower()
+        _effort_style = (
+            ("glimmer" in _model_l)
+            or ("muse" in _model_l)
+            or ("nemotron-3" in _model_l)
+        )
+        _token_style = ("nemotron-nano-9b" in _model_l) or ("nemotron-nano-12b" in _model_l)
+        if _effort_style:
+            payload["reasoning_effort"] = self._reasoning_effort
+        elif _token_style and (self._min_thinking > 0 or self._max_thinking > 0):
+            if self._min_thinking > 0:
+                payload["min_thinking_tokens"] = self._min_thinking
+            if self._max_thinking > 0:
+                payload["max_thinking_tokens"] = self._max_thinking
 
         for attempt in range(MAX_RETRIES + 1):
             try:
-                async with self._session.post(OPENROUTER_API_URL, headers=headers, json=payload) as response:
+                async with self._session.post(NVIDIA_API_URL, headers=headers, json=payload) as response:
                     if response.status == 200:
-                        # FIX: Check response size before reading to prevent OOM
+                        # Check response size before reading to prevent OOM
                         content_length = response.headers.get("Content-Length")
                         if content_length:
                             try:
                                 if int(content_length) > _MAX_RESPONSE_BYTES:
                                     self._telemetry["errors"] += 1
                                     logger.error(
-                                        "OPENROUTER: Response Content-Length too large: %s bytes", content_length
+                                        "NVIDIA: Response Content-Length too large: %s bytes", content_length
                                     )
-                                    return "[OPENROUTER ERROR] Response exceeded size limit."
+                                    return "[NVIDIA ERROR] Response exceeded size limit."
                             except (ValueError, TypeError):
                                 pass
                         raw = await response.read()
                         if len(raw) > _MAX_RESPONSE_BYTES:
                             self._telemetry["errors"] += 1
-                            logger.error("OPENROUTER: Response too large (%d bytes)", len(raw))
-                            return "[OPENROUTER ERROR] Response exceeded size limit."
+                            logger.error("NVIDIA: Response too large (%d bytes)", len(raw))
+                            return "[NVIDIA ERROR] Response exceeded size limit."
                         data = json.loads(raw.decode("utf-8", errors="replace"))
-                        # content can legitimately be None (e.g. reasoning-only or
-                        # tool-call responses) — normalize safely; treat empty as
-                        # a retryable error rather than crashing or returning "".
+                        # Reasoning models may return content in either `content`
+                        # or `reasoning_content` — prefer content, fall back to
+                        # reasoning so a reasoning-only response isn't lost.
                         try:
                             message = (data.get("choices") or [{}])[0].get("message") or {}
                             result = message.get("content") or ""
-                            # Reasoning models (e.g. gpt-oss-20b, Nemotron 3) may return only
-                            # reasoning_content with empty content — fall back to
-                            # it so reasoning-only responses aren't discarded.
                             if not result.strip():
                                 result = message.get("reasoning_content") or ""
                         except (AttributeError, IndexError, TypeError):
                             result = ""
                         if not result.strip():
                             self._telemetry["errors"] += 1
-                            logger.warning("OPENROUTER: Empty content in response (attempt %d/%d)", attempt + 1, MAX_RETRIES)
+                            logger.warning("NVIDIA: Empty content in response (attempt %d/%d)", attempt + 1, MAX_RETRIES)
                             if attempt < MAX_RETRIES:
                                 await asyncio.sleep(
                                     min(_BASE_BACKOFF * (2**attempt), _MAX_BACKOFF) + random.uniform(0, 0.5)
                                 )
                                 continue
-                            return "[OPENROUTER ERROR] Empty content in response."
+                            return "[NVIDIA ERROR] Empty content in response."
 
                         # Track token usage
                         usage = data.get("usage", {})
@@ -266,7 +331,7 @@ class OpenRouterClient:
                         self._telemetry["total_latency"] += latency
 
                         logger.info(
-                            f"OPENROUTER: Call succeeded in {latency:.2f}s (tokens: {usage.get('total_tokens', 'N/A')})"
+                            f"NVIDIA: Call succeeded in {latency:.2f}s (tokens: {usage.get('total_tokens', 'N/A')})"
                         )
                         return result.strip()
 
@@ -280,7 +345,7 @@ class OpenRouterClient:
                             else min(_BASE_BACKOFF * (2**attempt), _MAX_BACKOFF) + random.uniform(0, 0.5)
                         )
                         logger.warning(
-                            "OPENROUTER: HTTP %s (retryable). Attempt %d/%d, retry in %.1fs",
+                            "NVIDIA: HTTP %s (retryable). Attempt %d/%d, retry in %.1fs",
                             response.status,
                             attempt + 1,
                             MAX_RETRIES,
@@ -291,27 +356,31 @@ class OpenRouterClient:
 
                     else:
                         error_text = await response.text()
-                        logger.error(f"OPENROUTER: HTTP {response.status} — {error_text[:200]}")
+                        logger.error(f"NVIDIA: HTTP {response.status} — {error_text[:200]}")
                         self._telemetry["errors"] += 1
-                        return f"[OPENROUTER ERROR] HTTP {response.status}: {error_text[:100]}"
+                        return f"[NVIDIA ERROR] HTTP {response.status}: {error_text[:100]}"
 
             except asyncio.CancelledError:
                 raise
             except aiohttp.ClientConnectorError:
                 self._telemetry["errors"] += 1
-                logger.error("OPENROUTER: Cannot connect to OpenRouter API")
-                return "[OPENROUTER OFFLINE] Cannot connect to OpenRouter API."
+                logger.error("NVIDIA: Cannot connect to NVIDIA API")
+                return "[NVIDIA OFFLINE] Cannot connect to NVIDIA API."
             except Exception as e:
                 self._telemetry["errors"] += 1
-                logger.error(f"OPENROUTER: Unexpected error — {type(e).__name__}: {e}")
+                logger.error(f"NVIDIA: Unexpected error — {type(e).__name__}: {e}")
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(min(_BASE_BACKOFF * (2**attempt), _MAX_BACKOFF) + random.uniform(0, 0.5))
                     continue
-                return f"[OPENROUTER ERROR] {type(e).__name__}: {str(e)[:100]}"
+                return f"[NVIDIA ERROR] {type(e).__name__}: {str(e)[:100]}"
 
-        return "[OPENROUTER ERROR] Max retries exceeded."
+        return "[NVIDIA ERROR] Max retries exceeded."
 
     # ─── Specialized Call Methods ─────────────────────────────────────────────
+
+    async def generate_narrative(self, prompt: str, scan_ctx=None) -> str:
+        """Generate narrative text for reports and summaries."""
+        return await self.call(prompt, temperature=0.3, max_tokens=500, scan_ctx=scan_ctx)
 
     async def arbitrate(self, candidate_data: dict[str, Any], scan_ctx=None) -> str:
         """Final arbitration on a vulnerability candidate."""
@@ -420,8 +489,20 @@ Output ONLY the code."""
         """Close HTTP session."""
         if self._session and not self._session.closed:
             await self._session.close()
-            logger.info("OPENROUTER: Session closed.")
+            logger.info("NVIDIA: Session closed.")
 
 
 # ─── Global Singleton ─────────────────────────────────────────────────────────
-openrouter_client = OpenRouterClient()
+nvidia_client = NVIDIAClient()
+
+# Second NVIDIA instance — STRATEGIC engine (key 2 / model 2). Reads
+# NVIDIA_API_KEY_2 + NVIDIA_MODEL_2 so one account's tactical key and a
+# separate strategic key can run concurrently. Defaults to the 49B strategic
+# model (llama-3.3-nemotron-super-49b-v1) when NVIDIA_MODEL_2 is unset.
+_nvidia_key_2 = os.environ.get("NVIDIA_API_KEY_2", "") or os.environ.get("NVIDIA_API_KEY", "")
+nvidia_strategic_client = NVIDIAClient(
+    api_key=_nvidia_key_2,
+    model=os.environ.get("NVIDIA_MODEL_2", "nvidia/llama-3.3-nemotron-super-49b-v1"),
+    api_key_env="NVIDIA_API_KEY_2",
+    model_env="NVIDIA_MODEL_2",
+)

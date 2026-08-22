@@ -12,6 +12,13 @@ from typing import TYPE_CHECKING, Any
 
 from backend.agents.alpha_recon.models import ReconEntity, SourceRef, stable_id
 from backend.core.database import db_manager
+
+# Ensure the Alpha V6 recon DB extensions (create_recon_relationship, tool
+# outputs, OOB interactions, phase updates) are patched onto EliteDBManager.
+# The patch only takes effect if this module is imported — without it the
+# entity engine crashes on every ingest with "no attribute
+# 'create_recon_relationship'" and recon findings never reach the DB/graph.
+from backend.agents.alpha_recon import db_extensions  # noqa: F401  (side-effect: patches EliteDBManager)
 from backend.core.unified_knowledge_graph import (
     EdgeKind,
     KGNode,

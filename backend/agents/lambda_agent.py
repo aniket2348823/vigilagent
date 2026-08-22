@@ -206,6 +206,17 @@ class LambdaAgent:
         """Start the agent (BaseAgent-compatible lifecycle)."""
         self._is_active = True
         self.active = True
+        # FULL-SWARM: Lambda previously never subscribed to the bus, so its
+        # SAST pipeline was only reachable via the code-analysis API — it never
+        # participated in live pentests. Wire the JOB_ASSIGNED handler now so
+        # the orchestrator's lambda_js_sast jobs reach it.
+        if self.bus is not None:
+            try:
+                from backend.core.hive import EventType
+
+                self.bus.subscribe(EventType.JOB_ASSIGNED, self.handle_job)
+            except Exception as exc:
+                logger.debug("LambdaAgent bus subscription failed: %s", exc)
         logger.info(f"🤖 {self.name} is ONLINE. Intelligence backbone synced.")
 
     async def stop(self):
@@ -213,6 +224,80 @@ class LambdaAgent:
         self._is_active = False
         self.active = False
         logger.info(f"💤 {self.name} is OFFLINE.")
+
+    async def handle_job(self, event) -> None:
+        """Process lambda_js_sast jobs: run SAST over JS assets from recon.
+
+        Fetches each JS URL handed over by the orchestrator (or falls back to
+        the assigned target URL), analyzes the script source, and bridges any
+        dangerous findings into the runtime-validation loop via
+        VULN_CANDIDATE (same pipeline as the code-analysis API path).
+        """
+        try:
+            from backend.core.protocol import AgentID, JobPacket
+
+            packet = JobPacket(**event.payload)
+        except Exception as exc:
+            logger.debug("LambdaAgent job parse failed: %s", exc)
+            return
+        if packet.config.agent_id != AgentID.LAMBDA:
+            return
+        if packet.config.module_id not in ("lambda_js_sast", "lambda_sast"):
+            return
+
+        params = packet.config.params or {}
+        js_urls = list(params.get("js_urls") or []) or [packet.target.url]
+        scan_id = getattr(event, "scan_id", "GLOBAL")
+
+        try:
+            import aiohttp
+        except Exception:
+            return
+
+        total_findings = 0
+        timeout = aiohttp.ClientTimeout(total=15)
+        for js_url in js_urls[:10]:
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(js_url, timeout=timeout, ssl=False) as resp:
+                        if resp.status != 200:
+                            continue
+                        code = await resp.text()
+            except Exception:
+                continue
+            if not code or not code.strip():
+                continue
+            try:
+                result = await self.analyze_and_bridge(
+                    code,
+                    language="javascript",
+                    scan_id=scan_id,
+                    endpoint_hint=js_url,
+                    filename=js_url.rsplit("/", 1)[-1],
+                )
+                total_findings += len(result.get("findings") or [])
+            except Exception as exc:
+                logger.debug("LambdaAgent analyze failed for %s: %s", js_url, exc)
+
+        # Always complete the job so the planner/lifecycle sees the work done.
+        if self.bus is not None:
+            try:
+                from backend.core.hive import EventType, HiveEvent
+
+                await self.bus.publish(
+                    HiveEvent(
+                        type=EventType.JOB_COMPLETED,
+                        source=self.agent_id,
+                        scan_id=scan_id,
+                        payload={
+                            "job_id": packet.id,
+                            "status": "SUCCESS",
+                            "data": {"js_urls": len(js_urls), "sast_findings": total_findings},
+                        },
+                    )
+                )
+            except Exception as exc:
+                logger.debug("LambdaAgent JOB_COMPLETED publish failed: %s", exc)
 
     async def analyze(self, code: str, language: str = "python", filename: str = "") -> list[dict]:
         """Analyze source code for security vulnerabilities.

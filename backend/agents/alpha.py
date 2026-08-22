@@ -18,7 +18,6 @@ Responsibilities (Architecture §5.1.1 — Alpha Unified):
 
 import logging
 
-from backend.agents.alpha_recon import AlphaOrchestrator
 from backend.ai.cortex import get_cortex_engine
 from backend.core.browser_agent import BrowserEnabledAgent
 from backend.core.config import settings
@@ -31,6 +30,11 @@ logger = logging.getLogger("AgentAlpha")
 class AlphaAgent(BrowserEnabledAgent):
     """Unified Alpha recon commander over the single recon spine."""
 
+    # Long-running WORK handler: handle_target_acquired runs the FULL recon
+    # pipeline (minutes). The generic 30s event-bus handler ceiling would
+    # cancel it mid-phase (observed: nmap/tlsx killed at 0 bytes) — opt out.
+    _HANDLER_TIMEOUT_SECONDS = None
+
     def __init__(self, bus):
         super().__init__("agent_alpha", bus)
         self.cortex = get_cortex_engine()
@@ -39,6 +43,11 @@ class AlphaAgent(BrowserEnabledAgent):
         # spine's browser_recon module can drive OpenClaw/PinchTab during the
         # async HTTP phase without forcing browser init at construction time
         # (Architecture §5.1.1).
+        # AlphaOrchestrator imported lazily: it drags in the whole alpha_recon
+        # toolchain (~9s of import time). Construction happens once per scan,
+        # so the deferral only saves boot time, never scan behavior.
+        from backend.agents.alpha_recon import AlphaOrchestrator
+
         self.alpha_recon = AlphaOrchestrator(bus, agent_name=self.name, browser_provider=lambda: self.browser)
         # Governance: throttle flag from Zeta (Architecture §5.2/§29.4).
         self._throttled = False

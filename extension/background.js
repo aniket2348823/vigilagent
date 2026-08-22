@@ -58,19 +58,48 @@ function scheduleSpyReconnect() {
 // ============================================================================
 
 let isBackendAlive = true;
-const HEALTH_CHECK_INTERVAL = 3000; // 3s heartbeat
+// Adaptive health poll: 5s while healthy, exponential backoff up to 30s
+// while the backend is down. A fixed 3s fetch forever hammered the backend
+// from every browser with the extension installed — even when idle.
+const HEALTH_CHECK_BASE_MS = 5000;
+const HEALTH_CHECK_MAX_MS = 30000;
+let healthCheckTimer = null;
+let healthCheckAttempts = 0;
+let lastHealthOk = true;
 
 async function checkBackendHealth() {
     try {
-        const res = await fetch(`${BACKEND_URL}/api/health`, { method: 'GET', cache: 'no-store' });
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3000); // hung backend can't block the poll
+        const res = await fetch(`${BACKEND_URL}/api/health`, { method: 'GET', cache: 'no-store', signal: controller.signal });
+        clearTimeout(timer);
         isBackendAlive = res.ok;
+        if (res.ok) {
+            healthCheckAttempts = 0;
+            lastHealthOk = true;
+        } else {
+            lastHealthOk = false;
+        }
     } catch (e) {
+        clearTimeout(timer);
         isBackendAlive = false;
+        lastHealthOk = false;
     }
+    scheduleHealthCheck();
 }
 
-// Start health polling to recover if backend Restarts
-setInterval(checkBackendHealth, HEALTH_CHECK_INTERVAL);
+function scheduleHealthCheck() {
+    clearTimeout(healthCheckTimer);
+    // Healthy → fixed 5s cadence. Down → exponential backoff (5s → 30s).
+    const delay = lastHealthOk
+        ? HEALTH_CHECK_BASE_MS
+        : Math.min(HEALTH_CHECK_MAX_MS, HEALTH_CHECK_BASE_MS * (2 ** healthCheckAttempts));
+    healthCheckAttempts += 1;
+    healthCheckTimer = setTimeout(checkBackendHealth, delay);
+}
+
+// Start the adaptive health polling loop
+scheduleHealthCheck();
 
 /**
  * SafeFetch: Prevents "Failed to fetch" spam by checking backend status first.

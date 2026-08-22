@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 # Initialize Environment
-load_dotenv()
+load_dotenv(override=True)
 
 
 def vigil_env(name: str, default: str = "") -> str:
@@ -30,6 +30,27 @@ def vigil_env(name: str, default: str = "") -> str:
         )
         return legacy
     return default
+
+
+def _inject_redis_password(url: str) -> str:
+    """Merge ``REDIS_PASSWORD`` into ``REDIS_URL`` when the URL carries no credentials.
+
+    The Docker Compose Redis server runs with ``--requirepass``. If the backend
+    is started from a shell that only exports ``REDIS_PASSWORD`` (or a
+    ``REDIS_URL`` without the password), redis-py raises AuthenticationError
+    (or stalls on BRPOP) instead of connecting. Injecting the password keeps
+    the two env vars consistent no matter how the process is launched.
+    """
+    from urllib.parse import urlparse, urlunparse
+
+    password = os.getenv("REDIS_PASSWORD", "")
+    if not password or not url:
+        return url
+    parsed = urlparse(url)
+    if "@" in parsed.netloc:
+        return url  # credentials already present
+    parsed = parsed._replace(netloc=f":{password}@{parsed.netloc}")
+    return urlunparse(parsed)
 
 
 # --- VUL AGENT: UNIFIED PATH RESOLUTION (V6-OMEGA) ---
@@ -160,7 +181,10 @@ class GlobalSettings:
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
+    NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
+    NVIDIA_API_KEY_2: str = os.getenv("NVIDIA_API_KEY_2", "")
+    NVIDIA_MODEL_2: str = os.getenv("NVIDIA_MODEL_2", "nvidia/llama-3.3-nemotron-super-49b-v1")
+    REDIS_URL: str = _inject_redis_password(os.getenv("REDIS_URL", "redis://localhost:6379"))
     SCAN_TIMEOUT: int = max(1, int(os.getenv("SCAN_TIMEOUT", "3600") or "3600"))  # Default 1 hour
     ALPHA_ENABLE_V6: bool = os.getenv("ALPHA_ENABLE_V6", "true").lower() == "true"
     ALPHA_TOOL_ROOT: str = os.getenv("ALPHA_TOOL_ROOT", os.path.join(PROJECT_ROOT, "data"))
@@ -177,6 +201,8 @@ class GlobalSettings:
         == "true"
     )
     ALPHA_TOOL_TIMEOUT_SECONDS: int = int(os.getenv("ALPHA_TOOL_TIMEOUT_SECONDS", "3600"))
+    # Bounded concurrency for within-phase parallel recon tool execution (DAG).
+    ALPHA_MAX_PARALLEL_RECON: int = max(1, int(os.getenv("ALPHA_MAX_PARALLEL_RECON", "4") or "4"))
     ALPHA_ENABLE_PINCHTAB: bool = os.getenv("ALPHA_ENABLE_PINCHTAB", "true").lower() == "true"
     ALPHA_RECON_VIA_PLANNER: bool = os.getenv("ALPHA_RECON_VIA_PLANNER", "true").lower() == "true"
     ALPHA_RECON_TIMEOUT_SECONDS: int = int(os.getenv("ALPHA_RECON_TIMEOUT_SECONDS", "3600"))
@@ -185,6 +211,24 @@ class GlobalSettings:
     # was able to emit. Read by the orchestrator at scan time
     # (Architecture §29.13: never starve the attack phase on a slow recon).
     RECON_MAX_WAIT_SECONDS: int = int(os.getenv("RECON_MAX_WAIT_SECONDS", "3600"))
+    # Bounded-burst pacing for the ~70-job swarm dispatch: DISPATCH_BURST_SIZE
+    # jobs publish immediately, then a DISPATCH_BURST_DELAY_SECONDS pause lets
+    # the CommandLane drain before the next burst. Prevents the instant lane
+    # saturation that made Zeta's governor oscillate THROTTLE/RESUME.
+    DISPATCH_BURST_SIZE: int = max(1, int(os.getenv("DISPATCH_BURST_SIZE", "8") or "8"))
+    DISPATCH_BURST_DELAY_SECONDS: float = max(0.0, float(os.getenv("DISPATCH_BURST_DELAY_SECONDS", "0.05") or "0.05"))
+    # Early-stop rule: end the exploitation phase once a scan has confirmed
+    # SCAN_EARLY_STOP_MIN_FINDINGS findings AND gone quiet (no new
+    # VULN_CONFIRMED signal) for SCAN_EARLY_STOP_IDLE_SECONDS — but never
+    # before SCAN_EARLY_STOP_MIN_ELAPSED seconds have passed. Set min findings
+    # to 0 to disable the rule entirely.
+    SCAN_EARLY_STOP_MIN_FINDINGS: int = max(0, int(os.getenv("SCAN_EARLY_STOP_MIN_FINDINGS", "5") or "5"))
+    SCAN_EARLY_STOP_IDLE_SECONDS: float = max(
+        5.0, float(os.getenv("SCAN_EARLY_STOP_IDLE_SECONDS", "45") or "45")
+    )
+    SCAN_EARLY_STOP_MIN_ELAPSED: float = max(
+        10.0, float(os.getenv("SCAN_EARLY_STOP_MIN_ELAPSED", "90") or "90")
+    )
     ALPHA_EXPLICIT_AUTHORIZATION: bool = os.getenv("ALPHA_EXPLICIT_AUTHORIZATION", "false").lower() == "true"
     PINCHTAB_BASE_URL: str = os.getenv("PINCHTAB_BASE_URL", "http://127.0.0.1:9867")
     ALPHA_ENABLE_NEO4J: bool = os.getenv("ALPHA_ENABLE_NEO4J", "false").lower() == "true"
@@ -209,9 +253,15 @@ class GlobalSettings:
     RECON_DOCKER_IMAGE: str = vigil_env("RECON_DOCKER_IMAGE", "vigilagent/recon:latest")
     RECON_DOCKER_NETWORK: str = vigil_env("RECON_DOCKER_NETWORK", "bridge")
     SANDBOX_IMAGE: str = vigil_env("SANDBOX_IMAGE", "python:3.12-slim")
-    # Two-LLM policy (§11): only these two providers are reachable.
-    STRATEGIC_MODEL: str = vigil_env("STRATEGIC_MODEL", "openai/gpt-oss-20b")
-    TACTICAL_MODEL: str = vigil_env("TACTICAL_MODEL", "gemini-2.5-flash")
+    # Multi-LLM policy (§11): NVIDIA (primary tactical), Gemini (fallback) and
+    # OpenRouter (strategic) are the only reachable providers.
+    # Purpose-split NVIDIA pair (benchmark-verified under-50B):
+    #   TACTICAL  = Nemotron 3 Nano 30B  (nvidia/nemotron-3-nano-30b-a3b) —
+    #               fast strict-JSON payloads, WAF mutation, validation pass 1
+    #   STRATEGIC = Llama 3.3 Nemotron Super 49B (llama-3.3-nemotron-super-49b-v1)
+    #               via NVIDIA_API_KEY_2 — planning, arbitration, reporting
+    STRATEGIC_MODEL: str = vigil_env("STRATEGIC_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
+    TACTICAL_MODEL: str = vigil_env("TACTICAL_MODEL", "nvidia/nemotron-3-nano-30b-a3b")
 
 
 settings = GlobalSettings()
@@ -219,9 +269,14 @@ settings = GlobalSettings()
 
 @dataclass
 class RedisConfig:
-    url: str = os.getenv("REDIS_URL", "redis://localhost:6379")
-    max_connections: int = 10
-    socket_timeout: int = 5
+    url: str = _inject_redis_password(os.getenv("REDIS_URL", "redis://localhost:6379"))
+    # Mirrors backend.core.redis_client.RedisConfig — pool sized for the full
+    # 13-agent swarm (pubsub + brpop + locks) so parallel scan load does not
+    # exhaust connections or kill blocked reads (Chi audit loop timeouts).
+    max_connections: int = 150
+    socket_timeout: int = 15
+    socket_connect_timeout: int = 10
+    health_check_interval: int = 20
 
 
 @dataclass

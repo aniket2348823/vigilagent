@@ -182,18 +182,18 @@ class RemediationEngine:
     def __init__(self):
         self.detector = FrameworkDetector()
         self.patch_gen = PatchGenerator()
-        self._openrouter = None  # Lazy import to avoid circular deps
+        self._nvidia = None  # Lazy import to avoid circular deps
 
-    def _get_openrouter(self):
-        """Lazy-load OpenRouter client."""
-        if self._openrouter is None:
+    def _get_nvidia(self):
+        """Lazy-load the NVIDIA STRATEGIC client (49B) — OpenRouter retired."""
+        if self._nvidia is None:
             try:
-                from backend.ai.openrouter import openrouter_client
+                from backend.ai.nvidia import nvidia_strategic_client
 
-                self._openrouter = openrouter_client
+                self._nvidia = nvidia_strategic_client
             except ImportError:
-                logger.warning("REMEDIATION: OpenRouter client not available.")
-        return self._openrouter
+                logger.warning("REMEDIATION: NVIDIA client not available.")
+        return self._nvidia
 
     def generate_local_fix(self, finding: dict[str, Any]) -> dict[str, Any]:
         """
@@ -246,18 +246,19 @@ class RemediationEngine:
 
     async def generate_ai_fix(self, finding: dict[str, Any]) -> dict[str, Any]:
         """
-        Generate remediation using GPT-OSS-20B via OpenRouter (high quality, async).
-        Falls back to local templates if OpenRouter is unavailable.
+        Generate remediation using the NVIDIA STRATEGIC engine (49B, async).
+        Falls back to local templates if NVIDIA is unavailable. OpenRouter
+        retired from the runtime chain (NVIDIA-only policy).
         """
-        openrouter = self._get_openrouter()
-        if not openrouter or not openrouter.is_available:
-            logger.info("REMEDIATION: OpenRouter unavailable, using local templates.")
+        nvidia = self._get_nvidia()
+        if not nvidia or not nvidia.is_available:
+            logger.info("REMEDIATION: NVIDIA unavailable, using local templates.")
             return self.generate_local_fix(finding)
 
         framework = self.detector.detect(finding)
 
         try:
-            raw_result = await openrouter.generate_remediation(finding, framework=framework)
+            raw_result = await nvidia.generate_remediation(finding, framework=framework)
 
             # Parse the JSON response
             if "```json" in raw_result:

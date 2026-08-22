@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import logging
 import time
 import urllib.parse
@@ -95,7 +96,7 @@ class SigmaAgent(
         # Technique → candidate Sigma-exclusive CLI validators, in preference
         # order. Only tools in SIGMA_TOOLS can be dispatched here.
         self._technique_tool_map = {
-            "tech_sqli": [],  # custom in-process module preferred
+            "tech_sqli": ["sqlmap"],  # sqlmap preferred; in-process module fallback
             "tech_jwt": [],
             "tech_auth_bypass": [],
             "recon_nuclei": ["nuclei"],  # Sigma-exclusive
@@ -103,6 +104,8 @@ class SigmaAgent(
             "tech_xss": ["dalfox"],  # Sigma-exclusive
             "tech_cve": ["nuclei"],  # Sigma-exclusive
             "tech_fingerprint": ["httpx", "whatweb", "wafw00f"],  # all Sigma-exclusive
+            "server_scan": ["nikto"],  # web server misconfig scanning
+            "cms_scan": ["wpscan"],  # WordPress detection/scanning
         }
         # Per-path reliability ledger (Architecture §29: "update tool
         # reliability"). Keyed by path id, e.g. "cli:nuclei", "module:tech_sqli".
@@ -319,7 +322,15 @@ class SigmaAgent(
     async def _run_cli_validation(self, vp: dict, packet, scan_id: str) -> None:
         """Run a CLI validation tool via the governed Terminal Engine
         (Architecture §5.2, §8, §29.11 item 4: Sigma access to governed terminal
-        execution). argv-only, scope-checked, budgeted, audited."""
+        execution). argv-only, scope-checked, budgeted, audited.
+
+        The seeder's authenticated session (packet.target.headers Cookie) is
+        forwarded to every CLI tool so they validate the REAL logged-in app
+        instead of bouncing off the login redirect. Nuclei gets the tuned,
+        bounded flag set (same -as auto-scan used by recon) so a single target
+        finishes inside the watchdog instead of a 5-minute full sweep.
+        Confirmed findings in nuclei/dalfox output are published as
+        VULN_CONFIRMED so they reach the dashboard and report."""
         from pathlib import Path
 
         from backend.core.iteration_budget import budget_config
@@ -327,30 +338,134 @@ class SigmaAgent(
 
         tool = vp.get("tool")
         url = packet.target.url
+        # Nuclei templates carry their own relative paths (login.php, setup.php,
+        # exposed-panel probes). Pointing nuclei at the seeded deep URL (e.g.
+        # /vulnerabilities/sqli/?id=1) makes every template test THAT page only —
+        # the dvwa-default-login template would never reach /login.php and the
+        # run returns 0 findings. Run nuclei against the origin instead so
+        # templates enumerate the full app surface.
+        parsed_url = urllib.parse.urlsplit(url)
+        origin = f"{parsed_url.scheme}://{parsed_url.netloc}/" if parsed_url.scheme else url
         out = Path("data") / "scans" / scan_id / "sigma" / f"{tool}.out"
+        # Forward the seeder's auth context (Cookie/Authorization) so CLI
+        # validators hit the authenticated application.
+        headers = dict(packet.target.headers or {})
+        cookie = headers.get("Cookie") or headers.get("cookie") or ""
+        auth_header = headers.get("Authorization") or headers.get("authorization") or ""
+        nuclei_h = []
+        dalfox_h = []
+        whatweb_h = []
+        httpx_h = []
+        wafw00f_h = []
+        # wafw00f's -H takes a HEADERS FILE path, not an inline header — write
+        # the auth context to a file and pass that (a bare `-H 'Cookie: ...'`
+        # makes wafw00f try to open the literal string as a file and exit 2).
+        wafw00f_h = []
+        if cookie:
+            nuclei_h = ["-H", f"Cookie: {cookie}"]
+            dalfox_h = ["--header", f"Cookie: {cookie}"]
+            whatweb_h = ["--header", f"Cookie: {cookie}"]
+            httpx_h = ["-H", f"Cookie: {cookie}"]
+            hf = Path("data") / "scans" / scan_id / "sigma" / "wafw00f_headers.txt"
+            hf.parent.mkdir(parents=True, exist_ok=True)
+            hf.write_text(f"Cookie: {cookie}\n", encoding="utf-8")
+            wafw00f_h = ["-H", str(hf)]
+        elif auth_header:
+            nuclei_h = ["-H", f"Authorization: {auth_header}"]
+            dalfox_h = ["--header", f"Authorization: {auth_header}"]
+            whatweb_h = ["--header", f"Authorization: {auth_header}"]
+            httpx_h = ["-H", f"Authorization: {auth_header}"]
+            hf = Path("data") / "scans" / scan_id / "sigma" / "wafw00f_headers.txt"
+            hf.parent.mkdir(parents=True, exist_ok=True)
+            hf.write_text(f"Authorization: {auth_header}\n", encoding="utf-8")
+            wafw00f_h = ["-H", str(hf)]
+        # Nuclei runs in TWO passes: the fast, deterministic default-credential
+        # pass (-tags default-login — the single `-as` auto-scan sweep reliably
+        # MISSES templates like dvwa-default-login due to per-template
+        # two-request session-token races at sweep concurrency), then a bounded
+        # general CVE sweep for broad coverage. Both use the tuned bounded flag
+        # set (rl/c concurrency caps, exclude fuzz/dos) so a single target
+        # finishes inside the 180s watchdog.
+        # NOTE: the default-login pass deliberately omits the forwarded Cookie.
+        # Those templates run their OWN session handshake (GET login.php ->
+        # extract PHPSESSID/user_token -> POST). A global `-H Cookie:` merges
+        # with the template's Cookie into a duplicate header that breaks the
+        # handshake (verified against DVWA: same flags match without the cookie,
+        # 0 findings with it). Default-credential checks need no prior auth
+        # anyway. The general CVE sweep DOES forward the cookie so authenticated
+        # templates test the real logged-in surface.
         argv_map = {
-            "nuclei": ["nuclei", "-u", url, "-severity", "critical,high,medium", "-jsonl", "-silent"],
-            "httpx": ["httpx", "-u", url, "-tech-detect", "-status-code", "-json", "-silent"],
-            "dalfox": ["dalfox", "url", url, "--format", "json", "--silence"],
-            "whatweb": ["whatweb", "--log-json=-", url],
-            "wafw00f": ["wafw00f", url],
+            "nuclei": [
+                [                    "nuclei", "-u", origin, "-tags", "default-login",
+                    "-severity", "critical,high,medium",
+                    "-timeout", "5", "-retries", "0", "-c", "1",
+                    "-stats", "-stats-interval", "15",
+                    "-exclude-tags", "fuzz,dos", "-jsonl", "-silent",
+                ],
+                [
+                    "nuclei", "-u", origin, "-severity", "critical,high",
+                    "-timeout", "5", "-retries", "0", "-rl", "150", "-c", "15",
+                    "-stats", "-stats-interval", "20",
+                    "-exclude-tags", "fuzz,dos", "-jsonl", "-silent", *nuclei_h,
+                ],
+            ],
+            "httpx": [["httpx", "-u", url, "-tech-detect", "-status-code", "-json", "-silent", *httpx_h]],
+            "dalfox": [["dalfox", "url", url, "--format", "json", "--silence", "--skip-headless", *dalfox_h]],
+            "whatweb": [["whatweb", "--log-json=-", url, *whatweb_h]],
+            "wafw00f": [["wafw00f", url, *wafw00f_h]],
+            # sqlmap: bounded to a single GET test on the seeded URL; the auth
+            # cookie rides along so DVWA's login-gated SQLi pages are actually
+            # testable. --batch avoids interactive prompts; --timeout + --retries
+            # bound the runtime so the whole pass stays inside the watchdog.
+            # --fresh-queries: sqlmap caches per-target results in its session
+            # store and replays them on re-scans of the same URL (stale findings
+            # dated from previous runs were observed); force a live re-test.
+            "sqlmap": [
+                [
+                    "sqlmap", "-u", url, "--batch", "--level", "1", "--risk", "1",
+                    "--timeout", "8", "--retries", "0", "--threads", "2",
+                    "--fresh-queries",
+                    "--output-dir", str(Path("data") / "scans" / scan_id / "sigma" / "sqlmap"),
+                    *( [] if not cookie else ["--cookie", cookie] ),
+                ]
+            ],
+            # nikto: quick web-server scan, JSON output for the parser.
+            "nikto": [
+                ["nikto", "-h", url, "-nointeractive", "-Format", "json", "-o", str(out)]
+            ],
+            # wpscan: WordPress only — fast no-api scan, safe checks only.
+            "wpscan": [
+                ["wpscan", "--url", url, "--no-banner", "--random-user-agent", "--disable-tls-checks", "--format", "json"]
+            ],
         }
-        argv = argv_map.get(tool)
-        if not argv:
+        passes = argv_map.get(tool)
+        if not passes:
             return
-        budget = budget_config.make("commander", label=f"sigma:{tool}")
-        result = await terminal_engine.run(
-            argv,
-            scan_id=scan_id,
-            agent=self.name,
-            output_path=out,
-            timeout_seconds=180,
-            budget=budget,
-            parser_hint="jsonl",
-        )
-        # Reliability feedback (Architecture §29: "update tool reliability"):
-        # the governed result's status feeds the next dispatch decision.
-        self._record_path_outcome(f"cli:{tool}", success=(result.status == "finished"))
+        # Multi-pass tools write to per-pass files (second pass must not
+        # clobber the first); finding parsing merges all pass outputs below.
+        results = []
+        for idx, argv in enumerate(passes):
+            pass_out = out if len(passes) == 1 else out.with_name(f"{out.stem}_p{idx + 1}{out.suffix}")
+            budget = budget_config.make("commander", label=f"sigma:{tool}:{idx + 1}")
+            result = await terminal_engine.run(
+                argv,
+                scan_id=scan_id,
+                agent=self.name,
+                output_path=pass_out,
+                timeout_seconds=180,
+                budget=budget,
+                parser_hint="jsonl",
+            )
+            results.append(result)
+            # Reliability feedback (Architecture §29: "update tool reliability"):
+            # the governed result's status feeds the next dispatch decision.
+            # wpscan exits 4 on non-WordPress targets — that's a CORRECT verdict
+            # ("remote site is up but not WordPress"), not a tool failure, so it
+            # must not poison the reliability scorer into dropping wpscan.
+            _ok = result.status == "finished" or (
+                tool == "wpscan" and result.exit_code == 4
+            )
+            self._record_path_outcome(f"cli:{tool}", success=_ok)
         await self.bus.publish(
             HiveEvent(
                 type=EventType.LIVE_ATTACK,
@@ -360,10 +475,140 @@ class SigmaAgent(
                     "url": url,
                     "arsenal": f"Terminal:{tool}",
                     "action": "Governed CLI validation",
-                    "payload": result.status,
+                    "payload": ",".join(r.status for r in results),
                 },
             )
         )
+        # Surface REAL findings from validation output as VULN_CONFIRMED so
+        # the dashboard/report capture them. Each tool emits a different shape:
+        #  - nuclei/dalfox: JSONL, one finding per line (info dict + template-id)
+        #  - nikto: plain-text report, finding lines are "+ [NNNNN] /path: msg"
+        #  - wpscan: single JSON doc (vulnerabilities array / scan_aborted)
+        #  - sqlmap: text "parameter 'x' is vulnerable" + Parameter/Type/Payload
+        try:
+            for result in results:
+                if not (result.output_path and Path(result.output_path).exists()):
+                    continue
+                raw = Path(result.output_path).read_text(encoding="utf-8", errors="replace")
+
+                async def _publish(finding_type: str, f_url: str, severity: str, data: dict, evidence):
+                    await self.bus.publish(
+                        HiveEvent(
+                            type=EventType.VULN_CONFIRMED,
+                            source=self.name,
+                            scan_id=scan_id,
+                            payload={
+                                "type": f"{tool.upper()}:{finding_type}",
+                                "url": f_url or url,
+                                "severity": str(severity).title(),
+                                "data": data,
+                                "evidence": {"raw": evidence},
+                            },
+                        )
+                    )
+
+                if tool in ("nuclei", "dalfox"):
+                    # JSONL: one finding per line.
+                    for ln in raw.splitlines()[:50]:
+                        try:
+                            finding = json.loads(ln)
+                        except Exception:
+                            continue
+                        if not isinstance(finding, dict) or not finding.get("info"):
+                            continue
+                        info = finding.get("info", {}) if isinstance(finding.get("info"), dict) else {}
+                        template_id = str(finding.get("template-id") or info.get("name") or tool)
+                        sev = str(info.get("severity") or "high").lower()
+                        await _publish(
+                            template_id,
+                            str(finding.get("matched-at") or url),
+                            sev,
+                            {
+                                "tool": tool,
+                                "template_id": template_id,
+                                "matcher_name": info.get("name"),
+                                "tags": info.get("tags"),
+                                "matched_at": finding.get("matched-at"),
+                                "extractor": finding.get("extractor"),
+                            },
+                            finding.get("curl-command") or finding,
+                        )
+                elif tool == "nikto":
+                    # Plain-text report; finding lines carry a bracketed ID.
+                    for ln in raw.splitlines():
+                        ln = ln.strip()
+                        if not ln.startswith("+"):
+                            continue
+                        m = re.match(r"\+\s*\[\s*([0-9A-Za-z]+)\s*\]\s*(\S+):\s*(.+)", ln)
+                        if not m:
+                            continue
+                        _id, _path, _msg = m.group(1), m.group(2), m.group(3)
+                        if _id.upper() in ("SSL", "OSVDB", "SERVER"):
+                            continue
+                        await _publish(
+                            f"nikto-{_id}",
+                            str(urljoin(url, _path)),
+                            "medium",
+                            {"tool": "nikto", "finding_id": _id, "path": _path, "message": _msg[:300]},
+                            ln,
+                        )
+                elif tool == "wpscan":
+                    # Single JSON document.
+                    try:
+                        doc = json.loads(raw)
+                    except Exception:
+                        doc = None
+                    if isinstance(doc, dict) and doc.get("scan_aborted"):
+                        logger.info("[Sigma] wpscan: %s", doc.get("scan_aborted", "")[:120])
+                    elif isinstance(doc, dict):
+                        version = doc.get("version") or {}
+                        vuln_list = []
+                        if isinstance(doc.get("vulnerabilities"), list):
+                            vuln_list = doc["vulnerabilities"]
+                        if isinstance(version.get("vulnerabilities"), list):
+                            vuln_list += version["vulnerabilities"]
+                        for v in vuln_list[:30]:
+                            v_id = str(v.get("id") or v.get("title") or "wpscan-finding")
+                            sev = str(v.get("severity") or v.get("cvss", {}).get("severity") or "high").lower()
+                            await _publish(
+                                v_id,
+                                url,
+                                sev,
+                                {
+                                    "tool": "wpscan",
+                                    "vuln_id": v_id,
+                                    "title": v.get("title"),
+                                    "references": v.get("references"),
+                                    "cve": v.get("cve"),
+                                },
+                                v,
+                            )
+                elif tool == "sqlmap":
+                    # Text: "parameter 'x' is vulnerable" lines + details block.
+                    lines = raw.splitlines()
+                    for i, ln in enumerate(lines):
+                        m = re.search(r"parameter '([^']+)' is vulnerable", ln, re.IGNORECASE)
+                        if not m:
+                            continue
+                        _param = m.group(1)
+                        # Gather the following Parameter/Type/Payload block.
+                        _detail = [ln]
+                        for nxt in lines[i : i + 8]:
+                            if re.match(r"\s*(Parameter|Type|Payload|Title|Vector):", nxt):
+                                _detail.append(nxt.strip())
+                        _block = "\n".join(_detail)[:600]
+                        _tech = "".join(
+                            re.findall(r"Type:\s*(.+) ", _block)[:1]
+                        )
+                        await _publish(
+                            f"sqli:{_param}",
+                            url,
+                            "critical",
+                            {"tool": "sqlmap", "parameter": _param, "technique": _tech, "detail": _block},
+                            _block,
+                        )
+        except Exception as parse_exc:
+            logger.debug(f"[{self.name}] CLI validation finding parse failed: {parse_exc}")
 
     async def handle_generation_request(self, event: HiveEvent):
         packet_dict = event.payload
@@ -412,7 +657,26 @@ class SigmaAgent(
             module = self.arsenal[module_id]
 
             # 1. PLAN: Generate target payloads
-            targets = await module.generate_payloads(packet)
+            # Hard guard: a slow/hung LLM call inside a module (e.g. Gemini rate
+            # limited) must NEVER freeze the whole scan. Wrap in a timeout and
+            # fall back to an empty target set, which publishes JOB_COMPLETED
+            # below and lets the orchestrator continue.
+            try:
+                targets = await asyncio.wait_for(module.generate_payloads(packet), timeout=60)
+            except (asyncio.TimeoutError, TimeoutError):
+                logger.error(
+                    f"[{self.name}] Payload generation for '{module_id}' timed out after 60s "
+                    f"— skipping module to avoid scan stall."
+                )
+                targets = []
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(
+                    f"[{self.name}] Payload generation for '{module_id}' failed: {e} "
+                    f"— skipping module to avoid scan stall."
+                )
+                targets = []
 
             # PHASE 2: ROAST (STRICT REJECTION LAYER)
             # Filter targets to ensure they map to PinchTab's semantic reality

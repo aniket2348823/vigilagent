@@ -21,6 +21,7 @@ cryptography==42.0.8
 
 # File Processing
 fpdf2==2.8.7
+cvss==3.6
 pillow==12.2.0
 
 # System & Utilities

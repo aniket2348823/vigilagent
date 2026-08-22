@@ -1,8 +1,0 @@
-
-  An error occured running the file command                                   
-  The error was:                                                              
-                                                                              
-  failed to initialize chrome context: exec: "google-chrome": executable file 
-  not found in $PATH                                                          
-
-

@@ -190,6 +190,9 @@ class ReconRunResult(BaseModel):
     mode: ScanMode
     duration_seconds: int
     summary: ReconRunSummary
+    # Human-readable failure reason when the run aborted (``orchestrator_error``
+    # stat in the summary is set in that case). Empty string = clean run.
+    error: str = ""
     attack_surface: list[EndpointFinding] = Field(default_factory=list)
     tools_run: list[str] = Field(default_factory=list)
     tools_skipped: list[ToolSkip] = Field(default_factory=list)

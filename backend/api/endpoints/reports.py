@@ -1,7 +1,7 @@
 import logging
 import os
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from backend.core.config import settings
@@ -139,7 +139,10 @@ async def generate_pdf_report(request: Request, scan_id: str):
             return FileResponse(path=report_path, media_type="application/pdf", filename=filename)
 
         # 2. On-Demand Generation if missing
-        scan_data = next((s for s in stats_db_manager.get_stats().get("scans", []) if s["id"] == scan_id), None)
+        # V8: use get_scan_state (merges the live event buffer) so the report
+        # still receives the full event transcript — get_stats() no longer
+        # embeds per-scan events.
+        scan_data = stats_db_manager.get_scan_state(scan_id)
         if not scan_data:
             raise HTTPException(status_code=404, detail="Scan record not found.")
 
@@ -147,7 +150,7 @@ async def generate_pdf_report(request: Request, scan_id: str):
         try:
             reporter = ReportGenerator()
             # Fetch events from the local scan record first
-            scan_events = scan_data.get("events", [])
+            scan_events = list(scan_data.get("events") or [])
 
             # [NEW] Sync findings from Supabase for high-fidelity reports
             try:
@@ -171,13 +174,41 @@ async def generate_pdf_report(request: Request, scan_id: str):
             except Exception as db_err:
                 logger.warning(f"Supabase fetch failed, falling back to local events: {db_err}")
 
-            telemetry = scan_data.get("telemetry", {})
-            target_url = scan_data.get("target", scan_data.get("name", "Unknown"))
+            # [ACCURACY] Feed the authoritative findings (results/findings/events
+            # merged — the same extraction the findings API serves) into the PDF
+            # builder so the report always matches the findings endpoint even when
+            # the live event buffer was capped or the scan only persisted results.
+            authoritative_findings: list[dict] = []
+            try:
+                from backend.api.endpoints.scans import _findings_from_scan
+
+                authoritative_findings = _findings_from_scan(scan_data)
+            except Exception as find_err:
+                logger.warning(f"Authoritative findings extraction failed: {find_err}")
+
+            telemetry = dict(scan_data.get("telemetry") or {})
+            # Accuracy: real scan records store the target under target_url /
+            # scope (not "target"), and the start time under created_at /
+            # timestamp — telemetry.start_time is often empty. Surface both so
+            # the report's Target and Scan Date reflect the actual engagement.
+            target_url = (
+                scan_data.get("target")
+                or scan_data.get("target_url")
+                or scan_data.get("scope")
+                or scan_data.get("name")
+                or "Unknown"
+            )
+            if not telemetry.get("start_time"):
+                telemetry["start_time"] = scan_data.get("created_at") or scan_data.get("timestamp") or ""
 
             # CRITICAL FIX: Strictly await the report generation coroutine
             logger.info(f"Triggering On-Demand Generation for {scan_id}...")
             await reporter.generate_report(
-                scan_id=scan_id, events=scan_events, target_url=target_url, telemetry=telemetry
+                scan_id=scan_id,
+                events=scan_events,
+                target_url=target_url,
+                telemetry=telemetry,
+                findings=authoritative_findings,
             )
 
             # Verify the file was actually written after await
@@ -198,10 +229,22 @@ async def generate_pdf_report(request: Request, scan_id: str):
 
 @router.get("/consolidated")
 @rate_limit("/api/reports/consolidated")
-async def generate_consolidated_report(request: Request):
+async def generate_consolidated_report(
+    request: Request,
+    recent_scans: int = Query(
+        10,
+        ge=0,
+        description=(
+            "Only aggregate the N most recent scans by start_time "
+            "(0 = all scans). Keeps the per-finding LLM enrichment budget "
+            "bounded on long scan histories."
+        ),
+    ),
+):
     """
-    Generates a high-fidelity intelligence report aggregating ALL scans.
-    Performs cross-scan deduplication and strategic multi-vector analysis.
+    Generates a high-fidelity intelligence report aggregating scans
+    (default: the 10 most recent). Performs cross-scan deduplication and
+    strategic multi-vector analysis.
     """
     scan_id = "Consolidated_Intelligence"
     filename = f"Scan_Report_{scan_id}.pdf"
@@ -211,10 +254,32 @@ async def generate_consolidated_report(request: Request):
         # Aggregation Logic
         stats = stats_db_manager.get_stats()
         all_scans = stats.get("scans", [])
-        # Aggregate events from each scan record (events key is per-scan, not top-level)
+        if recent_scans:
+            # Newest-first by start_time so the report reflects the most recent
+            # engagement instead of the oldest history.
+            all_scans = sorted(
+                all_scans,
+                key=lambda s: str(s.get("start_time", "") or ""),
+                reverse=True,
+            )[:recent_scans]
+        # Aggregate events + authoritative findings from each scan record. V8:
+        # get_stats() no longer embeds events — hydrate each scan via
+        # get_scan_state (merges the live buffer) so consolidated dedup +
+        # timelines keep every event, and findings stay CVSS/CWE-enriched.
         all_events = []
+        consolidated_findings: list[dict] = []
+        try:
+            from backend.api.endpoints.scans import _findings_from_scan
+        except Exception:
+            _findings_from_scan = None
         for scan in all_scans:
-            all_events.extend(scan.get("events", []))
+            _merged = stats_db_manager.get_scan_state(scan["id"]) or scan
+            all_events.extend(_merged.get("events") or [])
+            if _findings_from_scan is not None:
+                try:
+                    consolidated_findings.extend(_findings_from_scan(_merged))
+                except Exception:
+                    pass
 
         if not all_scans:
             raise HTTPException(status_code=404, detail="No scan data available for consolidation.")
@@ -265,9 +330,14 @@ async def generate_consolidated_report(request: Request):
                         consolidated_events.append(e)
 
         # Build Consolidated Telemetry
+        # Accuracy: records store start/end under created_at/timestamp, not
+        # telemetry.start_time — fall back so the consolidated header is real.
+        def _scan_time(s: dict, key: str) -> str:
+            return s.get(key) or s.get("created_at") or s.get("timestamp") or ""
+
         consolidated_telemetry = {
-            "start_time": all_scans[0].get("start_time"),
-            "end_time": all_scans[-1].get("end_time"),
+            "start_time": _scan_time(all_scans[0], "start_time"),
+            "end_time": _scan_time(all_scans[-1], "end_time"),
             "duration": f"{total_duration_secs}s",
             "total_requests": total_requests,
             "avg_latency_ms": sum(s.get("telemetry", {}).get("avg_latency_ms", 0) for s in all_scans) / len(all_scans),
@@ -282,6 +352,7 @@ async def generate_consolidated_report(request: Request):
             events=consolidated_events,
             target_url="MULTI-TARGET CONSOLIDATED ASSET",
             telemetry=consolidated_telemetry,
+            findings=consolidated_findings,
         )
 
         if os.path.exists(report_path):
@@ -370,14 +441,14 @@ async def get_live_report(scan_id: str):
     # Try sharded state first
     data = await stats_db_manager.read_scan_state(scan_id)
 
-    # Fallback to stats.json
+    # Fallback to the live scan record — get_scan_state merges the event buffer
+    # (V8: get_stats() no longer embeds per-scan events).
     if not data:
-        scan = next((s for s in stats_db_manager.get_stats().get("scans", []) if s["id"] == scan_id), None)
-        if not scan:
+        data = stats_db_manager.get_scan_state(scan_id)
+        if not data:
             raise HTTPException(status_code=404, detail="Scan not found.")
-        data = scan
 
-    events = data.get("events", [])
+    events = data.get("events", []) or []
     vuln_events = [e for e in events if e.get("type") in ["VULN_CONFIRMED", "VULN_CANDIDATE"]]
 
     return {

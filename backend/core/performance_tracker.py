@@ -189,8 +189,10 @@ class PerformanceTracker:
         """
         tracking_id = str(uuid.uuid4())
 
-        # Get current resource usage
-        cpu_usage = self._process.cpu_percent(interval=0.1)
+        # Get current resource usage. interval=None is NON-BLOCKING (returns
+        # usage since the last call) — interval=0.1 blocks the async event
+        # loop 100ms per action, which stalls agents during scans.
+        cpu_usage = self._process.cpu_percent(interval=None)
         memory_mb = self._process.memory_info().rss / 1024 / 1024
 
         # Create action record
@@ -249,7 +251,7 @@ class PerformanceTracker:
                 record.error_message = str(result.error)[:500]  # Truncate long errors
 
             # Update resource usage
-            record.cpu_usage = self._process.cpu_percent(interval=0.1)
+            record.cpu_usage = self._process.cpu_percent(interval=None)
             record.memory_mb = self._process.memory_info().rss / 1024 / 1024
 
             # Track API calls if available
@@ -327,7 +329,7 @@ class PerformanceTracker:
         api_calls_per_minute = len(recent_calls)
 
         return ResourceMetrics(
-            cpu_percent=self._process.cpu_percent(interval=0.1),
+            cpu_percent=self._process.cpu_percent(interval=None),
             memory_mb=self._process.memory_info().rss / 1024 / 1024,
             api_calls_per_minute=api_calls_per_minute,
             timestamp=current_time

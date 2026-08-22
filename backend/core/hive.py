@@ -102,6 +102,7 @@ class EventBus:
         self.scan_contexts: dict[str, ScanContext] = {}
         self._context_tasks: dict[str, asyncio.Task] = {}
         self._global_tasks = set()
+        self._orphaned_handlers: set[asyncio.Task] = set()  # shielded handlers past watchdog
         self.dead_letters: list[dict[str, Any]] = []  # Dead Letter Queue
         self._max_dead_letters = 500  # Prevent unbounded DLQ growth
         self._task_manager = TaskManager("EventBus")
@@ -256,9 +257,61 @@ class EventBus:
         # Enqueue for causal execution
         await ctx.event_queue.put(event)
 
+    # Per-handler watchdog. `asyncio.wait_for(shield(task), timeout)` is used so
+    # a handler that exceeds the ceiling is ORPHANED (the scan event loop moves
+    # on to the next subscriber/event) but its work is NEVER cancelled — it
+    # keeps running in the background and its results/events still land when it
+    # finishes. This is the key difference from the earlier 30s `wait_for` fix,
+    # which cancelled handlers mid-flight and destroyed legitimate work (Alpha
+    # recon killed at 30s, nmap/tlsx returning 0 bytes). Orphaning fixes the
+    # stall without breaking the work.
+    #
+    # Agent classes that must run truly unbounded set
+    # ``_HANDLER_TIMEOUT_SECONDS = None`` explicitly on the CLASS (Alpha recon,
+    # MissionPlanner). Everything else — including the orchestrator's
+    # ``event_listener`` closure which has no ``__self__`` — falls under the
+    # generous `_HANDLER_ORPHAN_SECONDS` ceiling.
+    _HANDLER_ORPHAN_SECONDS = 300  # generous ceiling; work continues in background
+
     async def _safe_execute(self, handler, event):
+        # Per-agent override: ``handler`` is usually a bound method, so its
+        # ``__self__`` is the agent instance. Only an EXPLICIT class attribute
+        # counts (``type(owner).__dict__``) — `None` there means truly unbounded;
+        # an absent attribute means the default orphan ceiling applies. Closures
+        # (no ``__self__``) always get the default ceiling.
+        _UNSET = object()
+        timeout = _UNSET
+        owner = getattr(handler, "__self__", None)
+        if owner is not None and "_HANDLER_TIMEOUT_SECONDS" in type(owner).__dict__:
+            timeout = type(owner).__dict__["_HANDLER_TIMEOUT_SECONDS"]
+        if timeout is _UNSET:
+            timeout = self._HANDLER_ORPHAN_SECONDS
         try:
-            await handler(event)
+            if timeout is None or timeout <= 0:
+                await handler(event)
+                return
+            task = asyncio.ensure_future(handler(event))
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            except asyncio.TimeoutError:
+                # ORPHAN, don't cancel: the scan queue keeps moving while the
+                # handler finishes in the background. Track it so it isn't
+                # garbage-collected mid-flight.
+                self._orphaned_handlers.add(task)
+                task.add_done_callback(
+                    lambda t: (
+                        self._orphaned_handlers.discard(t),
+                        # Retrieve any exception so it isn't logged as "never retrieved".
+                        (t.exception() if not t.cancelled() else None),
+                    )
+                )
+                logging.warning(
+                    "[EventBus] Handler %s exceeded %ss processing %s — orphaned, "
+                    "continuing to next subscriber (work keeps running).",
+                    handler.__qualname__,
+                    timeout,
+                    event.type,
+                )
         except Exception as e:
             err_msg = str(e).encode("ascii", errors="replace").decode("ascii")
             logging.error(f"[CRITICAL] Handler failed processing {event.type}: {err_msg}")
@@ -357,6 +410,15 @@ class DistributedEventBus(EventBus):
         self.pubsub = None
         self.is_running = False
         self._is_redis_online = None  # Lazy check
+        # V8 LOAD FIX: in a single-process install our OWN _listen_loop is the
+        # only subscriber, so every event did a full Redis round-trip
+        # (serialize + HMAC + PUBLISH + receive + parse + re-dispatch) that
+        # produced nothing useful. We detect peers once per window via
+        # ``PUBSUB NUMSUB`` and skip the Redis hop entirely when nobody else is
+        # subscribed — the local memory broadcast already happened.
+        self._has_peers = False
+        self._peers_checked_at = 0.0
+        self._PEER_CHECK_WINDOW = 30.0
 
     async def ping(self) -> bool:
         """Verifies Redis connectivity."""
@@ -370,18 +432,30 @@ class DistributedEventBus(EventBus):
             logger.debug("[Hive] Redis ping failed")
             return False
 
-    async def start(self):
-        """Activates the distributed bridge."""
+    async def start(self, listen: bool = True):
+        """Activates the distributed bridge.
+
+        ``listen=False`` is for in-process publishers that only EMIT events
+        (e.g. the local WorkerNode whose queue is consumed via ``brpop``, not
+        the bus). Subscribing them duplicates the subscriber count on
+        ``xytherion_events``, which makes ``_refresh_peers`` (``NUMSUB > 1``)
+        believe another PROCESS is connected — re-enabling the Redis
+        round-trip for every event in a single-process install and causing
+        duplicate delivery/persistence.
+        """
         self.is_running = True
         try:
             from backend.core.redis_client import get_redis_client
 
             rc = await get_redis_client()
             self.redis_client = rc.client
-            self.pubsub = self.redis_client.pubsub()
-            await self.pubsub.subscribe("xytherion_events")
-            self._task_manager.create_task(self._listen_loop(), name="redis_listener")
-            logging.info("📡 Distributed Event Bus Online (Async).")
+            if listen:
+                self.pubsub = self.redis_client.pubsub()
+                await self.pubsub.subscribe("xytherion_events")
+                self._task_manager.create_task(self._listen_loop(), name="redis_listener")
+                logging.info("📡 Distributed Event Bus Online (Async).")
+            else:
+                logging.info("📡 Distributed Event Bus Online (publisher-only, no listen).")
         except Exception as e:
             # V6-OMEGA HARDENING: If we can't subscribe, we stay in local-only mode
             self.is_running = False
@@ -414,6 +488,8 @@ class DistributedEventBus(EventBus):
                     if message["type"] == "message":
                         try:
                             raw_data = message["data"]
+                            if isinstance(raw_data, (bytes, bytearray)):
+                                raw_data = raw_data.decode("utf-8", errors="replace")
                             # Extract signature if present (format: "signature|json")
                             signature = None
                             if isinstance(raw_data, str) and "|" in raw_data:
@@ -421,15 +497,30 @@ class DistributedEventBus(EventBus):
                                 signature = raw_data[:sep_idx]
                                 raw_data = raw_data[sep_idx + 1 :]
 
-                            event_data = json.loads(raw_data)
-
-                            # HMAC verification when key is configured
+                            # HMAC verification when key is configured.
+                            # FIX: the old `continue` sat OUTSIDE the
+                            # failed-verification branch, so every valid event
+                            # was silently dropped (after a spurious warning)
+                            # whenever VIGILAGENT_EVENT_BUS_HMAC_KEY was set.
                             if _EVENT_BUS_HMAC_KEY:
                                 if not _verify_event_signature(raw_data, signature or ""):
                                     logging.warning(
                                         "[DistributedEventBus] HMAC verification failed — "
                                         "dropping potentially tampered event"
                                     )
+                                    continue
+
+                            try:
+                                event_data = json.loads(raw_data)
+                            except (json.JSONDecodeError, TypeError) as exc:
+                                # Non-JSON payload on the channel (e.g. a
+                                # different publisher). Log once at WARNING
+                                # with a short preview instead of ERROR spam.
+                                logging.warning(
+                                    "[DistributedEventBus] Dropping non-JSON Redis message (%s): %.140r",
+                                    type(exc).__name__,
+                                    str(raw_data)[:140],
+                                )
                                 continue
 
                             event = HiveEvent(**event_data)
@@ -466,21 +557,71 @@ class DistributedEventBus(EventBus):
                         _reconnect_failures = 0
                     except Exception as pool_err:
                         logging.warning("[DistributedEventBus] Client refresh failed: %s", pool_err)
-                # Attempt to re-subscribe
+                # Attempt to re-subscribe. Close the STALE pubsub first: the
+                # old subscription stayed live on its connection, so a single
+                # transient reconnect left TWO subscriptions from this same
+                # process — and _refresh_peers then read subs > 1 as a "peer"
+                # and re-enabled the Redis round-trip (duplicate events).
                 try:
+                    if self.pubsub is not None:
+                        try:
+                            await self.pubsub.unsubscribe("xytherion_events")
+                            await self.pubsub.aclose()
+                        except Exception as _old_sub_err:
+                            logging.debug(
+                                "[DistributedEventBus] stale pubsub close failed: %s", _old_sub_err
+                            )
                     self.pubsub = self.redis_client.pubsub()
                     await self.pubsub.subscribe("xytherion_events")
                     logging.info("[DistributedEventBus] Reconnected to Redis")
                 except Exception as re_err:
                     logging.warning("[DistributedEventBus] Reconnect failed: %s", re_err)
 
+    async def _refresh_peers(self) -> None:
+        """Re-check how many processes are subscribed to the cluster channel.
+
+        ``PUBSUB NUMSUB`` returns the subscriber count; 0 or 1 means we are the
+        only node (our own listener) so the Redis hop can be skipped. Cheap and
+        bounded to one round-trip per ``_PEER_CHECK_WINDOW`` seconds.
+        """
+        import time as _t
+
+        now = _t.time()
+        if now - self._peers_checked_at < self._PEER_CHECK_WINDOW:
+            return
+        self._peers_checked_at = now
+        try:
+            resp = await self.redis_client.pubsub_numsub("xytherion_events")
+            subs = 0
+            if isinstance(resp, list):
+                for item in resp:
+                    if isinstance(item, (list, tuple)) and len(item) >= 2:
+                        subs += int(item[1] or 0)
+            elif isinstance(resp, dict):
+                subs = sum(int(v or 0) for v in resp.values())
+            self._has_peers = subs > 1  # >1 => another process is listening
+        except Exception as exc:
+            logging.debug("[DistributedEventBus] Peer probe failed (%s); assuming peers present.", exc)
+            self._has_peers = True  # conservative: keep cluster semantics on error
+
     async def publish(self, event: HiveEvent):
-        """Broadcasts local events to the global cluster and routes jobs with safety locking."""
+        """Broadcasts local events to the global cluster and routes jobs with safety locking.
+
+        V8 LOAD FIX: when no other process is subscribed to the cluster channel
+        (single-process installs), the Redis round-trip is skipped entirely —
+        the local memory broadcast (step 1) already delivered the event to every
+        subscriber in this process. Redis is still used the moment a second
+        node appears (checked every 30s).
+        """
         # 1. Local Broadcast (Memory-only sink always happens)
         await super().publish(event)
 
         # 2. Global Broadcast (Resilient Redis Attempt)
         try:
+            await self._refresh_peers()
+            if not self._has_peers:
+                return
+
             event_json = event.model_dump_json()
             # HIGH-15: Sign events with HMAC before publishing to Redis
             # so _listen_loop can verify integrity on the receiving end.
@@ -708,10 +849,17 @@ class BaseAgent:
                 idle_ms = (time_module.time() - self._last_task_time) * 1000
                 self._task_success_count / self._task_count if self._task_count > 0 else 1.0
 
-                # Get resource usage
+                # Get resource usage.
+                #
+                # V8 LOAD FIX: ``psutil.cpu_percent(interval=0.1)`` BLOCKS the
+                # event loop for 100ms — 13 agents × every 10s = 1.3s of loop
+                # stall per 10s, forever, even when idle. ``interval=None`` is
+                # non-blocking (returns % since the previous sample, 0.0 on the
+                # first call), which removes the guaranteed jitter at the cost
+                # of a coarser reading — fine for a keep-alive health metric.
                 process = psutil.Process()
                 memory_mb = process.memory_info().rss / 1024 / 1024
-                cpu_percent = process.cpu_percent(interval=0.1)
+                cpu_percent = process.cpu_percent(interval=None)
 
                 # Report to health monitor. ``idle=True`` tells the monitor
                 # this is a keep-alive sample, not a real per-task latency,

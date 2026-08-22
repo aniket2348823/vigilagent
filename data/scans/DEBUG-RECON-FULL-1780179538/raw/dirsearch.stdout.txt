@@ -1,1 +1,0 @@
-[22:20:12] 404 -  297B  - http://host.docker.internal:8080/index.php/%2e%2e//google.com

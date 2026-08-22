@@ -138,9 +138,17 @@ async def publish_request_event(data: dict[str, Any], scan_id: str = None):
             }
             await manager.broadcast(formatted_event)
 
-            # Periodic Performance Update (Every 5 requests to avoid spam but remain reactive)
-            stats = stats_db_manager.get_stats()
-            if stats["total_requests"] % 5 == 0:
+            # Periodic Performance Update (Every 5 requests to avoid spam but
+            # remain reactive). PERF: the gate reads the live counter via
+            # get_total_requests() — a lock-protected int — instead of
+            # get_stats(), whose full deepcopy of every scan record used to
+            # run on EVERY intercepted request (increment_request_count no
+            # longer invalidates the stats cache either, so the dashboard's
+            # /stats + /runtime/health polls stop re-deepcopying per request
+            # during a scan).
+            total_requests = await stats_db_manager.get_total_requests()
+            if total_requests % 5 == 0:
+                stats = stats_db_manager.get_stats()
                 await manager.broadcast(
                     {
                         "type": "VULN_UPDATE",
@@ -150,7 +158,7 @@ async def publish_request_event(data: dict[str, Any], scan_id: str = None):
                                 "critical": stats["critical"],
                                 "active_scans": stats["active_scans"],
                                 "total_scans": stats["total_scans"],
-                                "total_requests": stats["total_requests"],
+                                "total_requests": total_requests,
                                 "rps": manager.recent_rps,
                             }
                         },
@@ -311,7 +319,15 @@ class SocketManager:
             try:
                 from urllib.parse import urlparse
 
-                origin_host = urlparse(origin).hostname or ""
+                _op = urlparse(origin)
+                origin_host = _op.hostname or ""
+                origin_scheme = (_op.scheme or "").lower()
+                # The local Chrome extension (Vigilagent Spy) connects from a
+                # chrome-extension://<id> origin — its hostname is the extension
+                # ID, not an HTTP host. Locally-installed component, same trust
+                # domain as localhost.
+                if origin_scheme == "chrome-extension":
+                    origin_host = ""
                 # Reject if origin doesn't match expected hosts
                 allowed_origins = {"localhost", "127.0.0.1", ""}
                 if origin_host and origin_host not in allowed_origins:
@@ -416,12 +432,25 @@ class SocketManager:
 
         SECURITY FIX (M-1): Apply the same validation that broadcast() uses
         so oversized or malformed messages cannot be pushed via this path.
+
+        FREEZE FIX: the scan-monitor loop awaits this every ~2s. A stale or
+        closed UI WebSocket previously blocked ``send_text`` indefinitely,
+        freezing the whole scan (observed live: global event silence at
+        15:19:22). Each send now uses the same 1s ``_send_with_timeout`` as
+        the batched path, and dead connections are removed — a dead dashboard
+        tab can never stall a scan again.
         """
         if not self._validate_message(data):
             return
-        message = json.dumps(data)
+        message = json.dumps(data, default=self._sanitize_bytes)
         if self.ui_connections:
-            await asyncio.gather(*(conn.send_text(message) for conn in self.ui_connections), return_exceptions=True)
+            results = await asyncio.gather(
+                *(self._send_with_timeout(conn, message) for conn in self.ui_connections),
+                return_exceptions=True,
+            )
+            for dead in results:
+                if isinstance(dead, WebSocket) and dead in self.ui_connections:
+                    self.ui_connections.remove(dead)
 
     async def broadcast_to_ui(self, data: dict):
         # Cache for late-joiners. Validation already done in broadcast(). We only retain "live" event types — system

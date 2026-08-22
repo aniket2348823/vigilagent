@@ -4,14 +4,37 @@ import { LIQUID_SPRING } from '../../lib/constants';
 import { resolveAgent, ALL_AGENTS, SEV_CONFIG } from '../../lib/agentNames';
 import { isWithinRange } from '../../lib/timestamps';
 
+// Hoisted per-row lookup maps — module scope so they're built once, not
+// recreated inside the .map() for every rendered row on every render.
+const SEV_COLORS = {
+    CRITICAL: 'text-red-400 bg-red-500/10',
+    HIGH: 'text-orange-400 bg-orange-500/10',
+    MEDIUM: 'text-yellow-400 bg-yellow-500/10',
+    LOW: 'text-blue-400 bg-blue-500/10',
+    INFO: 'text-gray-400 bg-gray-500/10',
+};
+const SEV_ACCENT = {
+    CRITICAL: 'border-l-[3px] border-l-red-500 animate-severity-pulse-red',
+    HIGH: 'border-l-[3px] border-l-orange-500 animate-severity-pulse-orange',
+    MEDIUM: 'border-l-[3px] border-l-yellow-500',
+    LOW: 'border-l-[3px] border-l-blue-400',
+    INFO: '',
+};
+
 const ThreatTable = ({ persistentState, filterAgent, setFilterAgent, filterTimeRange, setFilterTimeRange, filterSeverity, setFilterSeverity, selectedRowIndex, setSelectedRowIndex, selectedEvent, setSelectedEvent, rowRefs, scanActive, currentPhase, completedPhases, showExportMenu, setShowExportMenu, exportData }) => {
     const tableBodyRef = useRef(null);
 
     const totalFeedCount = (persistentState.threat_feed || []).length;
-    const { sevCounts, filteredFeedTotal } = useMemo(() => {
+    // ONE filter pass for the whole table: the filtered list feeds both the
+    // severity counts/header total AND the rendered rows. Previously the memo
+    // filtered without filterTimeRange while the tbody filtered with it — the
+    // "N events" header could disagree with the visible rows, and the feed was
+    // scanned twice per render.
+    const { sevCounts, filteredFeedTotal, visibleEvents } = useMemo(() => {
         const feed = (persistentState.threat_feed || []).filter(t => {
             if (filterAgent && (!t.agent || !t.agent.toLowerCase().includes(filterAgent))) return false;
             if (filterSeverity && (t.severity || 'INFO').toUpperCase() !== filterSeverity) return false;
+            if (filterTimeRange && t.timestamp && !isWithinRange(t.timestamp, parseInt(filterTimeRange, 10))) return false;
             return true;
         });
         const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
@@ -20,8 +43,8 @@ const ThreatTable = ({ persistentState, filterAgent, setFilterAgent, filterTimeR
             if (counts[sev] !== undefined) counts[sev]++;
             else counts.INFO++;
         });
-        return { sevCounts: counts, filteredFeedTotal: feed.length };
-    }, [persistentState?.threat_feed, filterAgent, filterSeverity]);
+        return { sevCounts: counts, filteredFeedTotal: feed.length, visibleEvents: feed };
+    }, [persistentState?.threat_feed, filterAgent, filterSeverity, filterTimeRange]);
 
     return (
         <div className="grid grid-cols-1 gap-6">
@@ -222,30 +245,11 @@ const ThreatTable = ({ persistentState, filterAgent, setFilterAgent, filterTimeR
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {(persistentState.threat_feed || []).filter(t => {
-                                        if (filterAgent && (!t.agent || !t.agent.toLowerCase().includes(filterAgent))) return false;
-                                        if (filterSeverity && (t.severity || 'INFO').toUpperCase() !== filterSeverity) return false;
-                                        if (filterTimeRange && t.timestamp && !isWithinRange(t.timestamp, parseInt(filterTimeRange, 10))) return false;
-                                        return true;
-                                    }).slice(0, 500).map((t, i) => {
+                                    {visibleEvents.slice(0, 500).map((t, i) => {
                                         const agent = resolveAgent(t.agent);
-                                        const sevColors = {
-                                            CRITICAL: 'text-red-400 bg-red-500/10',
-                                            HIGH: 'text-orange-400 bg-orange-500/10',
-                                            MEDIUM: 'text-yellow-400 bg-yellow-500/10',
-                                            LOW: 'text-blue-400 bg-blue-500/10',
-                                            INFO: 'text-gray-400 bg-gray-500/10',
-                                        };
-                                        const sevClass = sevColors[t.severity?.toUpperCase()] || sevColors.INFO;
+                                        const sevClass = SEV_COLORS[t.severity?.toUpperCase()] || SEV_COLORS.INFO;
                                         const anomaly = t.anomaly || t.threat_type?.includes('INJECTION') || t.threat_type?.includes('BYPASS');
-                                        const sevAccent = {
-                                            CRITICAL: 'border-l-[3px] border-l-red-500 animate-severity-pulse-red',
-                                            HIGH: 'border-l-[3px] border-l-orange-500 animate-severity-pulse-orange',
-                                            MEDIUM: 'border-l-[3px] border-l-yellow-500',
-                                            LOW: 'border-l-[3px] border-l-blue-400',
-                                            INFO: '',
-                                        };
-                                        const rowAccent = sevAccent[t.severity?.toUpperCase()] || sevAccent.INFO;
+                                        const rowAccent = SEV_ACCENT[t.severity?.toUpperCase()] || SEV_ACCENT.INFO;
                                         return (
                                             <tr key={i} ref={el => { rowRefs.current[i] = el; }} className={`border-b border-white/[0.03] hover:bg-white/[0.02] transition-all duration-300 cursor-pointer ${selectedRowIndex === i ? 'bg-purple-500/10 ring-1 ring-purple-500/30' : ''} ${rowAccent}`} style={{ animationDelay: `${i * 20}ms` }} onClick={() => { setSelectedRowIndex(i); setSelectedEvent(t); }}>
                                                 <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{t.timestamp}</td>
