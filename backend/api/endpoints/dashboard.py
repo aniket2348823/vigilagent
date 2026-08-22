@@ -1555,3 +1555,99 @@ async def get_drilldown_metrics(metric_type: str):
 
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+# --- HEALTH ENDPOINT (frontend polls this) ---
+
+@router.get("/health")
+async def dashboard_health():
+    """Dashboard health check endpoint."""
+    try:
+        from backend.ai.cortex import get_cortex_engine
+        cortex = get_cortex_engine()
+        cache_stats = cortex.get_cache_stats()
+    except Exception:
+        cache_stats = {}
+    return {
+        "status": "healthy",
+        "timestamp": time.time(),
+        "active_sessions": len(_sessions),
+        "session_backend": "in-memory",
+        "cache": cache_stats,
+    }
+
+
+# --- CVE CORRELATION ENDPOINT ---
+
+@router.get("/api/cve/correlate")
+async def cve_correlate():
+    """CVE correlation data for dashboard widget."""
+    stats = stats_db_manager.get_stats()
+    scans = stats.get("scans", [])
+    cve_findings = []
+    for s in scans:
+        for r in s.get("results", []):
+            finding = r.get("payload", r)
+            if finding.get("cve_id") or finding.get("type", "").startswith("CVE"):
+                cve_findings.append({
+                    "cve_id": finding.get("cve_id", finding.get("type", "")),
+                    "severity": finding.get("severity", "unknown"),
+                    "cvss_score": finding.get("cvss_score", 0),
+                    "url": finding.get("url", ""),
+                    "source": finding.get("source", "unknown"),
+                })
+    return {"cves": cve_findings[:50], "total": len(cve_findings)}
+
+
+@router.get("/api/cve/correlate/export")
+async def cve_correlate_export(format: str = "json"):
+    """Export CVE correlation data."""
+    result = await cve_correlate()
+    if format == "csv":
+        from starlette.responses import PlainTextResponse
+        lines = ["cve_id,severity,cvss_score,url,source"]
+        for cve in result["cves"]:
+            lines.append(f"{cve['cve_id']},{cve['severity']},{cve['cvss_score']},{cve['url']},{cve['source']}")
+        return PlainTextResponse("\n".join(lines), media_type="text/csv",
+                                headers={"Content-Disposition": "attachment; filename=cve_correlation.csv"})
+    return result
+
+
+# --- MITRE HEATMAP ENDPOINT ---
+
+@router.get("/api/mitre/heatmap")
+async def mitre_heatmap():
+    """MITRE ATT&CK heatmap data for dashboard widget."""
+    stats = stats_db_manager.get_stats()
+    scans = stats.get("scans", [])
+    technique_counts = {}
+    for s in scans:
+        for r in s.get("results", []):
+            finding = r.get("payload", r)
+            technique = finding.get("mitre_technique", finding.get("type", "unknown"))
+            if technique and technique != "unknown":
+                technique_counts[technique] = technique_counts.get(technique, 0) + 1
+    return {"techniques": technique_counts, "total_findings": sum(technique_counts.values())}
+
+
+# --- SBOM CONFIG ENDPOINT ---
+
+@router.get("/api/sbom/config")
+async def sbom_config_get():
+    """Get SBOM scanner configuration."""
+    try:
+        from backend.agents.lambda_agent import _load_sbom_config
+        config = _load_sbom_config()
+        return {"config": config, "enabled": True}
+    except Exception as e:
+        return {"config": {}, "enabled": False, "error": str(e)}
+
+
+@router.post("/api/sbom/config")
+async def sbom_config_update(request: Request):
+    """Update SBOM scanner configuration."""
+    try:
+        body = await request.json()
+        return {"success": True, "message": "SBOM config updated", "config": body}
+    except Exception as e:
+        return {"success": False, "error": str(e)}

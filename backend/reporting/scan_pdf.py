@@ -452,6 +452,9 @@ class VigilagentReportBuilder:
     ) -> None:
         self.scan_id = scan_id
         self.target_url = target_url or "Unknown Target"
+        # Ensure events is always a list — callers may pass a dict (scan state)
+        if isinstance(events, dict):
+            events = list(events.values())
         self.events = events or []
         self.telemetry = telemetry or {}
         self.cortex = cortex

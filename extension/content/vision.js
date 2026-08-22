@@ -2,10 +2,16 @@
 // IDENTITY: AGENT THETA (PRISM) - THE EYES
 // MISSION: Passive DOM Analysis & Invisible Text Detection.
 
+// Skip on localhost/extension pages to avoid interfering with the dashboard
+if (['127.0.0.1', 'localhost'].includes(window.location.hostname) ||
+    window.location.protocol === 'chrome-extension:') {
+    // Do nothing on localhost
+} else {
+
 const PRISM_ENDPOINT = "http://localhost:8000/api/defense/analyze";
 
-// 1. The Scanner Loop
-const SCAN_INTERVAL = 1000; // 1s (Aggressive)
+// 1. The Scanner Loop - 5s interval instead of 1s to reduce CPU usage
+const SCAN_INTERVAL = 5000;
 
 setInterval(() => {
     scanDOM();
@@ -141,3 +147,5 @@ function showToast(text, color) {
 
     setTimeout(() => toast.remove(), 4000);
 }
+
+} // end else (not localhost)

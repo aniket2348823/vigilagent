@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // Resolve the directory that actually holds .env. Vite may bundle this config
@@ -41,8 +41,24 @@ function resolveEnvDir() {
 // the proxy kept injecting a wrong key and every /api call 401'd again.
 export default defineConfig(({ mode }) => {
     const envDir = resolveEnvDir();
-    const env = loadEnv(mode, envDir, '');
-    const DEV_API_KEY = env.API_AUTH_KEY || process.env.API_AUTH_KEY;
+    // SECURITY FIX: loadEnv() gives PRE-EXISTING shell vars priority over .env
+    // files. The backend uses python-dotenv(override=True), which does the
+    // OPPOSITE (.env always wins). A stale API_AUTH_KEY exported in a shell
+    // therefore makes the proxy inject the wrong X-API-Key while the backend
+    // expects the .env one -> every /api request 401s with key_present=True.
+    // Parse .env directly so the FILE is the single source of truth, matching
+    // backend behavior; fall back to shell only when the file lacks the key.
+    let DEV_API_KEY;
+    try {
+        const envFile = fs.readFileSync(path.join(envDir, '.env'), 'utf8');
+        const m = envFile.match(/^\s*API_AUTH_KEY\s*=\s*(.*)\s*$/m);
+        if (m) {
+            DEV_API_KEY = m[1].trim().replace(/^(['"])(.*)\1$/, '$2');
+        }
+    } catch { /* .env unreadable/absent - fall through */ }
+    if (!DEV_API_KEY) {
+        DEV_API_KEY = process.env.API_AUTH_KEY;
+    }
     if (!DEV_API_KEY) {
         console.warn('[SECURITY] API_AUTH_KEY not set — Vite proxy will send empty key. Set it in your shell or .env file.');
     } else {
@@ -101,12 +117,10 @@ export default defineConfig(({ mode }) => {
                     target: "http://127.0.0.1:8000",
                     changeOrigin: true,
                     secure: false,
-                    configure: (proxy) => {
-                        // Inject X-API-Key server-side so the key never reaches the browser.
-                        proxy.on('proxyReq', (proxyReq) => {
-                            proxyReq.setHeader('X-API-Key', DEV_API_KEY);
-                        });
-                    }
+                    // FIX: Use static headers instead of configure callback — the callback
+                    // approach silently fails on Windows http-proxy due to a timing issue
+                    // where proxyReq.setHeader() fires after headers are serialized.
+                    headers: DEV_API_KEY ? { 'X-API-Key': DEV_API_KEY } : {},
                 },
                 "/stream": {
                     target: "ws://127.0.0.1:8000",

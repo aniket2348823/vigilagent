@@ -180,3 +180,24 @@ async def replay_attack(request: Request, vuln_id: str, background_tasks: Backgr
         "target": replay_config["url"],
         "module": replay_config["modules"],
     }
+
+
+@router.get("/vectors")
+async def get_attack_vectors():
+    """List available attack vectors and modules."""
+    vectors = [
+        {"id": "tech_sqli", "name": "SQL Injection", "type": "tech", "severity": "critical"},
+        {"id": "tech_xss", "name": "Cross-Site Scripting", "type": "tech", "severity": "high"},
+        {"id": "tech_ssti", "name": "Server-Side Template Injection", "type": "tech", "severity": "critical"},
+        {"id": "tech_cmdi", "name": "Command Injection", "type": "tech", "severity": "critical"},
+        {"id": "tech_jwt", "name": "JWT Token Attacks", "type": "tech", "severity": "high"},
+        {"id": "tech_auth_bypass", "name": "Authentication Bypass", "type": "tech", "severity": "critical"},
+        {"id": "logic_tycoon", "name": "Financial Logic Manipulation", "type": "logic", "severity": "high"},
+        {"id": "logic_doppelganger", "name": "IDOR/Session Manipulation", "type": "logic", "severity": "high"},
+        {"id": "logic_skipper", "name": "Auth Flow Bypass", "type": "logic", "severity": "medium"},
+        {"id": "logic_chronomancer", "name": "Race Condition/Timing", "type": "logic", "severity": "medium"},
+        {"id": "logic_escalator", "name": "Privilege Escalation", "type": "logic", "severity": "high"},
+        {"id": "recon_nuclei", "name": "Nuclei Templates", "type": "recon", "severity": "critical"},
+        {"id": "recon_httpx", "name": "HTTP Fingerprinting", "type": "recon", "severity": "medium"},
+    ]
+    return {"vectors": vectors, "total": len(vectors)}

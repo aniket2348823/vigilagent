@@ -832,6 +832,37 @@ class HiveOrchestrator:
         )
 
         # 5. Seed the Mission — PUBLISH WITH SCAN_ID FOR CONTEXT ISOLATION
+        # Fingerprint the stack from the URL + a lightweight HEAD/GET probe so
+        # TARGET_ACQUIRED stops advertising ["Unknown"] (observed on an obvious
+        # PHP target). Best-effort: never blocks or fails the scan.
+        _detected_stack: list[str] = []
+        try:
+            _u = str(target_config.get("url", ""))
+            _ext = _u.split("?", 1)[0].rsplit(".", 1)
+            if len(_ext) == 2 and _ext[1].lower() in {
+                "php", "asp", "aspx", "jsp", "jspx", "cfm", "rb", "py",
+            }:
+                _detected_stack.append(_ext[1].upper())
+            import httpx as _hx
+
+            async with _hx.AsyncClient(timeout=5, follow_redirects=False) as _client:
+                _resp = await _client.head(_u, headers={"User-Agent": "Vigilagent-Fingerprint"})
+                if _resp.status_code in (403, 404, 405, 501):
+                    _resp = await _client.get(_u, headers={"User-Agent": "Vigilagent-Fingerprint"})
+                _srv = (_resp.headers.get("server") or "").strip()
+                if _srv:
+                    _detected_stack.append(_srv.split("/")[0].capitalize() if "/" not in _srv else _srv)
+                _xp = (_resp.headers.get("x-powered-by") or "").strip()
+                if _xp:
+                    _detected_stack.append(_xp)
+                for _cookie in (_resp.headers.get("set-cookie") or "").lower().split(","):
+                    _c = _cookie.split("=")[0].strip()
+                    if _c in ("phpsessid", "jsessionid", "asp.net_sessionid", "csrftoken"):
+                        _detected_stack.append(
+                            {"phpsessid": "PHP", "jsessionid": "Java", "asp.net_sessionid": "ASP.NET"}.get(_c, _c)
+                        )
+        except Exception as _fp_exc:
+            logger.debug("[%s] Stack fingerprint probe failed: %s", scan_id, _fp_exc)
         await bus.publish(
             HiveEvent(
                 type=EventType.TARGET_ACQUIRED,
@@ -839,7 +870,7 @@ class HiveOrchestrator:
                 scan_id=scan_id,
                 payload={
                     "url": target_config["url"],
-                    "tech_stack": ["Unknown"],
+                    "tech_stack": list(dict.fromkeys(_detected_stack)) or ["Unknown"],
                     "scan_mode": target_config.get("scan_mode")
                     or target_config.get("mode")
                     or getattr(settings, "ALPHA_DEFAULT_MODE", "STANDARD"),
@@ -1371,6 +1402,19 @@ class HiveOrchestrator:
             _early_stop_min_elapsed = float(getattr(settings, "SCAN_EARLY_STOP_MIN_ELAPSED", 90) or 90)
             _last_finding_ts = loop_start
             _last_finding_count = 0
+            # Activity = ANY bus event in this scan (JOB_COMPLETED, LIVE_ATTACK,
+            # RECON_PACKET, ...). Sigma's CLI validations run up to 180s per tool
+            # pass and can be finding-silent the whole time — keying idle on
+            # findings alone made the early stop fire mid-work and orphan
+            # in-flight jobs. A quiet transcript means agents genuinely idle.
+            try:
+                _scan_ctx = bus.get_or_create_context(scan_id)
+                _last_activity_count = len(_scan_ctx.transcript)
+            except Exception:
+                _scan_ctx = None
+                _last_activity_count = 0
+            _last_activity_ts = loop_start
+            _hb_seq = 0
 
             _monitor_agents = [
                 "planner",
@@ -1407,7 +1451,16 @@ class HiveOrchestrator:
                 if _cur_findings != _last_finding_count:
                     _last_finding_count = _cur_findings
                     _last_finding_ts = time.time()
-                _idle_too_long = time.time() - _last_finding_ts >= _early_stop_idle
+                if _scan_ctx is not None:
+                    _act_count = len(_scan_ctx.transcript)
+                    if _act_count != _last_activity_count:
+                        _last_activity_count = _act_count
+                        _last_activity_ts = time.time()
+                # Idle only when BOTH findings and bus activity are quiet.
+                _idle_too_long = (
+                    time.time() - _last_finding_ts >= _early_stop_idle
+                    and time.time() - _last_activity_ts >= _early_stop_idle
+                )
                 _min_elapsed = _elapsed >= _early_stop_min_elapsed
                 _enough_findings = _cur_findings >= _early_stop_min_findings
                 _high_coverage = _coverage_pct >= 98.0
@@ -1450,7 +1503,32 @@ class HiveOrchestrator:
                         }
                     )
                     break
+
                 # ────────────────────────────────────────────────────────────
+                # Liveness heartbeat (#observability-fix): during long silent
+                # tool passes (sqlmap/nuclei up to 180s) no agent events fire,
+                # which made the dashboard look frozen. Emit a compact
+                # progress snapshot roughly every 3rd monitoring tick.
+                _hb_seq += 1
+                if _hb_seq % 3 == 0:
+                    try:
+                        await stats_db_manager.add_scan_event(
+                            scan_id,
+                            {
+                                "type": "PROGRESS",
+                                "source": "VIGILAGENT",
+                                "scan_id": scan_id,
+                                "payload": {
+                                    "elapsed_s": int(_elapsed),
+                                    "findings": _cur_findings,
+                                    "coverage_pct": round(_coverage_pct, 1),
+                                    "bus_events": _last_activity_count,
+                                    "phase": "EXPLOITATION",
+                                },
+                            },
+                        )
+                    except Exception:
+                        pass
 
                 # Use broadcast_immediate to ensure events hit the listener
                 await manager.broadcast_immediate(
@@ -1488,6 +1566,41 @@ class HiveOrchestrator:
             # ═══════════════════════════════════════════════════════════════════════
             # V6 LIFECYCLE: Complete Exploitation, Start Reporting
             # ═══════════════════════════════════════════════════════════════════════
+            # Job accounting: report dispatched vs completed so jobs killed by
+            # early-stop/timeout are visible instead of vanishing silently.
+            try:
+                _jc = getattr(bus, "job_counters", {}).pop(scan_id, None) or {}
+                _assigned = int(_jc.get("assigned", 0))
+                _done = int(_jc.get("completed", 0))
+                if _assigned > 0:
+                    _inflight = max(0, _assigned - _done)
+                    _acct_payload = {
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                        "agent": "zeta",
+                        "threat_type": "JOB_ACCOUNTING",
+                        "url": target_config.get("url", ""),
+                        "result": (
+                            f"Jobs: {_done}/{_assigned} completed"
+                            + (f", {_inflight} aborted at phase end" if _inflight else "")
+                        ),
+                        "severity": "INFO",
+                        "risk_score": 0,
+                    }
+                    await manager.broadcast({"type": "LIVE_ATTACK_FEED", "scan_id": scan_id, "payload": _acct_payload})
+                    # Persist so /events endpoint surfaces it (broadcast alone isn't durable)
+                    try:
+                        await stats_db_manager.add_scan_event(
+                            scan_id,
+                            {"type": "LIVE_ATTACK_FEED", "source": "VIGILAGENT", "scan_id": scan_id, "payload": _acct_payload},
+                        )
+                    except Exception:
+                        pass
+                    logger.info(
+                        "[%s] Job accounting: assigned=%d completed=%d in-flight-aborted=%d",
+                        scan_id, _assigned, _done, _inflight,
+                    )
+            except Exception as _acc_exc:
+                logger.debug("[%s] job accounting failed: %s", scan_id, _acc_exc)
             await phase_gate.advance_to(ScanPhase.REPORTING)
             await manager.broadcast(
                 {

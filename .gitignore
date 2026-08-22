@@ -106,6 +106,7 @@ reports/named-reports/
 # ── Logs ─────────────────────────────────────────────────────────
 logs/
 *.log
+*.log*
 
 # ── Graphify (knowledge graph build output) ──────────────────────
 graphify-out/

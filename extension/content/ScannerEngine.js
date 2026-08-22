@@ -3,6 +3,12 @@
  * "Zero False Positives" Philosophy
  */
 
+// Skip on localhost/extension pages to avoid interfering with the dashboard
+if (['127.0.0.1', 'localhost'].includes(window.location.hostname) ||
+    window.location.protocol === 'chrome-extension:') {
+    // Do nothing on localhost
+} else {
+
 class ScannerEngine {
     constructor() {
         this.results = {
@@ -237,3 +243,5 @@ class ScannerEngine {
 const antigravityEngine = new ScannerEngine();
 // Delay slightly to ensure page load
 setTimeout(() => antigravityEngine.runFullScan(), 2000);
+
+} // end else (not localhost)

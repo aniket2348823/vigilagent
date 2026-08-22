@@ -68,30 +68,69 @@ class RedisClient:
             logger.warning("Redis not available - using in-memory fallback")
             return
 
-        try:
-            self._client = aioredis.from_url(
-                self.config.url,
-                max_connections=self.config.max_connections,
-                socket_timeout=self.config.socket_timeout,
-                socket_connect_timeout=self.config.socket_connect_timeout,
-                decode_responses=self.config.decode_responses,
-                retry_on_timeout=True,
-                health_check_interval=self.config.health_check_interval,
-            )
+        # FIX (IPv4/IPv6 mismatch): local Redis instances frequently bind
+        # loopback ONLY on one stack (observed: redis-server listening on
+        # [::1]:6380 while REDIS_URL pointed at 127.0.0.1 -> every connect
+        # refused, silent in-memory fallback for rate limiting + caching).
+        # Probe the configured host first, then the alternate loopback hosts,
+        # and keep the first URL that actually answers PING.
+        candidates = self._loopback_candidates(self.config.url)
+        last_err: Exception | None = None
+        for url in candidates:
+            try:
+                self._client = aioredis.from_url(
+                    url,
+                    max_connections=self.config.max_connections,
+                    socket_timeout=self.config.socket_timeout,
+                    socket_connect_timeout=self.config.socket_connect_timeout,
+                    decode_responses=self.config.decode_responses,
+                    retry_on_timeout=True,
+                    health_check_interval=self.config.health_check_interval,
+                )
+                await self._client.ping()
+                self._is_healthy = True
+                self.config.url = url  # health-check loop reconnects to this one
+                if url != candidates[0]:
+                    logger.warning(
+                        "Configured Redis URL unreachable; connected via fallback %s",
+                        self._safe_url(url),
+                    )
+                logger.info(f"Redis client initialized: {self._safe_url(url)}")
+                self._health_check_task = self._task_manager.create_task(
+                    self._health_check_loop(), name="health_check_loop"
+                )
+                return
+            except Exception as e:
+                last_err = e
+                self._client = None
+                self._is_healthy = False
 
-            # Test connection
-            await self._client.ping()
-            self._is_healthy = True
+        logger.error(f"Failed to initialize Redis client: {last_err}")
+        self._is_healthy = False
 
-            # Start health check loop
-            self._health_check_task = self._task_manager.create_task(
-                self._health_check_loop(), name="health_check_loop"
-            )
+    @staticmethod
+    def _safe_url(url: str) -> str:
+        import re as _re
 
-            logger.info(f"Redis client initialized: {self.config.url}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Redis client: {e}")
-            self._is_healthy = False
+        return _re.sub(r"(://[^:@/]+:)[^@]+@", r"\1***@", url)
+
+    @staticmethod
+    def _loopback_candidates(url: str) -> list[str]:
+        """The configured URL plus the same URL against each alternate
+        loopback host (127.0.0.1 / ::1 / localhost). Non-loopback hosts are
+        returned unchanged — never rewritten."""
+        from urllib.parse import urlparse, urlunparse
+
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            return [url]
+        alternates = {"127.0.0.1", "::1", "localhost"} - {host}
+        out = [url]
+        for alt in sorted(alternates):
+            netloc = parsed.netloc.replace(host, alt, 1) if host else parsed.netloc
+            out.append(urlunparse(parsed._replace(netloc=netloc)))
+        return out
 
     def get_pool_stats(self) -> dict:
         """Return current connection pool utilization metrics."""

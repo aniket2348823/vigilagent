@@ -38,6 +38,31 @@ async def download_report_file(filename: str):
     return FileResponse(path=file_path, filename=filename, media_type="application/pdf")
 
 
+def _extract_clean_text(val) -> str:
+    """Extract clean text from a value that may be a dict, list, or string.
+
+    Evidence fields are often nested dicts like
+    ``{'raw': 'curl ...', 'request': '', 'response': ''}`` or
+    ``{'description': '...', 'type': 'scan-output'}``.
+    We want the human-readable text, not the Python repr."""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, dict):
+        # Prefer 'description' > 'raw' > first non-empty string value
+        for key in ("description", "raw", "text", "message"):
+            v = val.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        # Fallback: join all string values
+        parts = [str(v) for v in val.values() if isinstance(v, str) and v.strip()]
+        return "; ".join(parts)[:500] if parts else str(val)
+    if isinstance(val, list):
+        return "; ".join(str(v) for v in val if v)[:500]
+    return str(val)
+
+
 def _to_finding(raw: dict):
     """Map a stored scan finding dict onto the unified Finding model (§17, §18).
 
@@ -75,18 +100,61 @@ def _to_finding(raw: dict):
         title=str(payload.get("type") or payload.get("vuln_type") or payload.get("name") or "Finding"),
         severity=sev,
         affected_target=str(payload.get("url") or payload.get("endpoint") or ""),
-        description=str(payload.get("description") or payload.get("evidence") or ""),
+        description=_extract_clean_text(payload.get("description") or payload.get("evidence") or payload.get("curl-command", "")),
         cvss_score=payload.get("cvss_score"),
         cvss_vector=str(payload.get("cvss_vector", "")),
         state=FindingState.CONFIRMED if confirmed else FindingState.CANDIDATE,
         scope_status=str(payload.get("scope_status", "in_scope")),
-        business_impact=str(payload.get("business_impact", "")),
-        technical_impact=str(payload.get("technical_impact", "")),
+        business_impact=_extract_clean_text(payload.get("business_impact", "") or payload.get("impact", "")),
+        technical_impact=_extract_clean_text(payload.get("technical_impact", "") or payload.get("impact", "")),
         steps_to_reproduce=list(payload.get("steps_to_reproduce", []) or []),
         false_positive_controls=list(controls or []),
         remediation=str(payload.get("remediation", "")),
         references=list(payload.get("references", []) or []),
         confidence=FindingConfidence.VERIFIED if confirmed else FindingConfidence.PROBABLE,
+    )
+
+
+@router.get("/findings-file/{scan_id}/{filename}")
+async def download_findings_export(scan_id: str, filename: str):
+    """Serve a file from the per-scan findings-export bundle
+    (reports/<scan_id>/{findings.json,sarif,hackerone.md,stix,pdfs}).
+
+    FIX: scan_report now links these directly — previously the only access
+    path was the POST export endpoint, so completed scans showed empty
+    report lists in the UI."""
+    import re as _re
+
+    if (
+        not scan_id
+        or not filename
+        or ".." in scan_id
+        or ".." in filename
+        or "/" in scan_id
+        or "/" in filename
+        or "\\" in scan_id
+        or "\\" in filename
+        or not _re.match(r"^[A-Za-z0-9_\-]+$", scan_id)
+        or not _re.match(r"^[A-Za-z0-9_\-. ]+$", filename)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid scan id or filename")
+    base_dir = os.path.realpath(os.path.join(REPORTS_DIR, scan_id))
+    file_path = os.path.realpath(os.path.join(base_dir, filename))
+    if not file_path.startswith(base_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    _media = {
+        ".pdf": "application/pdf",
+        ".json": "application/json",
+        ".md": "text/markdown",
+        ".sarif": "application/json",
+    }
+    ext = os.path.splitext(filename)[1].lower()
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type=_media.get(ext, "application/octet-stream"),
     )
 
 
@@ -97,17 +165,55 @@ async def export_findings(scan_id: str):
     Technical PDF. Additive endpoint — existing /pdf route is unchanged."""
     from pathlib import Path
 
-    from backend.api.endpoints.scans import _findings_from_scan
+    from backend.api.endpoints.scans import _enrich_finding_for_api, _findings_from_scan
     from backend.reporting.finding_report import FindingReportEngine
 
     scan = stats_db_manager.get_scan_state(scan_id) or {}
     raw_findings = _findings_from_scan(scan)
-    findings = [_to_finding(r) for r in raw_findings]
+    # Enrich (stable id, honoured severity→CVSS band, static remediation hint,
+    # timestamp fallback) BEFORE building Finding models so every exported
+    # format carries the same fields as /findings.
+    findings = [_to_finding(_enrich_finding_for_api(r, scan_id)) for r in raw_findings]
     target = scan.get("target_url") or scan.get("scope") or scan_id
 
     base_dir = Path(REPORTS_DIR) / scan_id
+    base_dir.mkdir(parents=True, exist_ok=True)
     engine = FindingReportEngine(scan_id, str(target))
     outputs = engine.emit_all(findings, base_dir)
+
+    # V9: Generate full professional PDF using VigilagentReportBuilder
+    # (same builder as /pdf/{scan_id}) so the export bundle includes
+    # detailed multi-page reports with CWE, CVSS vectors, payload tables,
+    # vulnerable code analysis, and scan timeline.
+    try:
+        import shutil
+        from backend.reporting.scan_pdf import VigilagentReportBuilder
+        events = scan.get("events", [])
+        if isinstance(events, dict):
+            events = list(events.values())
+        enriched = [_enrich_finding_for_api(r, scan_id) for r in raw_findings]
+        builder = VigilagentReportBuilder(
+            scan_id=scan_id,
+            target_url=str(target),
+            findings=enriched,
+            events=events,
+        )
+        # build() is async — run synchronously via the event loop
+        full_pdf_path = await builder.build()
+        if full_pdf_path and os.path.isfile(full_pdf_path):
+            # Copy the full Scan_Report as both executive and technical
+            # (the combined report contains both sections)
+            exec_dst = base_dir / "executive_report.pdf"
+            tech_dst = base_dir / "technical_report.pdf"
+            shutil.copy2(full_pdf_path, str(exec_dst))
+            shutil.copy2(full_pdf_path, str(tech_dst))
+            outputs["executive_report.pdf"] = str(exec_dst)
+            outputs["technical_report.pdf"] = str(tech_dst)
+            outputs["scan_report.pdf"] = full_pdf_path
+    except Exception as pdf_exc:
+        import logging as _log
+        _log.getLogger("api.reports").warning("Full PDF generation failed: %s", pdf_exc)
+
     return {"scan_id": scan_id, "finding_count": len(findings), "outputs": outputs}
 
 

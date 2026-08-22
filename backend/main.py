@@ -520,7 +520,7 @@ async def _api_key_middleware(request: Request, call_next):
     # endpoints.  The extension runs locally and its recon/bridge endpoints are
     # already protected by scope-guard + CORS middleware.
     _api_key_skip = (
-        path in ("/api/health", "/docs", "/openapi.json", "/", "/redoc")
+        path in ("/api/health", "/api/runtime/health", "/docs", "/openapi.json", "/", "/redoc")
         or not path.startswith("/api/")
         or path.startswith("/api/defense/")
         # Extension bridge: the local Chrome extension POSTs its passive
@@ -564,15 +564,22 @@ async def _rate_limit_middleware(request: Request, call_next):
         client_ip = request.client.host if request.client else "unknown"
         try:
             await rate_limiter.check_rate_limit(client_ip, request.url.path)
-        except HTTPException:
-            raise  # Let FastAPI's HTTPException propagate with Retry-After header
+        except HTTPException as http_exc:
+            # User middlewares wrap OUTSIDE FastAPI's ExceptionMiddleware, so a
+            # raised HTTPException here never reaches the exception handler and
+            # surfaces as an unhandled 500 inside BaseHTTPMiddleware's task
+            # group. Convert it to the intended 429 response ourselves.
+            retry_after = (http_exc.headers or {}).get("Retry-After", "1")
+            return JSONResponse(
+                status_code=http_exc.status_code,
+                content={"detail": http_exc.detail},
+                headers={"Retry-After": str(retry_after)},
+            )
         except Exception as exc:
             import logging as _log
 
             _log.getLogger("main").debug("Rate limiter error: %s", exc)
-            from fastapi.responses import JSONResponse, RedirectResponse as _JSONResponse
-
-            return _JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
+            return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
     return await call_next(request)
 
 
@@ -627,19 +634,32 @@ async def _scope_guard_middleware(request: Request, call_next):
 async def _csrf_middleware(request: Request, call_next):
     """CSRF protection for state-changing operations.
 
-    SECURITY FIX: We peek at the body via request.body() which Starlette
-    caches internally, so downstream handlers still receive the original bytes.
+    SECURITY MODEL:
+      1. Valid API key → skip CSRF entirely (API key already authenticates
+         the caller; CSRF only protects browser-origin requests without keys).
+      2. Extension bridge/recon/defense endpoints → skip CSRF (localhost-only,
+         no API key, protected by scope-guard + CORS).
+      3. All other state-changing requests → require a valid CSRF token.
+
+    This replaces the old hardcoded path whitelist (C-8) with a single
+    principle: API key auth is a stronger guarantee than CSRF tokens, so
+    the two are never needed together.
     """
     # Only apply to state-changing methods on API routes
     if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
-        # Extension bridge/recon endpoints run over localhost only and are
-        # protected by scope-guard + CORS.  Skip CSRF+API-key for these — the
-        # local Chrome extension POSTs passive observation data (recon packets,
-        # captured keys) with no CSRF token and no API key. FIX: this check
-        # must be TOP-LEVEL, not nested inside the skip_paths branch below —
-        # nested, /api/recon/ingest never matched and every extension POST fell
-        # through to "Missing X-CSRF-Token" → 403 (observed: extension relay
-        # broken since the CSRF middleware landed).
+        # ── Check 1: Valid API key → CSRF is redundant, skip ──
+        # The _api_key_middleware runs BEFORE this middleware, so by the time
+        # we reach here a valid API key has already been verified. CSRF tokens
+        # exist to protect browser requests that can't carry API keys; once an
+        # API key is present, CSRF offers zero additional security.
+        api_key = request.headers.get("X-API-Key", "") or request.headers.get("Authorization", "").replace("Bearer ", "")
+        if api_key and hmac.compare_digest(api_key, _app_api_key):
+            return await call_next(request)
+
+        # ── Check 2: Extension bridge/recon/defense endpoints ──
+        # The local Chrome extension POSTs passive observation data (recon
+        # packets, captured keys) with no CSRF token and no API key.  These
+        # are localhost-only and protected by scope-guard + CORS.
         if (
             request.url.path.startswith("/api/recon/")
             or request.url.path.startswith("/api/bridge/")
@@ -647,28 +667,9 @@ async def _csrf_middleware(request: Request, call_next):
         ):
             return await call_next(request)
 
-        # Skip for endpoints that don't require CSRF (e.g., webhooks, internal APIs)
-        # SECURITY FIX (C-8): Instead of skipping CSRF for write endpoints,
-        # require API key auth as alternative. This prevents CSRF on attack/
-        # recon endpoints that were previously unprotected.
-        skip_paths = [
-            "/api/attack/fire",
-            "/api/defense/analyze",
-        ]
-        if any(request.url.path.startswith(p) for p in skip_paths):
-            # Other skip paths: require X-API-Key as CSRF alternative
-            api_key = request.headers.get("X-API-Key", "")
-            if not api_key or not hmac.compare_digest(api_key, _app_api_key):
-                return JSONResponse(
-                    status_code=403,
-                    content={"detail": "API key required for this endpoint (CSRF protection alternative)."},
-                )
-            return await call_next(request)
-
-        # Get CSRF token from header or form
+        # ── Check 3: Require CSRF token for all other state-changing requests ──
         csrf_token = request.headers.get("X-CSRF-Token")
         if not csrf_token:
-            # Try to get from form data (for multipart/form-data)
             try:
                 form = await request.form()
                 csrf_token = form.get("csrf_token")

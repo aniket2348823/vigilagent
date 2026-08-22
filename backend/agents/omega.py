@@ -139,9 +139,20 @@ class OmegaAgent(BrowserEnabledAgent):
         gpt-oss-20b, (2) graph-driven historical confidence, (3) a deterministic
         evidence-weighted fallback (NOT random) based on defense pressure."""
 
-        # 1. If the LLM gave a valid recommendation, use it
+        # 1. If the LLM gave a valid recommendation, use it — but only when the
+        #    transcript actually supports that vertical (observed: gpt-oss-20b
+        #    recommended E_COMMERCE_BLITZ for a DVWA training app; pricing/
+        #    coupon hypotheses are meaningless there and burned the campaign).
         if ai_strategy and ai_strategy in self.STRATEGY_PROFILES:
-            return ai_strategy
+            if ai_strategy == "E_COMMERCE_BLITZ" and not self._commerce_signals(scan_id):
+                logger.info(
+                    "[%s] LLM suggested E_COMMERCE_BLITZ but no commerce "
+                    "signals in transcript — falling back to evidence-based "
+                    "selection.",
+                    self.name,
+                )
+            else:
+                return ai_strategy
 
         # 2. Check graph intelligence for historical patterns
         predictions = graph_engine.predict_next("TARGET_ACQUIRED", target_url)
@@ -163,6 +174,16 @@ class OmegaAgent(BrowserEnabledAgent):
         if defense_pressure >= 0.15:
             return "MULTI_STEP_EXPLOIT"
         return "MULTI_STEP_EXPLOIT"
+
+    def _commerce_signals(self, scan_id: str) -> bool:
+        """True when the scan transcript shows e-commerce markers (pricing,
+        cart, checkout, coupon endpoints). Gates LLM strategy acceptance."""
+        ctx = getattr(self.bus, "scan_contexts", {}).get(scan_id)
+        transcript = ctx.transcript_text(tail=200).lower() if ctx and hasattr(ctx, "transcript_text") else ""
+        if not transcript:
+            return False
+        _markers = ("cart", "checkout", "coupon", "price", "payment", "order", "basket")
+        return any(m in transcript for m in _markers)
 
     def _defense_pressure(self, scan_id: str) -> float:
         ctx = getattr(self.bus, "scan_contexts", {}).get(scan_id)

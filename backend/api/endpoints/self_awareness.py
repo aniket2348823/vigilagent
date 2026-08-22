@@ -31,6 +31,7 @@ tracer = get_tracer()
 
 @router.get("")
 @router.get("/")
+@router.get("/status")
 @rate_limit()
 async def get_self_awareness_summary():
     """Self-awareness summary (Architecture §15 outputs, §22 API surface).

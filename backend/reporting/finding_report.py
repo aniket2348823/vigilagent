@@ -115,7 +115,7 @@ class FindingReportEngine:
                     {
                         "id": rule_id,
                         "name": f.title,
-                        "shortDescription": {"text": f.description[:200]},
+                        "shortDescription": {"text": f"{f.title} at {f.affected_target}".strip()},
                         "defaultConfiguration": {"level": _SEV_TO_SARIF.get(f.severity.value, "note")},
                     }
                 )

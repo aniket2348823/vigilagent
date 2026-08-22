@@ -6,7 +6,9 @@ const HIVE_ENDPOINT = "http://localhost:8000/api/defense/analyze";
 
 // 1. INITIALIZATION: Attach Debugger to Active Tab
 // We use chrome.debugger because it creates a 'freeze' state that standard listeners cannot.
-chrome.action.onClicked.addListener((tab) => {
+// NOTE: chrome.action.onClicked does NOT fire when a popup is configured in manifest.json.
+// Instead, we listen for AEGIS_ACTIVATE messages from the popup or content scripts.
+function attachToTab(tab) {
     if (activeTabId === tab.id) {
         console.log("[AEGIS] Shield already active.");
         return;
@@ -25,6 +27,14 @@ chrome.action.onClicked.addListener((tab) => {
         chrome.debugger.sendCommand({ tabId: activeTabId }, "Runtime.enable");
         chrome.debugger.sendCommand({ tabId: activeTabId }, "Page.enable");
     });
+}
+
+// Listen for activation from popup or content scripts
+chrome.runtime.onMessage.addListener((message, sender) => {
+    if (message.type === "AEGIS_ACTIVATE") {
+        const tab = sender.tab || message.tab;
+        if (tab && tab.id) attachToTab(tab);
+    }
 });
 
 // 2. EVENT LISTENER: Catch DOM Mutations & Interactions

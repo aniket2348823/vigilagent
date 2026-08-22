@@ -149,6 +149,20 @@ class KappaAgent(BrowserEnabledAgent):
         and kick the slow path off as a background task tracked by the agent.
         """
         payload = event.payload
+        # FIX (duplicate suppression): recon wave 2 re-ran the same nuclei
+        # templates and re-emitted identical VULN_CONFIRMED events, which were
+        # archived/embedded twice. Skip (type, url) pairs already archived in
+        # THIS scan — the canonical dedup for host aliases still happens at
+        # the findings API layer.
+        _sig = (str(payload.get("type", "")), str(payload.get("url", "")))
+        _seen: set = getattr(self, "_archived_signatures", None)
+        if _seen is None:
+            _seen = set()
+            self._archived_signatures = _seen
+        if _sig in _seen:
+            logger.debug(f"[{self.name}] Duplicate VULN_CONFIRMED suppressed: {_sig}")
+            return
+        _seen.add(_sig)
         # ScanContext: record event for transcript causality
         if hasattr(self.bus, "get_or_create_context"):
             _ctx = self.bus.get_or_create_context(getattr(event, "scan_id", "GLOBAL"))

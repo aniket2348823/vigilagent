@@ -47,7 +47,12 @@ class RateLimiter:
             "/api/reports/pdf": 10,
             "/api/reports/consolidated": 5,
             "/api/attack/fire": 30,
-            "/api/recon": 60,
+            # FIX (#rate-limit-vs-extension): the Chrome extension batches
+            # passive recon POSTs (/api/recon/ingest + /api/recon/keys) for
+            # every tab navigation — bursts routinely exceed 60/min and got
+            # throttled mid-scan, dropping observation packets. These are
+            # key-exempt localhost-only paths; raise rather than lose data.
+            "/api/recon": 300,
             "/api/ai": 20,
         }
 

@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time
 import urllib.parse
 from datetime import datetime
@@ -466,6 +467,10 @@ class SigmaAgent(
                 tool == "wpscan" and result.exit_code == 4
             )
             self._record_path_outcome(f"cli:{tool}", success=_ok)
+        logger.info(
+            f"[{self.name}] CLI validation finished tool={tool} passes={len(results)} "
+            f"statuses={[r.status for r in results]}"
+        )
         await self.bus.publish(
             HiveEvent(
                 type=EventType.LIVE_ATTACK,
@@ -519,6 +524,14 @@ class SigmaAgent(
                         info = finding.get("info", {}) if isinstance(finding.get("info"), dict) else {}
                         template_id = str(finding.get("template-id") or info.get("name") or tool)
                         sev = str(info.get("severity") or "high").lower()
+                        # FIX (evidence fidelity): nuclei emits
+                        # `curl -X 'GET' -d '<body>' ...` for body-parameter
+                        # matches — a GET with a body, which most servers and
+                        # every HTTP purist reject. Rewrite to POST so the
+                        # reproduction command actually replays the match.
+                        _curl = finding.get("curl-command") or ""
+                        if isinstance(_curl, str) and "-x 'get'" in _curl.lower() and re.search(r"-d\s", _curl, re.IGNORECASE):
+                            _curl = re.sub(r"-[xX]\s*'GET'", "-X 'POST'", _curl, count=1)
                         await _publish(
                             template_id,
                             str(finding.get("matched-at") or url),
@@ -531,7 +544,7 @@ class SigmaAgent(
                                 "matched_at": finding.get("matched-at"),
                                 "extractor": finding.get("extractor"),
                             },
-                            finding.get("curl-command") or finding,
+                            _curl or finding,
                         )
                 elif tool == "nikto":
                     # Plain-text report; finding lines carry a bracketed ID.
@@ -584,31 +597,68 @@ class SigmaAgent(
                                 v,
                             )
                 elif tool == "sqlmap":
-                    # Text: "parameter 'x' is vulnerable" lines + details block.
+                    # Text: two shapes reach the captured file depending on
+                    # sqlmap version/mode:
+                    #   a) console summary:  "parameter 'x' is vulnerable"
+                    #      followed by Parameter/Type/Payload lines
+                    #   b) detail-only blocks (observed on --batch runs):
+                    #      "Parameter: username (GET)" then Type:/Title:/
+                    #      Payload: lines. sqlmap only prints these detail
+                    #      blocks for CONFIRMED injectable parameters, so a
+                    #      Parameter:+Payload: pair IS a vulnerability.
                     lines = raw.splitlines()
+                    published_params = set()
                     for i, ln in enumerate(lines):
                         m = re.search(r"parameter '([^']+)' is vulnerable", ln, re.IGNORECASE)
-                        if not m:
+                        if m:
+                            _param = m.group(1)
+                        else:
+                            # Shape (b): "Parameter: username (GET)" — confirm
+                            # only when a Payload: line follows within the block.
+                            m = re.match(r"\s*Parameter:\s*([^\s(]+)", ln)
+                            if not m:
+                                continue
+                            _param = m.group(1)
+                            window = "\n".join(lines[i : min(i + 12, len(lines))])
+                            if not re.search(r"^\s*Payload:", window, re.MULTILINE):
+                                continue
+                        if _param in published_params:
                             continue
-                        _param = m.group(1)
-                        # Gather the following Parameter/Type/Payload block.
-                        _detail = [ln]
-                        for nxt in lines[i : i + 8]:
-                            if re.match(r"\s*(Parameter|Type|Payload|Title|Vector):", nxt):
-                                _detail.append(nxt.strip())
-                        _block = "\n".join(_detail)[:600]
+                        published_params.add(_param)
+                        # Gather the following Parameter/Type/Title/Payload/
+                        # Vector detail block (sqlmap prints it for confirmed
+                        # injections; Payload lines carry the proof).
+                        _detail = [
+                            l.strip() for l in lines[i : i + 14]
+                            if re.match(r"\s*(Parameter|Type|Title|Payload|Vector):", l)
+                        ]
+                        if ln.strip() not in _detail:
+                            _detail.insert(0, ln.strip())
+                        _block = "\n".join(_detail)[:800]
                         _tech = "".join(
-                            re.findall(r"Type:\s*(.+) ", _block)[:1]
+                            re.findall(r"Type:\s*(.+)", _block)[:1]
                         )
                         await _publish(
                             f"sqli:{_param}",
                             url,
                             "critical",
-                            {"tool": "sqlmap", "parameter": _param, "technique": _tech, "detail": _block},
+                            {"tool": "sqlmap", "parameter": _param, "technique": _tech.strip(), "detail": _block},
                             _block,
                         )
         except Exception as parse_exc:
-            logger.debug(f"[{self.name}] CLI validation finding parse failed: {parse_exc}")
+            logger.error(f"[{self.name}] CLI validation finding parse failed: {parse_exc}", exc_info=True)
+            # Also publish a visible error so the dashboard/events feed shows it
+            try:
+                await self.bus.publish(
+                    HiveEvent(
+                        type=EventType.LOG,
+                        source=self.name,
+                        scan_id=scan_id,
+                        payload={"message": f"CLI parse failed for {tool}: {parse_exc}"},
+                    )
+                )
+            except Exception:
+                pass
 
     async def handle_generation_request(self, event: HiveEvent):
         packet_dict = event.payload

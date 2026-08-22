@@ -92,6 +92,9 @@ function bindEvents() {
     // Clear All
     document.getElementById('clear-all').addEventListener('click', clearAllProfiles);
 
+    // Aegis Shield activation
+    document.getElementById('activate-aegis').addEventListener('click', activateAegis);
+
     // Delegate clicks for profile actions
     document.getElementById('profiles-list').addEventListener('click', async (e) => {
         const target = e.target;
@@ -233,6 +236,24 @@ async function clearAllProfiles() {
 // ============================================================================
 // UI HELPERS
 // ============================================================================
+
+async function activateAegis() {
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab) {
+            showNotification('No active tab', 'error');
+            return;
+        }
+        chrome.runtime.sendMessage({
+            type: 'AEGIS_ACTIVATE',
+            tab: { id: tab.id, url: tab.url }
+        });
+        showNotification('Aegis Shield activated!', 'success');
+    } catch (e) {
+        console.error('Aegis activation error:', e);
+        showNotification('Failed to activate shield', 'error');
+    }
+}
 
 function showNotification(message, type = 'info') {
     // Create notification element

@@ -106,6 +106,17 @@ class EventBus:
         self.dead_letters: list[dict[str, Any]] = []  # Dead Letter Queue
         self._max_dead_letters = 500  # Prevent unbounded DLQ growth
         self._task_manager = TaskManager("EventBus")
+        # Per-scan job accounting (scan_id -> {"assigned": n, "completed": n}).
+        # Lets the orchestrator report honest in-flight job counts when the
+        # exploitation phase ends early instead of losing them silently.
+        self.job_counters: dict[str, dict[str, int]] = {}
+
+    def bump_job_counter(self, scan_id: str, kind: str) -> None:
+        if not scan_id or scan_id == "GLOBAL":
+            return
+        counters = self.job_counters.setdefault(scan_id, {"assigned": 0, "completed": 0})
+        if kind in counters:
+            counters[kind] += 1
 
     def get_or_create_context(self, scan_id: str) -> ScanContext:
         if scan_id not in self.scan_contexts:
@@ -212,7 +223,10 @@ class EventBus:
             logging.warning("[EventBus] Guard layer failed open for event %s: %s", event.id, exc)
 
         if event.type == EventType.JOB_COMPLETED:
+            self.bump_job_counter(event.scan_id, "completed")
             await memory_store.remember_notification(event.scan_id, "Background job completed", event.payload)
+        if event.type == EventType.JOB_ASSIGNED:
+            self.bump_job_counter(event.scan_id, "assigned")
         if event.type in {EventType.RECON_PACKET, EventType.RECON_COMPLETE, EventType.SCHEMA_DISCOVERED}:
             await memory_store.remember_episode(
                 event.scan_id,

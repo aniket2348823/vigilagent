@@ -4,6 +4,12 @@
 (function () {
     'use strict';
 
+    // Skip on localhost/extension pages to avoid interfering with the dashboard
+    if (['127.0.0.1', 'localhost'].includes(window.location.hostname) ||
+        window.location.protocol === 'chrome-extension:') {
+        return;
+    }
+
     // ========================================================================
     // DETECTION PATTERNS
     // ========================================================================

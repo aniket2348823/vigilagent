@@ -190,6 +190,27 @@ async def ingest_keys(request: Request):
 
     data = {"url": url, "keys": keys_raw, "timestamp": timestamp}
 
+    # FIX (keyring noise): skip the dashboard's OWN dev-server traffic
+    # (vite module graph, HMR, static assets). Observed: keyring filled with
+    # PHPSESSID entries attributed to localhost:5173/node_modules/*.js — pure
+    # noise that drowns real captures from the actual scan target.
+    if url:
+        from urllib.parse import urlparse as _urlparse2
+
+        _u = _urlparse2(url)
+        _host = (_u.hostname or "").lower()
+        _port = _u.port or (443 if _u.scheme == "https" else 80)
+        _is_dashboard_dev = (
+            _host in ("localhost", "127.0.0.1")
+            and _port in (5173, 4173)
+        )
+        _path_l = (_u.path or "").lower()
+        _is_asset = _path_l.startswith(("/node_modules/", "/@vite/", "/@fs/", "/src/")) or _path_l.endswith(
+            (".js", ".css", ".map", ".woff", ".woff2", ".png", ".jpg", ".svg", ".ico")
+        )
+        if _is_dashboard_dev or (_is_asset and "/node_modules/" in _path_l):
+            return {"status": "skipped", "reason": "dashboard-dev-asset"}
+
     # FIX-059: Wrap sync file I/O in asyncio.to_thread
     def _write_keyring():
         keyring = []

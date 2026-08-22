@@ -175,6 +175,11 @@ body {
     color: rgba(255, 255, 255, 0.7);
 }
 
+.btn.danger {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: white;
+}
+
 .popup-footer {
     padding: 10px;
     text-align: center;

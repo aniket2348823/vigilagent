@@ -68,9 +68,10 @@ let healthCheckAttempts = 0;
 let lastHealthOk = true;
 
 async function checkBackendHealth() {
+    const controller = new AbortController();
+    let timer = null;
     try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 3000); // hung backend can't block the poll
+        timer = setTimeout(() => controller.abort(), 3000); // hung backend can't block the poll
         const res = await fetch(`${BACKEND_URL}/api/health`, { method: 'GET', cache: 'no-store', signal: controller.signal });
         clearTimeout(timer);
         isBackendAlive = res.ok;
@@ -81,7 +82,7 @@ async function checkBackendHealth() {
             lastHealthOk = false;
         }
     } catch (e) {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         isBackendAlive = false;
         lastHealthOk = false;
     }

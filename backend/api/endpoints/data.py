@@ -88,3 +88,15 @@ async def delete_item(item_id: str, x_user_id: str = Header(None)):
             raise HTTPException(status_code=403, detail="Forbidden: RLS policy violation")
         del _store[item_id]
     return {"status": "deleted", "id": item_id}
+
+
+@router.get("/stats")
+async def get_data_stats():
+    """Get data store statistics."""
+    with _store_lock:
+        items = list(_store.values())
+    return {
+        "total_items": len(items),
+        "owners": list(set(item.get("owner", "anonymous") for item in items)),
+        "items": items[:50],
+    }

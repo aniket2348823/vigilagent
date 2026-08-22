@@ -429,8 +429,10 @@ def _findings_from_scan(scan: dict) -> list[dict]:
             return {}
         if "payload" in item and isinstance(item["payload"], dict):
             payload = dict(item["payload"])
-            for k in ("type", "source"):
-                if k in item and k not in payload:
+            for k in ("type", "source", "timestamp", "id"):
+                # Event-level fields the payload itself lacks (HiveEvent
+                # carries its own timestamp; payloads frequently don't).
+                if k in item and not payload.get(k):
                     payload[k] = item[k]
             return payload
         return dict(item)
@@ -495,29 +497,45 @@ def _enrich_finding_for_api(f: dict, scan_id: str) -> dict:
 
     # CVSS — if missing, compute deterministically from the vuln class.
     if not isinstance(out.get("cvss_score"), (int, float)) or not out.get("cvss_severity"):
-        try:
-            from backend.reporting.cvss_engine import score_for_vuln_class
+        _sev_str = str(out.get("severity") or "").upper()
+        _sev_band = {
+            "CRITICAL": ("CRITICAL", 9.5),
+            "HIGH": ("HIGH", 7.5),
+            "MEDIUM": ("MEDIUM", 5.5),
+            "LOW": ("LOW", 3.0),
+        }.get(_sev_str)
+        if _sev_band:
+            # FIX: the confirming tool already asserted a severity — honour it
+            # instead of letting the class-based scorer contradict it (observed:
+            # payload "Critical" stored next to cvss MEDIUM 5.3 because the
+            # scorer keyed on an unknown type string).
+            out["cvss_severity"] = _sev_band[0]
+            if not isinstance(out.get("cvss_score"), (int, float)) or not out.get("cvss_score"):
+                out["cvss_score"] = _sev_band[1]
+        else:
+            try:
+                from backend.reporting.cvss_engine import score_for_vuln_class
 
-            score, _vector = score_for_vuln_class(str(out.get("type", "")))
-            out.setdefault("cvss_score", round(float(score), 1))
-            band = (
-                "CRITICAL"
-                if score >= 9.0
-                else "HIGH"
-                if score >= 7.0
-                else "MEDIUM"
-                if score >= 4.0
-                else "LOW"
-                if score > 0
-                else "INFO"
-            )
-            out.setdefault("cvss_severity", band)
-        except Exception as exc:
-            import logging as _log
+                score, _vector = score_for_vuln_class(str(out.get("type", "")))
+                out.setdefault("cvss_score", round(float(score), 1))
+                band = (
+                    "CRITICAL"
+                    if score >= 9.0
+                    else "HIGH"
+                    if score >= 7.0
+                    else "MEDIUM"
+                    if score >= 4.0
+                    else "LOW"
+                    if score > 0
+                    else "INFO"
+                )
+                out.setdefault("cvss_severity", band)
+            except Exception as exc:
+                import logging as _log
 
-            _log.getLogger("api.scans").debug("CVSS scoring failed for finding: %s", exc)
-            out.setdefault("cvss_score", 0.0)
-            out.setdefault("cvss_severity", out.get("severity", "INFO"))
+                _log.getLogger("api.scans").debug("CVSS scoring failed for finding: %s", exc)
+                out.setdefault("cvss_score", 0.0)
+                out.setdefault("cvss_severity", out.get("severity", "INFO"))
 
     # Evidence dict shape: { request, response, ... } — never invent traffic.
     ev = out.get("evidence")
@@ -527,9 +545,44 @@ def _enrich_finding_for_api(f: dict, scan_id: str) -> dict:
     ev.setdefault("response", f.get("response") or f.get("http_response") or "")
     out["evidence"] = ev
 
-    # Remediation hint — accept legacy string / list / nested forms.
+    # Consistency pass: the tool-asserted severity ALWAYS wins over a stored
+    # CVSS band computed from an unknown type string (observed: payload
+    # "Critical" shipped alongside cvss MEDIUM 5.3 — an incoherent finding).
+    _sev_str = str(out.get("severity") or "").upper()
+    _sev_band = {"CRITICAL": ("CRITICAL", 9.5), "HIGH": ("HIGH", 7.5), "MEDIUM": ("MEDIUM", 5.5), "LOW": ("LOW", 3.0)}.get(
+        _sev_str
+    )
+    if _sev_band and str(out.get("cvss_severity") or "").upper() != _sev_band[0]:
+        out["cvss_severity"] = _sev_band[0]
+        out["cvss_score"] = _sev_band[1]
+
+    # Remediation hint — accept legacy string / list / nested forms, then
+    # fall back to a static class-based hint so reports never ship an empty
+    # remediation column.
     if not out.get("remediation"):
         out["remediation"] = f.get("remediation_hint") or f.get("fix") or ""
+    if not out.get("remediation"):
+        _t = str(out.get("type", "")).lower()
+        for _kw, _hint in (
+            ("default-login", "Change all default credentials and enforce strong unique passwords."),
+            ("sqli", "Use parameterized queries/prepared statements; validate and escape user input."),
+            ("xss", "Apply context-aware output encoding and a strict Content-Security-Policy."),
+            ("rce", "Never pass user input to system shells; use safe APIs and sandboxing."),
+            ("lfi", "Allowlist include paths; never build file paths from raw user input."),
+            ("csrf", "Require per-session anti-CSRF tokens on all state-changing requests."),
+            ("brute", "Add rate limiting, account lockout, and CAPTCHA on authentication endpoints."),
+            ("upload", "Validate file type/content server-side; store uploads outside the webroot."),
+            ("redirect", "Allowlist redirect targets; reject absolute external URLs."),
+        ):
+            if _kw in _t:
+                out["remediation"] = _hint
+                break
+    if not out.get("timestamp") and scan_id:
+        try:
+            _scan = stats_db_manager.get_scan_state(scan_id) or {}
+            out["timestamp"] = str(_scan.get("created_at") or "")
+        except Exception:
+            pass
 
     # Agent that confirmed the finding — orchestrator persists this as
     # ``validated_by`` (DB) or ``source`` (event payload); surface either.
@@ -560,7 +613,13 @@ async def scan_graph(scan_id: str):
 
 @router.get("/{scan_id}/report")
 async def scan_report(scan_id: str):
-    """Return generated report links for the scan (Architecture §18, §22)."""
+    """Return generated report links for the scan (Architecture §18, §22).
+
+    FIX: the findings-export bundle (json/sarif/md/stix/pdf under
+    reports/<scan_id>/) is now surfaced here too, so a completed scan no
+    longer reports ``reports:{}`` while its exports sit on disk. The export
+    endpoint is POST-only — advertise it with the method so clients stop
+    GETting a 404."""
     from backend.core.config import settings
 
     reports_dir = settings.REPORTS_DIR
@@ -570,6 +629,19 @@ async def scan_report(scan_id: str):
     if os.path.exists(os.path.join(reports_dir, pdf)):
         outputs["pdf"] = f"/api/reports/download/{pdf}"
     if os.path.isdir(findings_dir):
+        _label = {
+            "findings.json": "findings_json",
+            "findings.sarif": "sarif",
+            "hackerone.md": "hackerone_md",
+            "stix_bundle.json": "stix",
+            "executive_report.pdf": "executive_pdf",
+            "technical_report.pdf": "technical_pdf",
+        }
         for f in os.listdir(findings_dir):
-            outputs[f.rsplit(".", 1)[-1]] = os.path.join(findings_dir, f)
-    return {"scan_id": scan_id, "reports": outputs, "export_endpoint": f"/api/reports/findings/{scan_id}/export"}
+            key = _label.get(f, f.rsplit(".", 1)[-1])
+            outputs[key] = f"/api/reports/findings-file/{scan_id}/{f}"
+    return {
+        "scan_id": scan_id,
+        "reports": outputs,
+        "export_endpoint": f"POST /api/reports/findings/{scan_id}/export",
+    }

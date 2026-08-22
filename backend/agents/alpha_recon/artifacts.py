@@ -55,6 +55,17 @@ class ArtifactStore:
         content = path.read_bytes() if path.exists() else b""
         sha256 = hashlib.sha256(content).hexdigest()
         artifact_id = stable_id(scan_id, tool_name, artifact_type, str(path))
+        # FIX (tool-status honesty): an empty or near-empty artifact must be
+        # flagged as such instead of silently reading as a successful run.
+        # Observed: gobuster.txt/naabu.txt/tlsx.jsonl at 0 bytes and five inql
+        # stubs at 27 bytes all listed beside real results with no signal that
+        # they produced nothing.
+        if len(content) == 0:
+            _status = "empty"
+        elif len(content) <= 64 and "inql" in tool_name.lower():
+            _status = "stub"
+        else:
+            _status = "ok"
         row = {
             "id": artifact_id,
             "scan_id": scan_id,
@@ -63,7 +74,7 @@ class ArtifactStore:
             "path": str(path),
             "sha256": sha256,
             "bytes": len(content),
-            "metadata": metadata or {},
+            "metadata": {"status": _status, **(metadata or {})},
         }
         self._manifest.append(row)
         await db_manager.create_recon_artifact(**row)
